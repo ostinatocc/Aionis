@@ -100,11 +100,13 @@ test("release docs derive all package and Runtime coordinates from release-train
   assert.ok(releaseDocs.includes(`Status: v${train.runtime.version}`));
   assert.ok(releaseDocs.includes(`./releases/v${train.runtime.version}.md`));
   assert.ok(fs.existsSync(path.join(ROOT, patchNotesPath)), `${patchNotesPath} must exist`);
+  const patchNotes = read(patchNotesPath);
 
   for (const entry of Object.values(train.packages)) {
     const token = `${entry.name}@${entry.version}`;
     assert.ok(releaseNotes.includes(token), `RELEASE_NOTES.md should mention ${token}`);
     assertReleaseTableCell(releaseDocs, `\`${entry.name}\``, `\`${entry.version}\``);
+    assertReleaseTableCell(patchNotes, `\`${entry.name}\``, `\`${entry.version}\``);
   }
 
   const dockerArtifact = `${train.runtime.docker_image}:${train.runtime.docker_tag}`;
@@ -115,6 +117,22 @@ test("release docs derive all package and Runtime coordinates from release-train
   assertReleaseTableCell(releaseDocs, "GitHub Runtime source", `\`${train.runtime.source_tag}\``);
   assertReleaseTableCell(releaseDocs, "Docker image", `\`${dockerArtifact}\``);
   assertReleaseTableCell(releaseDocs, "Default installer Runtime ref", `\`${train.runtime.default_installer_ref}\``);
+});
+
+test("public SDK version surfaces follow the frozen release-train coordinate", () => {
+  const sdkVersion = releaseTrain().packages.sdk.version;
+  const escapedVersion = escapeRegExp(sdkVersion);
+  const expectations = [
+    ["README.md", new RegExp(`SDK v${escapedVersion}`)],
+    ["docs/AIONIS_SDK_QUICKSTART.md", new RegExp(`SDK v${escapedVersion}`)],
+    ["docs/AIONIS_ADMISSION_DATASET_EXPORT_QUICKSTART.md", new RegExp(`SDK v${escapedVersion}`)],
+    ["docs/examples/minimal-agent.ts", new RegExp(`SDK v${escapedVersion}`)],
+    ["docs/AIONIS_PRODUCT_API_USAGE.md", new RegExp(`SDK\\s+\`${escapedVersion}\``)],
+  ];
+
+  for (const [file, pattern] of expectations) {
+    assert.match(read(file), pattern, `${file} must declare SDK ${sdkVersion}`);
+  }
 });
 
 const createRepository = workspaceRepository("aionis-create");

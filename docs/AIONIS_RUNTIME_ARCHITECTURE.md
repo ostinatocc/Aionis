@@ -18,7 +18,7 @@ observe -> guide -> agent action -> feedback -> measure -> snapshot
 | `guide` | Recall, adjudicate, and compile governed context. | `agent_context`, optional packets, memory use receipt, decision trace. |
 | `agent action` | Host runs the Agent with only the compiled context. | Host-owned action and tool evidence. |
 | `feedback` | Attribute outcomes to exact persisted guide items the host observed as actually used. | Feedback attribution, activation or negative evidence. |
-| `measure` | Compare before/after context and summarize memory effect. | Effect report, calibration, audit surfaces. |
+| `measure` | Compare before/after context, persist protected measurement evidence, and bind sufficient verified effects to episodes. | Measurement identity/digest, effect report, calibration, audit surfaces. |
 | `snapshot` | Expose read-only operator state. | Branch isolation, memory use, feedback, trace-to-procedure readiness. |
 
 `/v1/forget` and `/v1/rehydrate` are lifecycle-control paths around this loop:
@@ -47,7 +47,7 @@ flowchart TB
     Exec["Execution Memory Engine\nexecution tree + active path + failed branches"]
     Compiler["Context Compiler\nagent_context + receipt + trace"]
     Forgetting["Controlled Forgetting\nsuppress + archive + restore + rehydrate"]
-    Measure["Effect Measurement\nhistory impact + calibration"]
+    Measure["Effect Measurement\nprotected evidence + episode binding"]
     Operator["Operator Snapshot\nread-only audit"]
     Store["Lite Store\nmemory rows + slots + anchors + archives"]
   end
@@ -86,7 +86,7 @@ flowchart TB
 | `POST /v1/observe` | Host after real work or user memory input | Write ordinary memory, execution evidence, outcomes, or handoff state. |
 | `POST /v1/guide` | Host before the next Agent run | Compile governed memory into compact Agent context. |
 | `POST /v1/feedback` | Host after the Agent acts | Attribute positive or negative outcomes to exposed memory IDs. |
-| `POST /v1/measure` | Host, evaluator, or operator | Report whether memory changed future context or behavior. |
+| `POST /v1/measure` | Host, evaluator, or operator | Persist a protected measurement and report whether memory changed future context or behavior. |
 | `POST /v1/forget` | Host or operator | Explicit lifecycle control: suppress, unsuppress, archive, activate, rehydrate. |
 | `POST /v1/rehydrate` | Host when compact context points to hidden evidence | Expand archived memory, anchor payload, or colder evidence on demand. |
 | `POST /v1/operator/snapshot` | Host or operator | Read-only audit of run state, memory use, feedback, and effect. |
@@ -204,14 +204,19 @@ attributed only when the host reports actual use and the ID/surface matches the
 persisted guide attribution projection. AgentContext visibility alone is not
 feedback authority.
 
-Measurement stays read-only:
+Measurement is non-mutating with respect to memory posture, but protected
+measurement is a durable evidence write:
 
+- a stable `operation_id` protects exact retries and conflicts
+- the Runtime persists an immutable measurement identity and digest
+- a sufficient Runtime-verified product trace binds the measurement to the
+  before/after episode pair and appends `effect_measured` to the after episode
 - it can report positive impact, negative impact, or insufficient evidence
-- it can show calibration and decision traces
-- it does not mutate Runtime state by itself
+- it does not promote, suppress, rank, or serve memory by itself
 
-This keeps learning evidence separate from authority. A memory can be useful
-once without becoming a permanent rule.
+This keeps measurement evidence separate from posture and promotion authority.
+A memory can be useful once without becoming a permanent rule; calibration and
+explicit promotion gates still control later use.
 
 ## Controlled Forgetting and Rehydration
 
@@ -252,6 +257,7 @@ into the Agent prompt.
 | Execution tree and state | `src/execution/tree.ts`, `src/execution/tree-store.ts`, `src/execution/tree-auto.ts` |
 | Execution continuity | `src/kernel/execution-continuity-kernel.ts` |
 | Controlled forgetting | `src/kernel/forgetting-kernel.ts` |
+| Protected measurement authority | `src/product/measure-service.ts`, `src/store/lite-product-measurement-record.ts`, `src/store/lite-learning-measurement-authority.ts` |
 | Operator snapshot | `src/memory/operator-snapshot.ts`, `src/routes/operator-snapshot.ts` |
 
 ## Related Documents

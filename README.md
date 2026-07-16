@@ -43,7 +43,7 @@ rehydrated later, and why each decision was made.
 npx aionis setup
 ```
 
-Current main development: **Runtime v0.3.10 / SDK v0.3.18 / Manifest v0.1.1**.
+Current main development: **Runtime v0.3.10 / SDK v0.3.19 / Manifest v0.1.1**.
 The last published Runtime candidate remains v0.3.9; the v0.3.10 source tag and
 Docker image do not exist while the train is marked `development`. It is
 intended for a single self-hosted Runtime process with same-host Agent
@@ -57,11 +57,15 @@ from committed SQLite vectors after restart. Deployments that run several
 Runtime processes need a shared persistent ANN or an explicit cross-instance
 reconciliation design.
 
-The write boundary is crash recoverable: `observe` and direct handoff writes
-accept an `operation_id`, return a durable receipt, and replay that exact receipt
-after an ambiguous network failure. Semantic memory state and durable
-embedding/ANN projection intents commit together. A scheduled projection is not
-the same as completed projection; inspect `/health` for worker and backlog state.
+The protected write boundary is crash recoverable: `observe`, direct handoff,
+and measure writes accept an `operation_id` and replay the exact durable receipt
+after an ambiguous network failure. Measure also persists an immutable
+measurement identity and digest; a sufficient Runtime-verified product trace
+binds its effect to the authoritative after episode. These evidence writes do
+not by themselves change memory posture or authorize promotion. Semantic memory
+state and durable embedding/ANN projection intents commit together. A scheduled
+projection is not the same as completed projection; inspect `/health` for worker
+and backlog state.
 
 Docs: [docs.aionis.work](https://docs.aionis.work)
 
@@ -491,9 +495,12 @@ The SDK verification flow runs a real local Runtime and verifies:
 3. the SDK compiles external execution memory into a contract-style Agent prompt
 4. feedback is attributed only to exact memory IDs reported as used by host
    instrumentation and authorized by the guide's persisted exposure
-5. `measure` reports whether history changed future context
-6. admission dataset JSONL export is produced without prompt payload
-7. operator audit surfaces remain read-only
+5. a Runtime-owned typecheck and exact episode-ledger tool-feedback authority
+   verify the effect without trusting caller evidence claims
+6. protected `measure` persists an idempotent measurement and binds the effect
+   to distinct baseline/after episodes
+7. admission dataset JSONL export is produced without prompt payload
+8. operator audit surfaces remain read-only
 
 For the dataset export path specifically, see
 [docs/AIONIS_ADMISSION_DATASET_EXPORT_QUICKSTART.md](docs/AIONIS_ADMISSION_DATASET_EXPORT_QUICKSTART.md).

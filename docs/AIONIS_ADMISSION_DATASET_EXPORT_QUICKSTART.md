@@ -1,6 +1,6 @@
 # Aionis Admission Dataset Export Quickstart
 
-Status: SDK v0.3.18 read-only export path for Runtime v0.3.10 development memory admission
+Status: SDK v0.3.19 read-only export path for Runtime v0.3.10 development memory admission
 audit rows
 
 This quickstart shows how to turn a real Aionis guide/feedback/measure loop
@@ -142,7 +142,9 @@ Runtime-verified receipts can make
 `measure.evidence_assessment.eligible_for_skill_export` true.
 The protected measurement authority also depends on the stable
 `operation_id`: allocate it before the first attempt and reuse it only for an
-exact retry of the same measure request.
+exact retry of the same measure request. The Runtime persists the immutable
+measurement and exact receipt; the JSONL projection remains a read-only export
+and grants no posture or promotion authority.
 
 ## What A Row Contains
 

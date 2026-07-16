@@ -193,6 +193,10 @@ test("cross-package release gates install tarballs packed from exact checkouts",
   assert.match(smoke, /client\.execution\.guideForRole\(/);
   assert.match(smoke, /planning_context_embedding_unavailable/);
   assert.match(smoke, /full_power_agent_context_merge/);
+  assert.match(smoke, /const measureOperationId = "external-package-sdk-measure:" \+ runId/);
+  assert.match(smoke, /measure\.operation_id === measureOperationId/);
+  assert.match(smoke, /measure\.measurement_persisted === true/);
+  assert.match(smoke, /JSON\.stringify\(measureReplay\) === JSON\.stringify\(measure\)/);
   const freshInstallSmoke = read("scripts/e2e/fresh-install-smoke.ts");
   assert.match(freshInstallSmoke, /spawn\(process\.execPath, \["--import", "tsx", "src\/index\.ts"\]/);
   assert.match(freshInstallSmoke, /await closeRuntime\(runtime\)/);

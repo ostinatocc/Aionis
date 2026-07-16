@@ -1,6 +1,7 @@
 #!/usr/bin/env node
 import "dotenv/config";
 import { randomUUID } from "node:crypto";
+import { readFileSync } from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import {
@@ -34,6 +35,22 @@ function apiKey(): string | null {
     || process.env.AIONIS_PRODUCT_E2E_API_KEY?.trim()
     || process.env.AIONIS_API_KEY?.trim()
     || null;
+}
+
+function embeddingModel(session: Awaited<ReturnType<typeof openRuntime>>): string | null {
+  if (session.mode === "external") {
+    return process.env.AIONIS_SDK_QUICKSTART_EXPECTED_EMBEDDING_MODEL?.trim() || null;
+  }
+  switch (session.embedding?.provider) {
+    case "dashscope":
+      return process.env.DASHSCOPE_EMBEDDING_MODEL?.trim() || "text-embedding-v4";
+    case "minimax":
+      return process.env.MINIMAX_EMBED_MODEL?.trim() || "embo-01";
+    case "openai":
+      return process.env.OPENAI_EMBEDDING_MODEL?.trim() || "text-embedding-3-small";
+    default:
+      return null;
+  }
 }
 
 function textArray(value: unknown): string[] {
@@ -77,6 +94,38 @@ function assertPromptBoundary(promptText: string, label: string): void {
 async function main() {
   const runId = `sdk-quickstart-${randomUUID().slice(0, 8)}`;
   const scope = `sdk-quickstart:${runId}`;
+  const taskSignature = "sdk-quickstart";
+  const taskFamily = "developer_sdk_quickstart";
+  const guideQuery = `${PREF_MARKER} ${PROJECT_MARKER} continue SDK quickstart integration`;
+  const guideContext = {
+    agent_id: AGENT_ID,
+    task_kind: "continuity_recovery",
+    task_signature: taskSignature,
+    goal: guideQuery,
+  };
+  const measurementExecutionPacket = {
+    version: 1,
+    state_id: `state:${runId}:measurement`,
+    current_stage: "review",
+    active_role: "review",
+    task_brief: guideQuery,
+    target_files: ["docs/AIONIS_SDK_QUICKSTART.md", "scripts/e2e/developer-sdk-quickstart.ts"],
+    next_action: "Run the Runtime-owned focused verifier.",
+    hard_constraints: [],
+    accepted_facts: [],
+    rejected_paths: [],
+    pending_validations: ["npm run -s typecheck"],
+    unresolved_blockers: [],
+    rollback_notes: [],
+    service_lifecycle_constraints: [],
+    review_contract: null,
+    resume_anchor: null,
+    artifact_refs: [],
+    evidence_refs: [`evidence://sdk-quickstart/${runId}/runtime-verifier`],
+  };
+  // This quickstart owns its spawned verifier gate. External Runtime callers
+  // must configure the same capability on the Runtime they point to.
+  process.env.RUNTIME_VERIFIER_EXECUTION_ENABLED = "true";
   const session = await openRuntime();
   try {
     const aionis = createAionisClient({
@@ -87,13 +136,33 @@ async function main() {
     });
     await aionis.health();
 
-    const beforeGuide = await aionis.guide<Record<string, unknown>>({
-      query_text: `${PREF_MARKER} ${PROJECT_MARKER} before memory exists`,
+    const initialGuide = await aionis.guide<Record<string, unknown>>({
+      operation_id: `guide:sdk-quickstart:${runId}:initial`,
+      run_id: `${runId}:initial`,
+      query_text: guideQuery,
       consumer_agent_id: AGENT_ID,
+      context: guideContext,
+      limit: 2,
+      include_packets: true,
+    });
+    const beforeContext = agentContextFromGuide<Record<string, unknown>>(initialGuide);
+    assertPromptBoundary(agentPromptFromGuide(initialGuide), "initial SDK quickstart guide");
+    assertCondition(
+      beforeContext.actionable_history_used === false,
+      "fresh SDK quickstart guide unexpectedly exposed actionable history",
+    );
+
+    const beforeGuide = await aionis.guide<Record<string, unknown>>({
+      operation_id: `guide:sdk-quickstart:${runId}:before`,
+      run_id: runId,
+      query_text: guideQuery,
+      consumer_agent_id: AGENT_ID,
+      context: guideContext,
+      execution_packet_v1: measurementExecutionPacket,
+      tool_candidates: ["read", "edit", "test"],
       limit: 6,
       include_packets: true,
     });
-    const beforeContext = agentContextFromGuide<Record<string, unknown>>(beforeGuide);
     assertPromptBoundary(agentPromptFromGuide(beforeGuide), "before SDK quickstart guide");
 
     const preference = await aionis.remember<Record<string, unknown>>({
@@ -121,27 +190,68 @@ async function main() {
     });
     const projectFactId = firstNodeId(projectFact, "SDK project fact remember");
 
-    const executionHandoff = await aionis.execution.handoff<Record<string, unknown>>({
+    const inspectedQuickstartDocument = readFileSync(
+      new URL("../../docs/AIONIS_SDK_QUICKSTART.md", import.meta.url),
+      "utf8",
+    );
+    assertCondition(
+      inspectedQuickstartDocument.includes("SDK v0.3.19")
+        && inspectedQuickstartDocument.includes("operation_id"),
+      "SDK quickstart inspection did not find the expected v0.3.19 protected-measure contract",
+    );
+    const verifiedExecutionStep = await aionis.execution.observeStep<Record<string, unknown>>({
+      operation_id: `observe:sdk-quickstart:${runId}:verified-step`,
+      auto_embed: true,
       agent_id: AGENT_ID,
       run_id: runId,
-      task_signature: "sdk-quickstart",
-      task_family: "developer_sdk_quickstart",
+      task_id: `task:${runId}`,
+      task_signature: taskSignature,
+      task_family: taskFamily,
       workflow_signature: "sdk-quickstart-execution-context",
-      title: "SDK quickstart execution handoff",
-      summary: `${PROJECT_MARKER}: continue the SDK quickstart docs update without broad rediscovery.`,
+      title: guideQuery,
+      summary: `${guideQuery} recovered and inspected the active SDK v0.3.19 quickstart document.`,
       outcome: "succeeded",
       target_files: ["docs/AIONIS_SDK_QUICKSTART.md", "scripts/e2e/developer-sdk-quickstart.ts"],
-      continuation_hint: "Use the SDK execution context compiler as the Agent prompt path.",
-      acceptance_checks: ["compiled execution context is generated", "feedback remains attributed"],
-      evidence_ref: `evidence://sdk-quickstart/${runId}/execution-handoff`,
+      workflow_steps: [
+        "Recover the persisted SDK guide state.",
+        "Read docs/AIONIS_SDK_QUICKSTART.md.",
+        "Verify the v0.3.19 and protected operation identity guidance.",
+      ],
+      acceptance_checks: [
+        "the document declares SDK v0.3.19",
+        "the document includes protected operation_id guidance",
+      ],
+      continuation_hint: "Continue from the inspected SDK quickstart contract.",
+      confidence: 0.95,
+      evidence: [{
+        ref: `evidence://sdk-quickstart/${runId}/document-inspection`,
+        summary: "The host read and inspected the SDK v0.3.19 quickstart document.",
+      }],
     });
-    const handoffStored = !!asRecord(executionHandoff.handoff);
-    assertCondition(handoffStored, "SDK execution handoff was not stored");
-    const executionHandoffId = optionalObserveNodeId(executionHandoff);
+    assertCondition(
+      optionalObserveNodeId(verifiedExecutionStep) !== null,
+      "SDK verified execution step was not stored",
+    );
 
     const afterGuide = await aionis.guide<Record<string, unknown>>({
-      query_text: `${PREF_MARKER} ${PROJECT_MARKER} continue SDK quickstart integration`,
+      operation_id: `guide:sdk-quickstart:${runId}:after`,
+      run_id: runId,
+      query_text: guideQuery,
       consumer_agent_id: AGENT_ID,
+      context: guideContext,
+      execution_packet_v1: measurementExecutionPacket,
+      runtime_verification: {
+        version: 1,
+        mode: "execute",
+        agent_lifecycle_state: "agent_exited",
+        include_pending_validations: true,
+        validation_boundary: "runtime_orchestrator",
+        timeout_ms: 120_000,
+        max_requests: 4,
+        cwd: null,
+        agent_claimed_success: true,
+      },
+      tool_candidates: ["read", "edit", "test"],
       limit: 8,
       include_packets: true,
     });
@@ -162,80 +272,126 @@ async function main() {
       "SDK project marker missing from Agent-facing context",
     );
 
-    const executionGuide = await aionis.execution.guideForRole<Record<string, unknown>>({
-      agent_id: AGENT_ID,
-      run_id: `run:${runId}:execution-context`,
-      task_signature: "sdk-quickstart",
-      task_family: "developer_sdk_quickstart",
-      workflow_signature: "sdk-quickstart-execution-context",
-      query_text: `${PROJECT_MARKER} continue the SDK quickstart execution-memory path`,
-      context_mode: "compact_agent",
-      limit: 10,
-      include_packets: true,
-    });
-    const compiledContext = aionis.execution.compileAgentContext({
-      guide: executionGuide,
-      task: {
-        run_id: runId,
-        task_signature: "sdk-quickstart",
-        query_text: "Continue the SDK quickstart execution-memory path.",
-      },
-      repo_state: {
-        existing_files: ["scripts/e2e/developer-sdk-quickstart.ts"],
-        missing_files: ["docs/AIONIS_SDK_QUICKSTART.md"],
-      },
-      budget_profile: "balanced",
-    });
-    assertPromptBoundary(compiledContext.agent_prompt, "compiled SDK execution context");
+    const toolSelection = asRecord(afterGuide.tool_selection);
     assertCondition(
-      compiledContext.agent_prompt.includes("AIONIS_EXECUTION_AGENT_CONTEXT v1"),
-      "SDK quickstart did not render execution Agent context contract",
+      toolSelection?.contract_version === "aionis_tool_selection_receipt_v1",
+      "SDK quickstart after-guide missing persisted tool-selection receipt",
     );
     assertCondition(
-      compiledContext.memory_use_receipt.contract_version === "aionis_memory_use_receipt_v1",
-      "SDK execution context missing memory use receipt",
+      toolSelection.selected_tool === "read",
+      `SDK quickstart expected Runtime-governed read selection, received ${String(toolSelection.selected_tool)}`,
     );
+    const toolCandidates = textArray(toolSelection.candidates);
+    assertCondition(toolCandidates.length > 0, "SDK quickstart tool-selection receipt has no candidates");
+    const selectedToolDocument = readFileSync(
+      new URL("../../docs/AIONIS_SDK_QUICKSTART.md", import.meta.url),
+      "utf8",
+    );
+    const selectedToolDocumentVerified = selectedToolDocument.includes("SDK v0.3.19")
+      && selectedToolDocument.includes("operation_id");
     assertCondition(
-      compiledContext.memory_use_receipt.history_used === true,
-      "SDK execution context did not preserve memory-use audit state",
+      selectedToolDocumentVerified,
+      "Runtime-governed read did not recover the expected SDK v0.3.19 quickstart contract",
     );
-    assertCondition(
-      compiledContext.prompt_char_count > 0,
-      "SDK execution context produced empty Agent prompt",
-    );
-
     const feedback = await aionis.feedback<Record<string, unknown>>(feedbackFromGuide({
       guide: afterGuide,
-      reason: "SDK quickstart Agent used the exposed project fact successfully.",
+      reason: "The exposed project fact supplied docs/AIONIS_SDK_QUICKSTART.md, which the Runtime-governed read actually opened and verified.",
       run_id: `run:${runId}:feedback`,
       outcome: "positive",
       used_memory_ids: [projectFactId],
     }));
+    const toolFeedback = await aionis.feedback<Record<string, unknown>>({
+      feedback_kind: "tool_selection",
+      operation_id: `feedback:sdk-quickstart:tool:${runId}`,
+      guide_trace_id: String(toolSelection.guide_trace_id ?? afterGuide.guide_trace_id),
+      decision_id: String(toolSelection.decision_id),
+      run_id: String(toolSelection.run_id),
+      selected_tool: "read",
+      candidates: toolCandidates,
+      outcome: "positive",
+      consumer_agent_id: AGENT_ID,
+      context: guideContext,
+      input_text: "The selected read tool recovered and verified docs/AIONIS_SDK_QUICKSTART.md before positive feedback.",
+    });
+    assertCondition(
+      toolFeedback.contract_version === "aionis_feedback_result_v1",
+      "SDK quickstart protected tool feedback did not return result v1",
+    );
 
-    const measure = await aionis.measure<Record<string, unknown>>(measureInputFromGuideLoop({
+    const measureOperationId = `measure:sdk-quickstart:${runId}`;
+    const measureRequest = measureInputFromGuideLoop({
+      operation_id: measureOperationId,
       task: {
         task_id: `task:${runId}`,
         run_id: runId,
-        task_signature: "sdk-quickstart",
-        task_family: "developer_sdk_quickstart",
+        task_signature: taskSignature,
+        task_family: taskFamily,
       },
       before_guide: beforeGuide,
       after_guide: afterGuide,
       feedback_result: feedback,
-      sufficient_evidence: true,
+      sufficient_evidence: false,
       evidence_ids: [
-        `memory:${preferenceId}`,
-        `memory:${projectFactId}`,
-        `feedback:${runId}`,
+        `caller-only:${runId}:must-not-open-measure-gate`,
       ],
-    }));
+    });
+    const measure = await aionis.measure<Record<string, unknown>>(measureRequest);
     const effectReport = asRecord(measure.effect_report);
     const historyImpact = asRecord(effectReport?.history_impact);
     const decisionTrace = asRecord(measure.memory_decision_trace);
     const receipt = asRecord(decisionTrace?.memory_use_receipt);
     const admissionRecord = asRecord(decisionTrace?.admission_record);
+    const evidenceAssessment = asRecord(measure.evidence_assessment);
+    const clientClaimsIgnored = asRecord(evidenceAssessment?.client_claims_ignored);
+    const measureSourceMap = asRecord(measure.source_map);
+    const measureInternalSurfaces = textArray(measureSourceMap?.internal_surfaces_used);
+    const runtimeEvidenceIds = textArray(evidenceAssessment?.runtime_evidence_ids);
+    const beforeAttribution = asRecord(beforeGuide.feedback_attribution_v1);
+    const afterAttribution = asRecord(afterGuide.feedback_attribution_v1);
     assertCondition(measure.contract_version === "aionis_measure_result_v1", "SDK quickstart measure did not return result v1");
-    assertCondition(historyImpact?.impact_direction === "positive", "SDK quickstart measure did not report positive history impact");
+    assertCondition(measure.operation_id === measureOperationId, "SDK quickstart measure lost protected operation identity");
+    assertCondition(measure.measurement_persisted === true, "SDK quickstart measure did not persist its immutable measurement");
+    assertCondition(
+      typeof measure.measurement_id === "string" && measure.measurement_id.length > 0,
+      "SDK quickstart measure did not return measurement identity",
+    );
+    assertCondition(
+      typeof measure.measurement_digest === "string" && /^[0-9a-f]{64}$/u.test(measure.measurement_digest),
+      "SDK quickstart measure did not return canonical measurement digest",
+    );
+    const measureReplay = await aionis.measure<Record<string, unknown>>(measureRequest);
+    assertCondition(
+      JSON.stringify(measureReplay) === JSON.stringify(measure),
+      "SDK quickstart protected measure did not replay its exact durable receipt",
+    );
+    assertCondition(
+      evidenceAssessment?.status === "sufficient" && evidenceAssessment.provenance === "runtime_verified",
+      `SDK quickstart measure did not pass Runtime-owned evidence verification: ${JSON.stringify({
+        evidenceAssessment,
+        kernelReport: measure.kernel_report,
+      })}`,
+    );
+    assertCondition(
+      clientClaimsIgnored?.sufficient_evidence === false
+        && clientClaimsIgnored.evidence_id_count === 1
+        && !runtimeEvidenceIds.some((id) => id.startsWith("caller-only:")),
+      `SDK quickstart caller evidence claim incorrectly affected Runtime authority: ${JSON.stringify({ clientClaimsIgnored, runtimeEvidenceIds })}`,
+    );
+    assertCondition(
+      beforeAttribution?.status === "available"
+        && afterAttribution?.status === "available"
+        && typeof beforeAttribution.episode_id === "string"
+        && typeof afterAttribution.episode_id === "string"
+        && beforeAttribution.episode_id !== afterAttribution.episode_id,
+      "SDK quickstart measure did not expose a distinct persisted episode pair",
+    );
+    assertCondition(
+      runtimeEvidenceIds.filter((id) => id.startsWith("effect_expected_v1:")).length === 1
+        && measureInternalSurfaces.includes("learning_episode_pair")
+        && measureInternalSurfaces.includes("learning_effect_event"),
+      `SDK quickstart measure did not persist verified effect-to-episode binding: ${JSON.stringify({ runtimeEvidenceIds, measureInternalSurfaces })}`,
+    );
+    assertCondition(historyImpact?.impact_direction === "positive", `SDK quickstart measure did not report positive history impact: ${JSON.stringify(historyImpact)}`);
     assertCondition(receipt?.contract_version === "aionis_memory_use_receipt_v1", "SDK quickstart measure missing memory use receipt");
     assertCondition(admissionRecord?.contract_version === "aionis_memory_admission_record_v1", "SDK quickstart measure missing admission record");
 
@@ -260,8 +416,8 @@ async function main() {
 
     const snapshot = await aionis.snapshot<Record<string, unknown>>(snapshotInputFromGuideLoop({
       run_id: runId,
-      task_signature: "sdk-quickstart",
-      task_family: "developer_sdk_quickstart",
+      task_signature: taskSignature,
+      task_family: taskFamily,
       guide: afterGuide,
       measure_result: measure,
       include_markdown: false,
@@ -273,6 +429,74 @@ async function main() {
     assertCondition(snapshotReceipt?.contract_version === "aionis_memory_use_receipt_v1", "SDK quickstart snapshot missing receipt");
     assertCondition(snapshotAdmissionRecord?.contract_version === "aionis_memory_admission_record_v1", "SDK quickstart snapshot missing admission record");
 
+    const executionHandoff = await aionis.execution.handoff<Record<string, unknown>>({
+      agent_id: AGENT_ID,
+      run_id: runId,
+      task_signature: taskSignature,
+      task_family: taskFamily,
+      workflow_signature: "sdk-quickstart-execution-context",
+      title: "SDK quickstart execution handoff",
+      summary: `${PROJECT_MARKER}: continue the SDK quickstart docs update without broad rediscovery.`,
+      outcome: "succeeded",
+      target_files: ["docs/AIONIS_SDK_QUICKSTART.md", "scripts/e2e/developer-sdk-quickstart.ts"],
+      continuation_hint: "Use the SDK execution context compiler as the Agent prompt path.",
+      acceptance_checks: ["compiled execution context is generated", "feedback remains attributed"],
+      evidence_ref: `evidence://sdk-quickstart/${runId}/execution-handoff`,
+    });
+    const handoffStored = !!asRecord(executionHandoff.handoff);
+    assertCondition(handoffStored, "SDK execution handoff was not stored");
+    const executionHandoffId = optionalObserveNodeId(executionHandoff);
+
+    const executionGuide = await aionis.execution.guideForRole<Record<string, unknown>>({
+      agent_id: AGENT_ID,
+      run_id: `run:${runId}:execution-context`,
+      task_signature: taskSignature,
+      task_family: taskFamily,
+      workflow_signature: "sdk-quickstart-execution-context",
+      query_text: `${PROJECT_MARKER} continue the SDK quickstart execution-memory path`,
+      context_mode: "compact_agent",
+      limit: 10,
+      include_packets: true,
+    });
+    const compiledContext = aionis.execution.compileAgentContext({
+      guide: executionGuide,
+      task: {
+        run_id: runId,
+        task_signature: taskSignature,
+        query_text: "Continue the SDK quickstart execution-memory path.",
+      },
+      repo_state: {
+        existing_files: [
+          "docs/AIONIS_SDK_QUICKSTART.md",
+          "scripts/e2e/developer-sdk-quickstart.ts",
+        ],
+        missing_files: [],
+      },
+      budget_profile: "balanced",
+    });
+    assertPromptBoundary(compiledContext.agent_prompt, "compiled SDK execution context");
+    assertCondition(
+      compiledContext.agent_prompt.includes("AIONIS_EXECUTION_AGENT_CONTEXT v1"),
+      "SDK quickstart did not render execution Agent context contract",
+    );
+    assertCondition(
+      compiledContext.memory_use_receipt.contract_version === "aionis_memory_use_receipt_v1",
+      "SDK execution context missing memory use receipt",
+    );
+    assertCondition(
+      compiledContext.memory_use_receipt.history_used === true,
+      "SDK execution context did not preserve memory-use audit state",
+    );
+    assertCondition(
+      compiledContext.prompt_char_count > 0,
+      "SDK execution context produced empty Agent prompt",
+    );
+    assertCondition(
+      compiledContext.missing_active_targets.length === 0
+        && !compiledContext.execution_warnings.some((entry) => entry.code === "missing_active_target"),
+      "SDK execution context contradicted the files verified by the real read tool",
+    );
+
     const feedbackEffect = asRecord(feedback.forget_effect);
     const guideTrace = asRecord(feedbackEffect?.guide_trace);
     const result = {
@@ -282,6 +506,7 @@ async function main() {
         mode: session.mode,
         base_url: session.baseUrl,
         embedding_provider: session.embedding?.provider ?? "external_runtime",
+        embedding_model: embeddingModel(session),
       },
       integration_path: {
         sdk_client: "createAionisClient",
@@ -314,6 +539,20 @@ async function main() {
         execution_handoff_stored: handoffStored,
         feedback_attributed_memory_count: guideTrace?.attributed_memory_count ?? null,
         measure_history_impact: historyImpact.impact_direction,
+        measure_operation_id: measure.operation_id,
+        measurement_id: measure.measurement_id,
+        measurement_digest: measure.measurement_digest,
+        measurement_persisted: measure.measurement_persisted,
+        measure_exact_replay: JSON.stringify(measureReplay) === JSON.stringify(measure),
+        measure_evidence_status: evidenceAssessment.status,
+        measure_evidence_provenance: evidenceAssessment.provenance,
+        ignored_caller_sufficient_evidence_value: clientClaimsIgnored.sufficient_evidence,
+        caller_evidence_id_count_ignored: clientClaimsIgnored.evidence_id_count,
+        baseline_episode_id: beforeAttribution.episode_id,
+        after_episode_id: afterAttribution.episode_id,
+        effect_episode_binding_persisted: measureInternalSurfaces.includes("learning_effect_event"),
+        governed_tool_selected: toolSelection.selected_tool,
+        governed_tool_document_verified: selectedToolDocumentVerified,
       },
       admission_dataset_export: {
         contract_version: "aionis_memory_admission_dataset_row_v1",
@@ -340,11 +579,26 @@ async function main() {
         agent_prompt_boundary_preserved: true,
         execution_context_compiler_used: compiledContext.contract_version === "aionis_execution_agent_context_v1",
         execution_context_receipt_visible: compiledContext.memory_use_receipt.contract_version === "aionis_memory_use_receipt_v1",
+        execution_context_repo_state_verified: compiledContext.missing_active_targets.length === 0
+          && !compiledContext.execution_warnings.some((entry) => entry.code === "missing_active_target"),
         feedback_attributed: guideTrace?.attributed_memory_count === 1,
         admission_dataset_exported: admissionDatasetRows.length > 0,
         admission_dataset_feedback_joined: attributedProjectFactRow?.outcome_label === "positive_use",
         admission_dataset_prompt_payload_excluded: !admissionDatasetJsonl.includes("prompt_text"),
         positive_history_impact_measured: historyImpact.impact_direction === "positive",
+        protected_measure_identity_preserved: measure.operation_id === measureOperationId,
+        immutable_measurement_persisted: measure.measurement_persisted === true,
+        protected_measure_exact_replay: JSON.stringify(measureReplay) === JSON.stringify(measure),
+        runtime_verified_measure_evidence: evidenceAssessment.status === "sufficient"
+          && evidenceAssessment.provenance === "runtime_verified",
+        caller_measure_claim_did_not_open_gate: clientClaimsIgnored.sufficient_evidence === false
+          && clientClaimsIgnored.evidence_id_count === 1
+          && !runtimeEvidenceIds.some((id) => id.startsWith("caller-only:")),
+        verified_effect_episode_binding_persisted: runtimeEvidenceIds.some((id) => id.startsWith("effect_expected_v1:"))
+          && measureInternalSurfaces.includes("learning_episode_pair")
+          && measureInternalSurfaces.includes("learning_effect_event"),
+        runtime_governed_tool_executed: toolSelection.selected_tool === "read"
+          && selectedToolDocumentVerified,
         operator_snapshot_read_only: operatorSnapshot.runtime_mutation === false,
       },
     };

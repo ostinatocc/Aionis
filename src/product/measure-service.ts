@@ -79,7 +79,6 @@ import {
   uniqueStrings,
 } from "./product-services.js";
 import { HttpError } from "../util/http.js";
-import { toTenantScopeKey } from "../memory/tenant.js";
 import type {
   ProductGuideExposureLedger,
   ProductMeasureRequestInput,
@@ -348,7 +347,7 @@ function productTraceDerivedSkillCandidates(report: AionisEffectReport): TraceDe
 
 type ProductMeasureEvidenceStore = Pick<
   LiteWriteStore,
-  "getProductGuideReceipt" | "listRuleFeedbackByRun"
+  "getProductGuideReceipt"
 >;
 
 type ProductMeasureAtomicWrite = Pick<
@@ -515,7 +514,6 @@ async function assertStoredProductMeasureOperationAuthority(args: Readonly<{
 function asProductMeasureEvidenceStore(value: ProductMeasureEvidenceStore | null | undefined): ProductMeasureEvidenceStore | null {
   if (!value) return null;
   return typeof value.getProductGuideReceipt === "function"
-    && typeof value.listRuleFeedbackByRun === "function"
     ? value
     : null;
 }
@@ -669,7 +667,6 @@ async function assessProductMeasureEvidence(args: {
   source: "manual_observations" | "product_trace";
   tenantId: string;
   scope: string;
-  feedbackScope: string;
   store: ProductMeasureEvidenceStore | null;
 }): Promise<ProductMeasureEvidenceResolution> {
   if (args.source === "manual_observations") {
@@ -785,27 +782,6 @@ async function assessProductMeasureEvidence(args: {
     if (runtimeVerification.false_confidence_detected) reasons.push("runtime_verification_false_confidence_detected");
     if (runtimeVerification.run_id !== runId) reasons.push("runtime_verification_run_binding_mismatch");
     runtimeEvidenceIds.push(`runtime_verification:${afterReceipt.ledger.guide_trace_id}:${runtimeVerification.surface_sha256}`);
-  }
-
-  const feedback = await args.store.listRuleFeedbackByRun({
-    scope: args.feedbackScope,
-    runId,
-    limit: 200,
-  });
-  const positiveFeedback = toolSelection
-    ? feedback.rows.find((row) =>
-        row.outcome === "positive"
-        && row.source === "tools_feedback"
-        && row.decision_id === toolSelection.decision_id
-      )
-    : null;
-  if (!positiveFeedback) reasons.push("positive_linked_tool_feedback_missing");
-  if (feedback.negative > 0) reasons.push("negative_feedback_present_for_run");
-  if (positiveFeedback) {
-    const feedbackCreatedAt = Date.parse(positiveFeedback.created_at);
-    if (!Number.isFinite(feedbackCreatedAt) || !Number.isFinite(afterCreatedAt) || feedbackCreatedAt <= afterCreatedAt) {
-      reasons.push("tool_feedback_not_after_guide_receipt");
-    }
   }
 
   const verifiedKernelReport = beforeObservationValid && afterObservationValid && beforeObservation && afterObservation
@@ -1036,12 +1012,22 @@ function bindProductMeasureEvidence(args: {
     };
   }
   const promotionEligible = args.binding.pair.provenance.promotionEligible;
-  const protectedPositiveFeedback = args.binding.toolFeedbackAuthority?.status === "available";
-  const toolFeedbackAuthorityReason = args.binding.toolFeedbackAuthority?.status === "unavailable"
-    ? args.binding.toolFeedbackAuthority.reasonCode
-    : "feedback_missing";
+  const toolFeedbackAuthority = args.binding.toolFeedbackAuthority;
+  const protectedPositiveFeedback = toolFeedbackAuthority?.status === "available";
+  const unprotectedPositiveFeedback = toolFeedbackAuthority?.status === "unavailable"
+    && toolFeedbackAuthority.reasonCode === "feedback_operation_unprotected";
+  const verifiedPositiveFeedback = protectedPositiveFeedback || unprotectedPositiveFeedback;
+  const toolFeedbackAuthorityReason = toolFeedbackAuthority?.status === "unavailable"
+    ? toolFeedbackAuthority.reasonCode
+    : toolFeedbackAuthority === null
+      ? "feedback_missing"
+      : null;
+  const sufficientEvidence = args.evidence.sufficient_evidence && verifiedPositiveFeedback;
   return {
     ...args.evidence,
+    status: sufficientEvidence ? "sufficient" : "insufficient",
+    sufficient_evidence: sufficientEvidence,
+    provenance: sufficientEvidence ? args.evidence.provenance : "unverified_product_trace",
     eligible_for_skill_export: args.evidence.eligible_for_skill_export
       && promotionEligible
       && protectedPositiveFeedback
@@ -1059,7 +1045,7 @@ function bindProductMeasureEvidence(args: {
       ...args.evidence.reasons,
       ...args.binding.reasons,
       ...(!promotionEligible ? ["measurement_episode_pair_not_promotion_eligible"] : []),
-      ...(!protectedPositiveFeedback
+      ...(toolFeedbackAuthorityReason !== null
         ? [`measurement_tool_feedback_authority:${toolFeedbackAuthorityReason}`]
         : []),
       ...(!args.operationProtected ? ["measurement_operation_identity_unprotected"] : []),
@@ -1430,11 +1416,6 @@ export function createProductMeasureService(
             source: measureInput.source,
             tenantId,
             scope,
-            feedbackScope: toTenantScopeKey(
-              scope,
-              tenantId,
-              dependencies.defaultTenantId,
-            ),
             store: asProductMeasureEvidenceStore(dependencies.runtimeEvidenceStore),
           });
           const evaluationBaseline = evidenceResolution.verified_observations?.baseline ?? measureInput.baseline;

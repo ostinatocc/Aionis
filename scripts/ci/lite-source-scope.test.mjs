@@ -326,9 +326,38 @@ test("README quickstart examples stay aligned with product result contracts", ()
 
   const sdk = readJson("docs/examples/sdk-quickstart-result.json");
   assert.equal(sdk.contract_version, "aionis_sdk_quickstart_result_v1");
+  assert.equal(sdk.runtime?.embedding_provider, "dashscope");
+  assert.equal(sdk.runtime?.embedding_model, "text-embedding-v4");
   assert.equal(sdk.agent_context?.before_actionable_history_used, false);
   assert.equal(sdk.agent_context?.after_actionable_history_used, true);
+  assert.deepEqual(sdk.execution_context_compiler?.active_targets, [
+    "docs/AIONIS_SDK_QUICKSTART.md",
+    "scripts/e2e/developer-sdk-quickstart.ts",
+  ]);
+  assert.deepEqual(sdk.execution_context_compiler?.missing_active_targets, []);
+  assert.equal(
+    sdk.execution_context_compiler?.warning_codes?.includes("missing_active_target"),
+    false,
+  );
   assert.equal(sdk.memory_governance?.measure_history_impact, "positive");
+  assert.match(sdk.memory_governance?.measure_operation_id ?? "", /^measure:sdk-quickstart:/u);
+  assert.match(sdk.memory_governance?.measurement_id ?? "", /^measurement:/u);
+  assert.match(sdk.memory_governance?.measurement_digest ?? "", /^[0-9a-f]{64}$/u);
+  assert.equal(sdk.memory_governance?.measurement_persisted, true);
+  assert.equal(sdk.memory_governance?.measure_exact_replay, true);
+  assert.equal(sdk.memory_governance?.measure_evidence_status, "sufficient");
+  assert.equal(sdk.memory_governance?.measure_evidence_provenance, "runtime_verified");
+  assert.equal(sdk.memory_governance?.ignored_caller_sufficient_evidence_value, false);
+  assert.equal(sdk.memory_governance?.caller_evidence_id_count_ignored, 1);
+  assert.match(sdk.memory_governance?.baseline_episode_id ?? "", /^lep_[0-9a-f]{64}$/u);
+  assert.match(sdk.memory_governance?.after_episode_id ?? "", /^lep_[0-9a-f]{64}$/u);
+  assert.notEqual(
+    sdk.memory_governance?.baseline_episode_id,
+    sdk.memory_governance?.after_episode_id,
+  );
+  assert.equal(sdk.memory_governance?.effect_episode_binding_persisted, true);
+  assert.equal(sdk.memory_governance?.governed_tool_selected, "read");
+  assert.equal(sdk.memory_governance?.governed_tool_document_verified, true);
   assert.equal(sdk.admission_dataset_export?.contract_version, "aionis_memory_admission_dataset_row_v1");
   assert.equal(sdk.admission_dataset_export?.positive_use_count, 1);
   assert.equal(sdk.admission_dataset_export?.prompt_payload_excluded, true);
@@ -337,6 +366,14 @@ test("README quickstart examples stay aligned with product result contracts", ()
   assert.equal(sdk.operator_audit?.snapshot_runtime_mutation, false);
   assert.equal(sdk.checks?.feedback_attributed, true);
   assert.equal(sdk.checks?.admission_dataset_feedback_joined, true);
+  assert.equal(sdk.checks?.protected_measure_identity_preserved, true);
+  assert.equal(sdk.checks?.immutable_measurement_persisted, true);
+  assert.equal(sdk.checks?.protected_measure_exact_replay, true);
+  assert.equal(sdk.checks?.runtime_verified_measure_evidence, true);
+  assert.equal(sdk.checks?.caller_measure_claim_did_not_open_gate, true);
+  assert.equal(sdk.checks?.verified_effect_episode_binding_persisted, true);
+  assert.equal(sdk.checks?.runtime_governed_tool_executed, true);
+  assert.equal(sdk.checks?.execution_context_repo_state_verified, true);
 
   const http = readJson("docs/examples/http-quickstart-result.json");
   assert.equal(http.contract_version, "aionis_http_quickstart_result_v1");
@@ -553,7 +590,11 @@ test("README and product API docs keep developer entrypoints product-shaped", ()
   assert.match(quickstartMatrix, /@aionis\/create/);
   assert.match(quickstartMatrix, /npx @aionis\/mcp@latest/);
   assert.match(quickstartMatrix, /MCP stdio/);
-  assert.match(quickstartMatrix, /Measure and operator snapshot are read-only product surfaces/);
+  assert.match(
+    quickstartMatrix,
+    /Measure does not mutate memory posture, but a protected measure is a durable\s+evidence write/,
+  );
+  assert.match(quickstartMatrix, /Operator snapshot remains read-only/);
   assert.match(sdkQuickstart, /`snapshot\(\)` exposes read-only memory use receipt/);
   assert.match(sdkQuickstart, /from "@aionis\/sdk"/);
   assert.match(sdkQuickstart, /feedbackFromGuide\(\)/);

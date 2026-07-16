@@ -7,7 +7,7 @@ This document explains how a host should use the product actions:
 
 It describes the development product path over the current Runtime
 implementation. Contract changes in this development train are carried by SDK
-`0.3.18`; this is a Public Beta contract, not a GA compatibility promise.
+`0.3.19`; this is a Public Beta contract, not a GA compatibility promise.
 
 For host template wiring and runnable single-agent, multi-agent, and coding
 Agent examples, see [AIONIS_HOST_INTEGRATION.md](AIONIS_HOST_INTEGRATION.md).
@@ -48,7 +48,7 @@ For trace-derived skill candidate review and the explicit skill-memory path, see
 | `POST /v1/memory/govern` | govern external memory | Host before using Mem0/Zep/vector DB/markdown candidates | Memory admission gateway | `agent_context`, `memory_use_receipt`, optional `memory_admission_records` |
 | `POST /v1/feedback` | `feedback` | Host after the Agent acts | Feedback attribution | `forget_effect` with `operation: "activate"` |
 | `POST /v1/rehydrate` | `rehydrate` | Host when compact context needs original evidence or payload | Payload / archive lifecycle controller | `forget_effect` with `operation: "rehydrate"` |
-| `POST /v1/measure` | `measure` | Host, operator, or product evaluator | Product diagnostics | `evidence_assessment`, `effect_report`, optional decision trace and audit |
+| `POST /v1/measure` | `measure` | Host, operator, or product evaluator | Protected measurement evidence | `operation_id`, persisted measurement identity/digest, `evidence_assessment`, `effect_report`, optional decision trace and audit |
 | `POST /v1/skills/candidates` | queue skill candidates | Host or operator after measure | Trace-derived skill review ledger | queued candidate rows |
 | `GET /v1/skills/candidates` | list skill candidates | Host or operator | Trace-derived skill review ledger | pending/promoted/rejected candidate rows |
 | `POST /v1/skills/candidates/:id/promote` | review skill candidate | Operator or host review workflow | Trace-derived skill review ledger | promoted review row |
@@ -113,8 +113,10 @@ For host decisions, distinguish these two fields:
    reloads the persisted exposure before accepting attribution.
 5. Call SDK `rehydrate()` or raw `POST /v1/rehydrate` when an archived memory
    or anchor payload needs to be expanded.
-6. Call `POST /v1/measure` with before/after guide packets or direct
-   observations when the product needs to prove whether history helped or hurt.
+6. Allocate a stable `operation_id`, then call `POST /v1/measure` with
+   before/after guide packets or direct observations when the product needs to
+   prove whether history helped or hurt. Reuse the same ID only for an exact
+   retry of that logical measure write.
 7. Queue trace-derived skill candidates with `POST /v1/skills/candidates` only
    when `measure.evidence_assessment.eligible_for_skill_export` is true and
    `measure.effect_report.training_candidates` contains reusable execution
@@ -139,6 +141,11 @@ same effective request:
   `operation_id` and `post_commit_projections`.
 - Direct `/v1/handoff/store` returns `aionis_handoff_store_result_v1` with the
   durable `operation_id`.
+- Protected `/v1/measure` returns the same `operation_id`, persists one immutable
+  `measurement_id` and `measurement_digest`, and replays the exact result. For
+  a sufficient Runtime-verified product trace, the same transaction binds the
+  measurement to its before/after episodes and appends `effect_measured` to the
+  authoritative after episode.
 - A retry with the same ID and same request returns the stored receipt. Reusing
   the ID for different content returns HTTP `409`.
 - `post_commit_projections.embedding: "scheduled"` and
@@ -168,6 +175,10 @@ becomes export-eligible only when Runtime verifies the paired guide receipts,
 task/run binding, ordered observations, trusted Runtime verifier receipt,
 linked positive tool feedback, and complete passing kernel metrics. Hosts must
 branch on `evidence_assessment`, never on fields they supplied in the request.
+When those product-trace conditions resolve a before/after episode pair, the
+persisted measurement records both episode IDs and a sufficient effect is
+appended to the authoritative after episode. This is evidence authority, not
+permission to mutate memory posture or bypass calibration and promotion gates.
 
 ## SDK Product Path
 
@@ -473,7 +484,7 @@ Adapter contract version: `aionis_execution_memory_adapter_v1`.
 | `observeRunStart` / `observeStep` | `run_id`, `task_signature`, `agent_id` or `default_agent_id`, `title`, `summary` | durable `operation_id`, `task_family`, `workflow_signature`, `target_files`, `workflow_steps`, `raw_ref`, `evidence_ref`, `slots`, `handoff.execution_tree_v1`, `handoff.execution_tree_operations_v1` |
 | `guideNext` | `run_id`, `task_signature`, `agent_id` or `default_agent_id`, `query_text` | `context`, `execution_tree_v1`, `tool_candidates`, `limit`, `include_packets`, `mode` |
 | `observeOutcome` | same as `observeStep`; `used_memory_ids` when feedback attribution is wanted | `guide_run_id`, `guide_trace_id`, `runtime_signal_refs`, `feedback_outcome`, `used_surface` |
-| `measureRun` | `run_id`, `task_signature` | `before_guide`, `after_guide`, `forget_result`, `task`, `product_trace`; legacy evidence claims are reported as ignored |
+| `measureRun` | `run_id`, `task_signature`; stable `operation_id` for a protected retry-safe write | `before_guide`, `after_guide`, `forget_result`, `task`, `product_trace`; legacy evidence claims are reported as ignored |
 | `operatorSnapshotRun` | `run_id`, `task_signature` | `agent_context`, `execution_context`, `measure_result`, `guide_trace_id`, `include_markdown` |
 
 The adapter rejects shared writes or guides without a team boundary. Use
@@ -1286,6 +1297,9 @@ Use one of these forms:
 
 | Field | Consumer | Meaning |
 |---|---|---|
+| `operation_id` | Host / operator | Stable logical-write identity returned by a protected measure and reused only for an exact retry. |
+| `measurement_id` / `measurement_digest` | Host / operator | Immutable persisted measurement identity and content digest. |
+| `measurement_persisted` | Host / operator | `true` when the Runtime authority store committed the measurement. |
 | `effect_report` | Product / operator | User-readable history impact report. |
 | `measurement_input` | Developer | Inputs projected into the evaluator. |
 | `memory_decision_trace` | Developer | Present when `product_trace` is supplied. |
@@ -1293,6 +1307,12 @@ Use one of these forms:
 | `memory_decision_trace.judgment_calibration_summary` | Host / operator | Read-only summary of supported, contradicted, unused, weak, and inconclusive memory judgments. |
 | `memory_decision_audit` | Operator | Present when `product_trace` is supplied. |
 | `kernel_report` | Advanced developer | Internal effect evaluator output. |
+
+`measure` is non-mutating with respect to memory posture, but a protected call
+is not a storage-read operation: it commits the immutable measurement and exact
+operation receipt. A sufficient product trace with a Runtime-resolved episode
+pair also commits an `effect_measured` event bound to the after episode. None of
+these evidence records promotes, suppresses, ranks, or serves memory by itself.
 
 When `product_trace.forget_result` contains `operation: "activate"` feedback,
 `memory_decision_trace.feedback_attribution` explains the attribution path:

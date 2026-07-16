@@ -1,4 +1,4 @@
-// Runtime v0.3.10 development / SDK v0.3.18
+// Runtime v0.3.10 development / SDK v0.3.19
 import {
   compileExecutionAgentContext,
   createAionisClient,
@@ -104,7 +104,10 @@ if (agentResult.used_memory_ids.length > 0) {
   });
 }
 
+// Persist this with the host job and reuse it only for an exact retry.
+const measureOperationId = `measure:${runId}:${taskSignature}`;
 const measure = await aionis.execution.measureRun({
+  operation_id: measureOperationId,
   run_id: runId,
   task_signature: taskSignature,
   after_guide: guide,

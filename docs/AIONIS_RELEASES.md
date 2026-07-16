@@ -17,7 +17,7 @@ v0.3.9; v0.3.10 has no Runtime tag or Docker artifact while this status remains
 | Default installer Runtime ref | `v0.3.6` | `v0.3.6` | Last immutable Runtime selected by the frozen installer. |
 | `aionis` | `0.3.8` npm candidate | `v0.3.8` | Top-level setup and operator CLI. |
 | `@aionis/create` | `0.3.8` frozen | `v0.3.8` | One-command installer; its default remains Runtime v0.3.6. |
-| `@aionis/sdk` | `0.3.18` frozen | `v0.3.18` | Protected atomic tool-feedback identity and provenance contracts. |
+| `@aionis/sdk` | `0.3.19` frozen | `v0.3.19` | Protected tool-feedback and measure operation identity, provenance, and exact-retry contracts. |
 | `@aionis/manifest` | `0.1.1` frozen | `v0.1.1` | Manifest compiler/runtime and real product resume integration. |
 | `@aionis/mcp` | `0.3.7` frozen | `v0.3.7` | MCP stdio bridge for compatible clients. |
 | `@aionis/aifs` | `0.3.4` frozen | `v0.3.4` | Governed file surface for file-aware Agents. |
@@ -36,14 +36,17 @@ Development notes: [v0.3.10 development notes](./releases/v0.3.10.md).
 - Keep v0.3.9 release evidence immutable and assign all later work to v0.3.10.
 - Include Task 5.1 atomic tool-feedback prepare/persist/finalize and exact
   operation replay.
-- Bind the matching SDK `0.3.18` source and published package.
+- Include Task 6.1 protected measure identity, immutable measurement
+  persistence, and Runtime-verified effect-to-episode binding.
+- Bind the matching SDK `0.3.19` source and published package.
 - Bind Manifest `0.1.1` as a real train member and make its Runtime integration
   non-skippable in configured CI.
 - Preserve the v0.3.9 durable queue/worker, restart safety, lease fencing,
   bounded retry, dead-letter, and safety-pause behavior.
 
-Task 6.1 measurement episode binding, calibrated evidence gates, and promotion
-authority remain later phases. Global admission-candidate serving stays off.
+Task 6.1 measurement episode binding is included. Gate calibration, promotion
+authority, and global admission-candidate serving remain later phases; global
+serving stays off.
 
 ## Published Docker Quickstart
 
