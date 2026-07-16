@@ -46,6 +46,8 @@ import {
   buildUnusedExposureLearningControlJob,
   learningControlOperationRequestSha256,
 } from "../../src/store/lite-learning-control-jobs.ts";
+import { buildLiteLearningScheduledRiskSet } from
+  "../../src/store/lite-learning-evidence-cohort.ts";
 import {
   LITE_LEARNING_V3_ELIGIBLE_ACTIVE_LEASE_TRIGGER_SQL,
   migrateLiteLearningEpisodeLedgerV3ToV4,
@@ -6792,6 +6794,177 @@ test("gate evaluation supersession is immediate and cannot cross an experiment s
       supersedesDecisionId: null,
       supersedesArtifactId: null,
     });
+    const scheduledLook1 = buildLiteLearningScheduledRiskSet({
+      db: database.db,
+      tenantId: "tenant-a",
+      reservationId: String(look1.reservation.reservation_id),
+    });
+    const scheduledLook1Replay = buildLiteLearningScheduledRiskSet({
+      db: database.db,
+      tenantId: "tenant-a",
+      reservationId: String(look1.reservation.reservation_id),
+    });
+    assert.deepEqual(scheduledLook1Replay, scheduledLook1);
+    assert.equal(
+      scheduledLook1.contract_version,
+      "aionis_lite_learning_scheduled_risk_set_inspection_v1",
+    );
+    assert.equal(scheduledLook1.structural_status, "reconstructed_non_authority_preview");
+    assert.deepEqual(scheduledLook1.source_integrity, {
+      scope: "reservation_bound_runtime_prefix_and_confirmatory_lease_lifecycle",
+      verified: true,
+    });
+    assert.equal(scheduledLook1.policy_registration.registry_status, "calibration_pending");
+    assert.equal(
+      scheduledLook1.policy_registration.exact_registry_calibration_binding,
+      false,
+    );
+    assert.equal(scheduledLook1.production_authority_eligible, false);
+    assert.equal(scheduledLook1.authority_mutation, false);
+    assert.equal(scheduledLook1.authority_action, null);
+    assert.equal(scheduledLook1.scheduled_risk_set.checkpoint.outcome_fields_included, false);
+    assert.equal(scheduledLook1.scheduled_risk_set.pairs.length, 96);
+    assert.equal(scheduledLook1.scheduled_risk_set.waves.length, 1);
+    assert.equal(
+      scheduledLook1.scheduled_risk_set.pairs.flatMap((pair) => pair.members).length,
+      192,
+    );
+    assert.ok(scheduledLook1.scheduled_risk_set.pairs.every((pair, index) =>
+      pair.cohort_pair_ordinal === index
+      && pair.members[0].assigned_arm !== pair.members[1].assigned_arm));
+    assert.deepEqual(
+      scheduledLook1.unevaluated_requirements.map((requirement) => requirement.code),
+      [
+        "external_evidence_head_validation_not_evaluated",
+        "pre_response_arrival_freeze_not_evaluated",
+        "interference_attestation_not_evaluated",
+        "feedback_outcome_aggregation_not_evaluated",
+      ],
+    );
+
+    database.db.exec("SAVEPOINT scheduled_risk_set_orphan_reservation");
+    try {
+      const orphanReservationBase = {
+        ...look1.reservation,
+        reservation_id: "look-reservation-1-orphan",
+        operation_id: "reserve-look-1-orphan",
+        experiment_id: "experiment-confirmatory-orphan",
+        runtime_integrity_artifact_id: "runtime-integrity-artifact-orphan",
+        reservation_sha256: "0".repeat(64),
+      } satisfies LiteLearningAuthorityRow;
+      const orphanReservation = {
+        ...orphanReservationBase,
+        reservation_sha256: learningGateLookReservationDigest(orphanReservationBase),
+      } satisfies LiteLearningAuthorityRow;
+      insertAuthorityRowDirect(
+        database.db,
+        "lite_learning_gate_look_reservations",
+        orphanReservation,
+      );
+      assert.throws(
+        () => buildLiteLearningScheduledRiskSet({
+          db: database.db,
+          tenantId: "tenant-a",
+          reservationId: String(orphanReservation.reservation_id),
+        }),
+        /lite_learning_integrity_failed:invalid_runtime_gate_prefix/,
+      );
+    } finally {
+      database.db.exec("ROLLBACK TO scheduled_risk_set_orphan_reservation");
+      database.db.exec("RELEASE scheduled_risk_set_orphan_reservation");
+    }
+
+    database.db.exec("SAVEPOINT scheduled_risk_set_external_evidence_isolation");
+    try {
+      const externalReport = canonicalJson({
+        contract_version: "test_external_evidence_report_v1",
+        status: "passed",
+      });
+      const externalArtifact = {
+        ...look1.artifact,
+        artifact_id: "external-offline-artifact-after-look-1",
+        artifact_kind: "offline_paired_rerun",
+        evidence_series_id: "external-offline-series-after-look-1",
+        external_run_reservation_id: "external-reservation-after-look-1",
+        external_ticket_consumption_id: "external-consumption-after-look-1",
+        external_run_claim_id: "external-claim-after-look-1",
+        external_supervisor_binding_id: "external-binding-after-look-1",
+        external_session_termination_id: "external-termination-after-look-1",
+        supersedes_artifact_id: null,
+        source_serving_phase: "isolated_paired",
+        look_index: null,
+        look_proposal_sha256: null,
+        report_sha256: externalReport.sha256,
+        report_json: externalReport.json,
+        source_ref: "test://external-offline-after-look-1",
+      } satisfies LiteLearningAuthorityRow;
+      insertAuthorityRowDirect(
+        database.db,
+        "lite_learning_evidence_artifacts",
+        externalArtifact,
+      );
+      const withExternalEvidence = buildLiteLearningScheduledRiskSet({
+        db: database.db,
+        tenantId: "tenant-a",
+        reservationId: String(look1.reservation.reservation_id),
+      });
+      assert.equal(
+        withExternalEvidence.scheduled_risk_set_sha256,
+        scheduledLook1.scheduled_risk_set_sha256,
+      );
+      assert.equal(withExternalEvidence.result_sha256, scheduledLook1.result_sha256);
+      assert.ok(withExternalEvidence.unevaluated_requirements.some(
+        (requirement) => requirement.code
+          === "external_evidence_head_validation_not_evaluated",
+      ));
+    } finally {
+      database.db.exec("ROLLBACK TO scheduled_risk_set_external_evidence_isolation");
+      database.db.exec("RELEASE scheduled_risk_set_external_evidence_isolation");
+    }
+
+    database.db.exec("SAVEPOINT scheduled_risk_set_partial_release");
+    try {
+      database.db.prepare(
+        `UPDATE lite_learning_namespace_leases
+         SET status = 'released', release_operation_id = ?,
+             release_ref_kind = 'terminal_authority_adjudication',
+             release_ref_id = ?, released_at = ?
+         WHERE tenant_id = ? AND namespace_lease_id = (
+           SELECT namespace_lease_id
+           FROM lite_learning_namespace_leases
+           WHERE tenant_id = ? AND confirmatory_attempt_id = ?
+           ORDER BY namespace_lease_id
+           LIMIT 1
+         )`,
+      ).run(
+        "partial-release-operation",
+        "missing-terminal-adjudication",
+        new Date(Date.parse(String(look1.reservation.analysis_at)) + 1).toISOString(),
+        "tenant-a",
+        "tenant-a",
+        fixture.attempt.confirmatory_attempt_id,
+      );
+      assert.throws(
+        () => buildLiteLearningScheduledRiskSet({
+          db: database.db,
+          tenantId: "tenant-a",
+          reservationId: String(look1.reservation.reservation_id),
+        }),
+        /lite_learning_integrity_failed:partial_or_mixed_namespace_release/,
+      );
+    } finally {
+      database.db.exec("ROLLBACK TO scheduled_risk_set_partial_release");
+      database.db.exec("RELEASE scheduled_risk_set_partial_release");
+    }
+
+    assert.equal(
+      buildLiteLearningScheduledRiskSet({
+        db: database.db,
+        tenantId: "tenant-a",
+        reservationId: String(look1.reservation.reservation_id),
+      }).scheduled_risk_set_sha256,
+      scheduledLook1.scheduled_risk_set_sha256,
+    );
     const repeatedLook1 = await verifyLiteRuntimeLearningArtifact({
       path: temp.path,
       proposal: look1.proposal,
@@ -6911,6 +7084,17 @@ test("gate evaluation supersession is immediate and cannot cross an experiment s
       supersedesDecisionId: "decision-look-1",
       supersedesArtifactId: "runtime-integrity-artifact-1",
     });
+    const scheduledLook2 = buildLiteLearningScheduledRiskSet({
+      db: database.db,
+      tenantId: "tenant-a",
+      reservationId: String(look2.reservation.reservation_id),
+    });
+    assert.equal(scheduledLook2.scheduled_risk_set.pairs.length, 192);
+    assert.equal(scheduledLook2.scheduled_risk_set.waves.length, 2);
+    assert.equal(
+      scheduledLook2.scheduled_risk_set.waves.at(-1)?.cumulative_pair_count,
+      192,
+    );
     const rebindDecision = (
       source: typeof look2,
       values: Partial<Record<string, string | number | null>>,

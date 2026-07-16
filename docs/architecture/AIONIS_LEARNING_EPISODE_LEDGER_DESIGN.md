@@ -4737,6 +4737,29 @@ retire_min_independent_demotion_windows     = 2
 retirement_required_complete_waves         = 2
 ```
 
+The calibration-pending code-registry draft currently has four online roles
+whose statistic, direction, threshold, alpha, checkpoint set, and missingness
+coding are fully determined by this document:
+
+| role | statistic / claim | policy threshold and alpha | missingness coding |
+|---|---|---|---|
+| exploit candidate absolute-harm readiness | `R1 <= 1/20` | `1/80`, checkpoints 2/3 | candidate missing is loss |
+| exploit harm noninferiority | `Delta <= +1/20` | `1/80`, checkpoints 2/3 | candidate missing is loss; control missing is no-loss |
+| exploit harm deterioration | `Delta > +1/20` | `1/80`, checkpoints 2/3 | candidate missing is no-loss; control missing is loss |
+| verified candidate absolute-harm safety | `R1 > 1/20` | `1/1000`, checkpoints 1/2/3 | candidate missing is no-loss |
+
+The accepted-action noninferiority risk set/track, the policy-affected
+exploration endpoint set and margin, and the complete-risk-set encoding for the
+separate observed bound are not yet uniquely specified. The scalar-verdict
+precedence between checkpoint-1 `hold` and a separate `pause_required` safety
+fact also needs one canonical wording. They remain explicit
+`unresolved_fail_closed` registry requirements. Until a reviewed policy
+amendment closes them, an implementation may evaluate and report the four
+fixed roles above but must not claim a complete promotion intersection-union
+test or emit `promotion_ready`. This is one reason `gate-policy-v1` remains
+`calibration_pending`; implementations must not fill these gaps with local
+defaults.
+
 For gate-policy v1, the family is the single registered confirmatory attempt for
 one `(tenant, task_family, candidate policy implementation contract)`; aliases
 of the same implementation digest cannot open another attempt. The probability
@@ -4918,6 +4941,29 @@ and can be evaluated once. Gate-policy v1 uses checkpoint indexes 1/2/3; only
 sample for one index. A phase/allocation revision cannot create new alpha. Only
 the sole confirmatory-attempt revision for the task-family implementation may
 reserve the three checkpoints; all other revisions are integrity/safety-only.
+
+The outcome-free scheduled-risk-set read model is deliberately narrower than
+checkpoint evaluation. Before reconstructing the registered 96/192/384-pair
+prefix, it runs a scoped structural verifier bound to the exact tenant,
+reservation, and confirmatory attempt. That verifier reuses the protected
+Runtime-artifact/reservation rules for event/artifact cutoffs and required heads,
+then verifies the policy/revision/attempt binding, manifest, assignment bits,
+all 768 namespace leases, uniform release operation, generation continuity,
+and release authority references.
+Its result is a `reconstructed_non_authority_preview`, reports the code-registry
+status and whether the stored calibration digest exactly matches a registered
+artifact, and always sets `production_authority_eligible=false`. The current
+`calibration_pending` draft therefore remains visibly unregistered even when a
+test database contains a self-consistent synthetic calibration row.
+
+That structural read model includes no outcome fields and emits no evidence
+verdict. It neither scans nor adjudicates unrelated tenants or non-Runtime
+external evidence rows. External evidence-head validation, authenticated
+pre-response arrival, interference attestation, and verified feedback
+aggregation are reported only as unevaluated requirements outside the
+structural layer. A later protected evaluator must complete those layers before
+it may consume a checkpoint or produce `hold`, `pause_required`, promotion,
+demotion, or retirement readiness.
 
 #### 12.3 Prospective operating-characteristic calibration
 

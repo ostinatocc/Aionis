@@ -1,13 +1,13 @@
 {
   "schema_version": "aionis_runtime_complexity_budget_v1",
-  "baseline_commit": "a2a5c67c23efdc0c536040e67cacf6b371afd070",
-  "intent": "Structural growth guard only; the exact Task 8.2A kernel rebaseline adds strict versioned evidence DTOs, pre-calibration gate-policy digest binding, exact BigInt absolute-risk and risk-difference randomization kernels, exact McNemar and offline finite-lattice checks, independent brute-force and compressed-reference oracles, frozen 96/192/384 boundary vectors, and policy-shaped resource regressions while keeping the gate calibration_pending and adding no authority action, route, environment field, largest-file growth, or import cycle.",
+  "baseline_commit": "11eb4066d589292c4f6d542fac0dfbf491a3eaef",
+  "intent": "Structural growth guard only; the latter Task 8.2A rebaseline adds exact lattice confidence inversion as a diagnostic, four caller-proof policy-fixed online endpoint wrappers with endpoint-specific missingness, explicit unresolved fail-closed policy requirements, and one reservation-bound outcome-free scheduled-risk-set read model. The read model uses tenant/reservation/attempt-scoped protected structural integrity, leaves external evidence to its later authority verifier, exposes calibration_pending and authority-ineligible status, and emits no evidence verdict or mutation. The ledger authority file grows deliberately so global and scoped checks reuse one Runtime-prefix, release, generation, and release-reference rule set instead of duplicating authority logic; independent inversion oracles and real-SQLite orphan-reservation, partial-release, and external-evidence-isolation regressions cover the change. It adds no route, environment field, or import cycle.",
   "thresholds": {
-    "source_files": 320,
-    "source_lines": 157931,
+    "source_files": 321,
+    "source_lines": 160344,
     "route_matrix_entries": 21,
     "env_schema_fields": 177,
     "import_cycles": 0,
-    "largest_file_lines": 7203
+    "largest_file_lines": 7486
   }
 }

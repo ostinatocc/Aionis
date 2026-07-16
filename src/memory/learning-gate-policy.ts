@@ -99,6 +99,111 @@ const GATE_POLICY_CORE_CONFIG = deepFreeze({
 
 export type LearningGatePolicyCoreConfig = typeof GATE_POLICY_CORE_CONFIG;
 
+export const LEARNING_GATE_POLICY_ONLINE_ENDPOINTS = deepFreeze([
+  {
+    endpoint_id: "exploit_candidate_absolute_harm_readiness",
+    track: "exploit",
+    risk_set: "scheduled_exploit_namespace_pairs",
+    binary_loss_endpoint: "verified_policy_affected_harm",
+    unverified_or_neutral_outcome: "missing",
+    statistic: "candidate_absolute_risk",
+    claim: "at_most",
+    threshold_config_key: "max_candidate_exploit_harm_upper",
+    rejection_alpha_config_key: "alpha_per_direction_per_formal_look",
+    eligible_checkpoint_indexes: [2, 3],
+    missingness_encoding: {
+      candidate: "missing_as_loss",
+      control: "not_used",
+    },
+    verdict_role: "promotion_iut_component",
+  },
+  {
+    endpoint_id: "exploit_harm_noninferiority",
+    track: "exploit",
+    risk_set: "scheduled_exploit_namespace_pairs",
+    binary_loss_endpoint: "verified_policy_affected_harm",
+    unverified_or_neutral_outcome: "missing",
+    statistic: "candidate_control_risk_difference",
+    claim: "at_most",
+    threshold_config_key: "exploit_harm_noninferiority_margin",
+    rejection_alpha_config_key: "alpha_per_direction_per_formal_look",
+    eligible_checkpoint_indexes: [2, 3],
+    missingness_encoding: {
+      candidate: "missing_as_loss",
+      control: "missing_as_no_loss",
+    },
+    verdict_role: "promotion_iut_component",
+  },
+  {
+    endpoint_id: "exploit_harm_deterioration",
+    track: "exploit",
+    risk_set: "scheduled_exploit_namespace_pairs",
+    binary_loss_endpoint: "verified_policy_affected_harm",
+    unverified_or_neutral_outcome: "missing",
+    statistic: "candidate_control_risk_difference",
+    claim: "above",
+    threshold_config_key: "exploit_harm_noninferiority_margin",
+    rejection_alpha_config_key: "alpha_per_direction_per_formal_look",
+    eligible_checkpoint_indexes: [2, 3],
+    missingness_encoding: {
+      candidate: "missing_as_no_loss",
+      control: "missing_as_loss",
+    },
+    verdict_role: "sole_v1_demotion_endpoint",
+  },
+  {
+    endpoint_id: "verified_candidate_absolute_harm_pause",
+    track: "exploit",
+    risk_set: "scheduled_exploit_namespace_pairs",
+    binary_loss_endpoint: "verified_policy_affected_harm",
+    unverified_or_neutral_outcome: "missing",
+    statistic: "candidate_absolute_risk",
+    claim: "above",
+    threshold_config_key: "operational_pause_verified_harm_lower_above",
+    rejection_alpha_config_key: "operational_pause_alpha_per_checkpoint",
+    eligible_checkpoint_indexes: [1, 2, 3],
+    missingness_encoding: {
+      candidate: "missing_as_no_loss",
+      control: "not_used",
+    },
+    verdict_role: "separate_automatic_safety_trigger",
+  },
+] as const);
+
+export type LearningGatePolicyOnlineEndpoint =
+  (typeof LEARNING_GATE_POLICY_ONLINE_ENDPOINTS)[number];
+export type LearningGatePolicyOnlineEndpointId =
+  LearningGatePolicyOnlineEndpoint["endpoint_id"];
+
+export function resolveLearningGatePolicyOnlineEndpoint(
+  endpointId: LearningGatePolicyOnlineEndpointId,
+): LearningGatePolicyOnlineEndpoint {
+  const endpoint = LEARNING_GATE_POLICY_ONLINE_ENDPOINTS.find(
+    (candidate) => candidate.endpoint_id === endpointId,
+  );
+  if (!endpoint) throw new Error(`Unknown learning gate online endpoint: ${endpointId}`);
+  return endpoint;
+}
+
+export const LEARNING_GATE_POLICY_UNRESOLVED_ENDPOINT_REQUIREMENTS = deepFreeze([
+  {
+    requirement_id: "accepted_action_noninferiority_risk_set_and_track",
+    status: "unresolved_fail_closed",
+  },
+  {
+    requirement_id: "policy_affected_exploration_endpoint_set_and_margin",
+    status: "unresolved_fail_closed",
+  },
+  {
+    requirement_id: "observed_bound_full_risk_set_encoding",
+    status: "unresolved_fail_closed",
+  },
+  {
+    requirement_id: "checkpoint_1_scalar_pause_required_precedence",
+    status: "unresolved_fail_closed",
+  },
+] as const);
+
 const GATE_POLICY_IMPLEMENTATION_CONTRACT = deepFreeze({
   contract_version: "learning_gate_policy_implementation_contract_v1",
   gate_policy_id: LEARNING_GATE_POLICY_ID,
@@ -117,6 +222,9 @@ const GATE_POLICY_IMPLEMENTATION_CONTRACT = deepFreeze({
     assignment_balance_rule: "one_candidate_one_control_per_frozen_pair",
     assignment_randomness_rule: "one_frozen_hidden_bit_per_canonical_pair_no_redraw",
   },
+  online_endpoint_registry: LEARNING_GATE_POLICY_ONLINE_ENDPOINTS,
+  unresolved_endpoint_requirements:
+    LEARNING_GATE_POLICY_UNRESOLVED_ENDPOINT_REQUIREMENTS,
   frozen_config: GATE_POLICY_CORE_CONFIG,
   golden_vectors: [
     {

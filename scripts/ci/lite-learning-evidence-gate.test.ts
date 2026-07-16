@@ -827,20 +827,23 @@ test("calibration-pending 384-pair shapes are exact, deterministic, and inside t
     contrasts: readonly Contrast[];
     resultSha256: string;
   }>> = [
+    // Result identities include the gate implementation-contract digest. These
+    // vectors therefore rebase when the calibration-pending endpoint registry
+    // is made more explicit, even though the exact tail numerators stay fixed.
     {
       name: "all-minus",
       contrasts: Array.from({ length: 384 }, () => -1 as const),
-      resultSha256: "83973b75d47e081d47ced00670ac4ee4cec8c5dbb21ad994c78d294a86ca6122",
+      resultSha256: "88851dfe645940c6f90a208c8516d85632c1f453ce9bf4002480937d5b617bd9",
     },
     {
       name: "all-zero",
       contrasts: Array.from({ length: 384 }, () => 0 as const),
-      resultSha256: "71af427484cdc9ab0f87ca7059efb1cae7dbf5f098c5bb32939d9fe5afcb58c3",
+      resultSha256: "5ddd0a8ae6617b5c0eea8ca0c8f08113a8bfef5525405dce05a71cfc607af6bc",
     },
     {
       name: "all-plus",
       contrasts: Array.from({ length: 384 }, () => 1 as const),
-      resultSha256: "7317d50368a76e6dfe58332a34eb0c4b5790054b21add2f0b4f9968bbf6bae0b",
+      resultSha256: "1ce6481fac5ab8244d6c498c9d0a165fd50b5790a5f2ecec178849a95433ac05",
     },
     {
       name: "balanced",
@@ -848,17 +851,17 @@ test("calibration-pending 384-pair shapes are exact, deterministic, and inside t
         { length: 384 },
         (_, index) => index % 3 === 0 ? -1 as const : index % 3 === 1 ? 0 as const : 1 as const,
       ),
-      resultSha256: "2654af502c1066c5de740d44eb5cf500c1bc673abd817ad8c5d7ec7d5c2b2a79",
+      resultSha256: "818df8d61d7699a0cee53d5512d8c1f04ef5b1dca78930c3c059ba6d8648b5df",
     },
     {
       name: "boundary",
       contrasts: Array.from({ length: 384 }, (_, index) => index < 192 ? -1 as const : 1 as const),
-      resultSha256: "62cba7692638c18b2b6b250bf48ae2da8fd443547bac781d1628d2270d4f7554",
+      resultSha256: "59ff38df31dbaca4b5ec43111cc5c3978ed3baec6676c4b0adae7dfcc32cd96d",
     },
     {
       name: "worst-missing-coded",
       contrasts: Array.from({ length: 384 }, (_, index) => index % 5 === 0 ? 1 as const : 0 as const),
-      resultSha256: "4268c775426f84266abeef81efaf8f94a66dcd94090e69f5a116c4f9fc989109",
+      resultSha256: "c202899136b08540546428e76fa28473e728518901398d57e68aedb7bdbee2f5",
     },
   ];
   let maximumObservedRss = process.memoryUsage().rss;

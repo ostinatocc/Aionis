@@ -2943,6 +2943,125 @@ export function assertLiteLearningEpisodeLedgerSchemaIntegrity(db: SqliteDatabas
   }
 }
 
+type LiteLearningConfirmatoryIntegrityScope = Readonly<{
+  tenantId: string;
+  confirmatoryAttemptId: string;
+}>;
+
+function confirmatoryIntegrityScopeSql(
+  scope: LiteLearningConfirmatoryIntegrityScope | undefined,
+  alias = "",
+): Readonly<{ clause: string; params: readonly string[] }> {
+  if (!scope) return { clause: "", params: [] };
+  const prefix = alias.length === 0 ? "" : `${alias}.`;
+  return {
+    clause: `WHERE ${prefix}tenant_id = ? AND ${prefix}confirmatory_attempt_id = ?`,
+    params: [scope.tenantId, scope.confirmatoryAttemptId],
+  };
+}
+
+function assertLiteLearningUniformNamespaceRelease(
+  db: SqliteDatabase,
+  scope?: LiteLearningConfirmatoryIntegrityScope,
+): void {
+  const scoped = confirmatoryIntegrityScopeSql(scope);
+  const partialRelease = db.prepare(
+    `SELECT tenant_id, confirmatory_attempt_id
+     FROM lite_learning_namespace_leases
+     ${scoped.clause}
+     GROUP BY tenant_id, confirmatory_attempt_id
+     HAVING COUNT(DISTINCT status) > 1
+        OR COUNT(DISTINCT COALESCE(release_operation_id, '')) > 1
+        OR COUNT(DISTINCT COALESCE(release_ref_kind, '')) > 1
+        OR COUNT(DISTINCT COALESCE(release_ref_id, '')) > 1
+        OR COUNT(DISTINCT COALESCE(released_at, '')) > 1`,
+  ).all(...scoped.params);
+  if (partialRelease.length > 0) {
+    throw new Error("lite_learning_integrity_failed:partial_or_mixed_namespace_release");
+  }
+}
+
+function assertLiteLearningNamespaceGenerationContinuity(
+  db: SqliteDatabase,
+  scope?: LiteLearningConfirmatoryIntegrityScope,
+): void {
+  const scopedClause = scope
+    ? `WHERE history.tenant_id = ?
+         AND history.memory_namespace_sha256 IN (
+           SELECT scoped.memory_namespace_sha256
+           FROM lite_learning_namespace_leases AS scoped
+           WHERE scoped.tenant_id = ? AND scoped.confirmatory_attempt_id = ?
+         )`
+    : "";
+  const scopedParams = scope
+    ? [scope.tenantId, scope.tenantId, scope.confirmatoryAttemptId]
+    : [];
+  const generationGaps = db.prepare(
+    `SELECT history.tenant_id, history.memory_namespace_sha256
+     FROM lite_learning_namespace_leases AS history
+     ${scopedClause}
+     GROUP BY history.tenant_id, history.memory_namespace_sha256
+     HAVING MIN(history.lease_generation) <> 1
+        OR MAX(history.lease_generation) <> COUNT(DISTINCT history.lease_generation)`,
+  ).all(...scopedParams);
+  if (generationGaps.length > 0) {
+    throw new Error("lite_learning_integrity_failed:namespace_lease_generation_gap");
+  }
+}
+
+function assertLiteLearningNamespaceReleaseReferences(
+  db: SqliteDatabase,
+  scope?: LiteLearningConfirmatoryIntegrityScope,
+): void {
+  const scoped = confirmatoryIntegrityScopeSql(scope, "lease");
+  const scopePredicate = scoped.clause.length === 0
+    ? ""
+    : `${scoped.clause.replace(/^WHERE /u, "AND ")}`;
+  const unresolvedRelease = scalarCount(
+    db,
+    `SELECT COUNT(*) AS count
+     FROM lite_learning_namespace_leases AS lease
+     WHERE lease.status = 'released'
+       ${scopePredicate}
+       AND (
+         (lease.release_ref_kind = 'experiment_close' AND NOT EXISTS (
+           SELECT 1 FROM lite_learning_experiment_closures AS closure
+           WHERE closure.tenant_id = lease.tenant_id
+             AND closure.experiment_close_id = lease.release_ref_id
+             AND closure.confirmatory_attempt_id = lease.confirmatory_attempt_id
+             AND closure.experiment_id = lease.experiment_id
+             AND closure.experiment_revision = lease.experiment_revision
+             AND closure.namespace_set_sha256 = lease.namespace_set_sha256
+         ))
+         OR
+         (lease.release_ref_kind = 'terminal_authority_adjudication' AND NOT EXISTS (
+           SELECT 1
+           FROM lite_learning_gate_decisions AS decision
+           JOIN lite_learning_confirmatory_attempts AS attempt
+             ON attempt.tenant_id = lease.tenant_id
+            AND attempt.confirmatory_attempt_id = lease.confirmatory_attempt_id
+           WHERE decision.tenant_id = lease.tenant_id
+             AND decision.decision_id = lease.release_ref_id
+             AND decision.decision_kind = 'authority_adjudication'
+             AND decision.authority_action IN ('promote', 'demote', 'retire')
+             AND decision.task_family = attempt.task_family
+             AND decision.candidate_policy_id = attempt.candidate_policy_id
+             AND decision.candidate_policy_version = attempt.candidate_policy_version
+             AND decision.candidate_policy_implementation_sha256 =
+               attempt.candidate_policy_implementation_sha256
+             AND decision.experiment_id = lease.experiment_id
+             AND decision.experiment_revision = lease.experiment_revision
+             AND decision.gate_policy_id = attempt.gate_policy_id
+             AND decision.gate_policy_version = attempt.gate_policy_version
+         ))
+       )`,
+    ...scoped.params,
+  );
+  if (unresolvedRelease > 0) {
+    throw new Error("lite_learning_integrity_failed:unresolved_namespace_release");
+  }
+}
+
 export function assertLiteLearningEpisodeLedgerIntegrity(
   db: SqliteDatabase,
   checkedAt = new Date().toISOString(),
@@ -3007,72 +3126,9 @@ export function assertLiteLearningEpisodeLedgerIntegrity(
     throw new Error("lite_learning_integrity_failed:namespace_pair_arm_imbalance");
   }
 
-  const partialRelease = db.prepare(
-    `SELECT tenant_id, confirmatory_attempt_id
-     FROM lite_learning_namespace_leases
-     GROUP BY tenant_id, confirmatory_attempt_id
-     HAVING COUNT(DISTINCT status) > 1
-        OR COUNT(DISTINCT COALESCE(release_operation_id, '')) > 1
-        OR COUNT(DISTINCT COALESCE(release_ref_kind, '')) > 1
-        OR COUNT(DISTINCT COALESCE(release_ref_id, '')) > 1
-        OR COUNT(DISTINCT COALESCE(released_at, '')) > 1`,
-  ).all();
-  if (partialRelease.length > 0) {
-    throw new Error("lite_learning_integrity_failed:partial_or_mixed_namespace_release");
-  }
-
-  const generationGaps = db.prepare(
-    `SELECT tenant_id, memory_namespace_sha256
-     FROM lite_learning_namespace_leases
-     GROUP BY tenant_id, memory_namespace_sha256
-     HAVING MIN(lease_generation) <> 1
-        OR MAX(lease_generation) <> COUNT(DISTINCT lease_generation)`,
-  ).all();
-  if (generationGaps.length > 0) {
-    throw new Error("lite_learning_integrity_failed:namespace_lease_generation_gap");
-  }
-
-  const unresolvedRelease = scalarCount(
-    db,
-    `SELECT COUNT(*) AS count
-     FROM lite_learning_namespace_leases AS lease
-     WHERE lease.status = 'released'
-       AND (
-         (lease.release_ref_kind = 'experiment_close' AND NOT EXISTS (
-           SELECT 1 FROM lite_learning_experiment_closures AS closure
-           WHERE closure.tenant_id = lease.tenant_id
-             AND closure.experiment_close_id = lease.release_ref_id
-             AND closure.confirmatory_attempt_id = lease.confirmatory_attempt_id
-             AND closure.experiment_id = lease.experiment_id
-             AND closure.experiment_revision = lease.experiment_revision
-             AND closure.namespace_set_sha256 = lease.namespace_set_sha256
-         ))
-         OR
-         (lease.release_ref_kind = 'terminal_authority_adjudication' AND NOT EXISTS (
-           SELECT 1
-           FROM lite_learning_gate_decisions AS decision
-           JOIN lite_learning_confirmatory_attempts AS attempt
-             ON attempt.tenant_id = lease.tenant_id
-            AND attempt.confirmatory_attempt_id = lease.confirmatory_attempt_id
-           WHERE decision.tenant_id = lease.tenant_id
-             AND decision.decision_id = lease.release_ref_id
-             AND decision.decision_kind = 'authority_adjudication'
-             AND decision.authority_action IN ('promote', 'demote', 'retire')
-             AND decision.task_family = attempt.task_family
-             AND decision.candidate_policy_id = attempt.candidate_policy_id
-             AND decision.candidate_policy_version = attempt.candidate_policy_version
-             AND decision.candidate_policy_implementation_sha256 =
-               attempt.candidate_policy_implementation_sha256
-             AND decision.experiment_id = lease.experiment_id
-             AND decision.experiment_revision = lease.experiment_revision
-             AND decision.gate_policy_id = attempt.gate_policy_id
-             AND decision.gate_policy_version = attempt.gate_policy_version
-         ))
-       )`,
-  );
-  if (unresolvedRelease > 0) {
-    throw new Error("lite_learning_integrity_failed:unresolved_namespace_release");
-  }
+  assertLiteLearningUniformNamespaceRelease(db);
+  assertLiteLearningNamespaceGenerationContinuity(db);
+  assertLiteLearningNamespaceReleaseReferences(db);
   assertLiteLearningExperimentCloseBundlesIntegrity(
     db,
     options.authorityReceiptKeyring,
@@ -5566,6 +5622,30 @@ function learningTableRows(
   ).all() as LiteLearningAuthorityRow[];
 }
 
+function scopedLearningTableRows(
+  db: SqliteDatabase,
+  table: keyof typeof LITE_LEARNING_LEDGER_REQUIRED_COLUMNS,
+  whereSql: string,
+  params: readonly unknown[],
+  orderBy: string,
+): LiteLearningAuthorityRow[] {
+  const columns = LITE_LEARNING_LEDGER_REQUIRED_COLUMNS[table]
+    .filter((column) => !(AUTO_INCREMENT_COLUMNS[table] ?? []).includes(column));
+  return db.prepare(
+    `SELECT ${columns.join(", ")} FROM ${table} WHERE ${whereSql} ORDER BY ${orderBy}`,
+  ).all(...params) as LiteLearningAuthorityRow[];
+}
+
+function exactlyOneScopedLearningRow(
+  rows: readonly LiteLearningAuthorityRow[],
+  label: string,
+): LiteLearningAuthorityRow {
+  if (rows.length !== 1) {
+    throw new Error(`lite_learning_scoped_integrity_failed:${label}_requires_exactly_one_row`);
+  }
+  return rows[0]!;
+}
+
 function learningEventFromRow(row: LiteLearningAuthorityRow): EventWithoutDigest {
   return LearningEpisodeEventWithoutDigestSchema.parse({
     contract_version: "aionis_learning_episode_event_v1",
@@ -5722,6 +5802,209 @@ function validateStoredConfirmatorySets(db: SqliteDatabase): void {
   if (pairCount !== allPairs.length || leaseCount !== allLeases.length) {
     throw new Error("orphan confirmatory pair or namespace lease");
   }
+}
+
+export type LiteLearningGateReservationScopedIntegrity = Readonly<{
+  verifier_id: "aionis_lite_learning_gate_reservation_scoped_integrity";
+  verifier_version: 1;
+  scope: "reservation_bound_runtime_prefix_and_confirmatory_lease_lifecycle";
+  tenant_id: string;
+  reservation_id: string;
+  runtime_integrity_artifact_id: string;
+  confirmatory_attempt_id: string;
+}>;
+
+/**
+ * Verifies only the immutable Runtime look prefix and confirmatory design bound
+ * to one tenant/reservation. External evidence remains the responsibility of
+ * its protected ingestion verifier and unrelated tenants are not replayed.
+ */
+export function assertLiteLearningGateReservationScopedIntegrity(
+  db: SqliteDatabase,
+  args: Readonly<{ tenantId: string; reservationId: string }>,
+): LiteLearningGateReservationScopedIntegrity {
+  if (typeof args?.tenantId !== "string" || args.tenantId.length === 0
+    || typeof args.reservationId !== "string" || args.reservationId.length === 0) {
+    throw new Error("lite_learning_scoped_integrity_failed:tenant_and_reservation_required");
+  }
+  assertLiteLearningEpisodeLedgerSchemaIntegrity(db);
+  assertLiteRuntimeAuthorityIdentity(db);
+
+  const reservation = exactlyOneScopedLearningRow(scopedLearningTableRows(
+    db,
+    "lite_learning_gate_look_reservations",
+    "tenant_id = ? AND reservation_id = ?",
+    [args.tenantId, args.reservationId],
+    "reservation_id",
+  ), "look_reservation");
+  assertExactRowShape("lite_learning_gate_look_reservations", reservation);
+
+  let runtimeArtifact: LiteLearningAuthorityRow;
+  try {
+    runtimeArtifact = exactlyOneScopedLearningRow(scopedLearningTableRows(
+      db,
+      "lite_learning_evidence_artifacts",
+      "tenant_id = ? AND artifact_id = ?",
+      [reservation.tenant_id, reservation.runtime_integrity_artifact_id],
+      "artifact_id",
+    ), "runtime_integrity_artifact");
+    const lookIndex = requiredInteger(runtimeArtifact, "look_index");
+    const runtimePrefix = scopedLearningTableRows(
+      db,
+      "lite_learning_evidence_artifacts",
+      `tenant_id = ? AND artifact_kind = 'runtime_integrity_gate'
+         AND evidence_series_id = ? AND applicable_experiment_id = ?
+         AND applicable_experiment_revision = ? AND look_index <= ?`,
+      [
+        reservation.tenant_id,
+        runtimeArtifact.evidence_series_id,
+        reservation.experiment_id,
+        reservation.experiment_revision,
+        lookIndex,
+      ],
+      "look_index",
+    );
+    if (runtimePrefix.length !== lookIndex) {
+      throw new Error("Runtime-integrity prefix must contain every look through the reservation");
+    }
+    for (const [prefixIndex, artifact] of runtimePrefix.entries()) {
+      if (artifact.look_index !== prefixIndex + 1) {
+        throw new Error("Runtime-integrity prefix look indexes must be complete and canonical");
+      }
+      const boundReservation = exactlyOneScopedLearningRow(scopedLearningTableRows(
+        db,
+        "lite_learning_gate_look_reservations",
+        "tenant_id = ? AND runtime_integrity_artifact_id = ?",
+        [reservation.tenant_id, artifact.artifact_id],
+        "reservation_id",
+      ), `runtime_integrity_look_${String(prefixIndex + 1)}_reservation`);
+      assertExactRowShape("lite_learning_evidence_artifacts", artifact);
+      assertExactRowShape("lite_learning_gate_look_reservations", boundReservation);
+      validateAuthorityFactReferences(db, "lite_learning_evidence_artifacts", artifact);
+      validateAuthorityFactReferences(
+        db,
+        "lite_learning_gate_look_reservations",
+        boundReservation,
+      );
+      if (prefixIndex === runtimePrefix.length - 1
+        && (artifact.artifact_id !== runtimeArtifact.artifact_id
+          || boundReservation.reservation_id !== reservation.reservation_id)) {
+        throw new Error("Runtime-integrity prefix does not terminate at the requested reservation");
+      }
+    }
+  } catch (error) {
+    throw new Error("lite_learning_integrity_failed:invalid_runtime_gate_prefix", {
+      cause: error,
+    });
+  }
+
+  const revision = exactlyOneScopedLearningRow(scopedLearningTableRows(
+    db,
+    "lite_learning_experiment_revisions",
+    "tenant_id = ? AND experiment_id = ? AND experiment_revision = ?",
+    [reservation.tenant_id, reservation.experiment_id, reservation.experiment_revision],
+    "experiment_revision",
+  ), "confirmatory_revision");
+  assertExactRowShape("lite_learning_experiment_revisions", revision);
+
+  const attempt = exactlyOneScopedLearningRow(scopedLearningTableRows(
+    db,
+    "lite_learning_confirmatory_attempts",
+    "tenant_id = ? AND experiment_id = ? AND experiment_revision = ?",
+    [reservation.tenant_id, reservation.experiment_id, reservation.experiment_revision],
+    "confirmatory_attempt_id",
+  ), "confirmatory_attempt");
+  assertExactRowShape("lite_learning_confirmatory_attempts", attempt);
+  assertRowBindings(attempt, {
+    tenant_id: reservation.tenant_id,
+    task_family: reservation.task_family,
+    candidate_policy_id: reservation.candidate_policy_id,
+    candidate_policy_version: reservation.candidate_policy_version,
+    candidate_policy_implementation_sha256:
+      reservation.candidate_policy_implementation_sha256,
+    experiment_id: reservation.experiment_id,
+    experiment_revision: reservation.experiment_revision,
+    gate_policy_id: reservation.gate_policy_id,
+    gate_policy_version: reservation.gate_policy_version,
+    gate_policy_config_sha256: reservation.gate_policy_config_sha256,
+    randomization_pair_manifest_sha256: reservation.randomization_pair_manifest_sha256,
+    activation_schedule_sha256: reservation.activation_schedule_sha256,
+  }, "scoped confirmatory attempt reservation binding");
+
+  for (const policy of [
+    exactlyOneScopedLearningRow(scopedLearningTableRows(
+      db,
+      "lite_learning_policy_versions",
+      "tenant_id = ? AND policy_kind = 'candidate' AND policy_id = ? AND policy_version = ?",
+      [attempt.tenant_id, attempt.candidate_policy_id, attempt.candidate_policy_version],
+      "policy_id, policy_version",
+    ), "candidate_policy"),
+    exactlyOneScopedLearningRow(scopedLearningTableRows(
+      db,
+      "lite_learning_policy_versions",
+      "tenant_id = ? AND policy_kind = 'gate' AND policy_id = ? AND policy_version = ?",
+      [attempt.tenant_id, attempt.gate_policy_id, attempt.gate_policy_version],
+      "policy_id, policy_version",
+    ), "gate_policy"),
+  ]) {
+    assertExactRowShape("lite_learning_policy_versions", policy);
+    validatePolicyVersion(policy);
+  }
+  validateExperimentRevision(db, revision);
+  validateConfirmatoryAttempt(db, attempt, { exactReplay: true });
+
+  const pairs = scopedLearningTableRows(
+    db,
+    "lite_learning_randomization_pairs",
+    "tenant_id = ? AND confirmatory_attempt_id = ?",
+    [attempt.tenant_id, attempt.confirmatory_attempt_id],
+    "pair_ordinal",
+  );
+  const leases = scopedLearningTableRows(
+    db,
+    "lite_learning_namespace_leases",
+    "tenant_id = ? AND confirmatory_attempt_id = ?",
+    [attempt.tenant_id, attempt.confirmatory_attempt_id],
+    "namespace_lease_id",
+  );
+  const manifest = validateRandomizationManifest(pairs, attempt);
+  for (const owner of [revision, attempt]) {
+    if (owner.randomization_pair_manifest_sha256 !== manifest.pairManifestSha256
+      || owner.activation_schedule_sha256 !== manifest.activationScheduleSha256) {
+      throw new Error("lite_learning_scoped_integrity_failed:confirmatory_manifest_digest");
+    }
+  }
+  for (const lease of leases) {
+    assertExactRowShape("lite_learning_namespace_leases", lease);
+  }
+  validateNamespaceLeaseSet(db, revision, attempt, pairs, leases.map((lease) => ({
+    ...lease,
+    status: "active",
+    release_operation_id: null,
+    release_ref_kind: null,
+    release_ref_id: null,
+    released_at: null,
+  })));
+  const confirmatoryScope = {
+    tenantId: requiredString(attempt, "tenant_id"),
+    confirmatoryAttemptId: requiredString(attempt, "confirmatory_attempt_id"),
+  };
+  assertLiteLearningUniformNamespaceRelease(db, confirmatoryScope);
+  assertLiteLearningNamespaceGenerationContinuity(db, confirmatoryScope);
+  assertLiteLearningNamespaceReleaseReferences(db, confirmatoryScope);
+
+  return Object.freeze({
+    verifier_id: "aionis_lite_learning_gate_reservation_scoped_integrity",
+    verifier_version: 1,
+    scope: "reservation_bound_runtime_prefix_and_confirmatory_lease_lifecycle",
+    tenant_id: requiredString(reservation, "tenant_id"),
+    reservation_id: requiredString(reservation, "reservation_id"),
+    runtime_integrity_artifact_id: requiredString(
+      reservation,
+      "runtime_integrity_artifact_id",
+    ),
+    confirmatory_attempt_id: requiredString(attempt, "confirmatory_attempt_id"),
+  });
 }
 
 function validateStoredExposureLease(
