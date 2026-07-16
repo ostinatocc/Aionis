@@ -7,6 +7,7 @@ import {
   isLearningExposurePromotionEligible,
   learningEpisodeEventDigest,
   learningEpisodeTrackSummary,
+  resolveLearningExposureAssignmentMode,
   type EventWithoutDigest,
   type ExposureCommittedV1,
   type LearningLedgerItem,
@@ -47,11 +48,7 @@ export function buildLiteGuideExposureEventRow(args: {
       .map((column) => [column, null]),
   ) as LiteLearningAuthorityRow;
   const envelope = payload.host_task_envelope;
-  const assignmentMode = {
-    matched_pair_csprng_bit_v1: "matched_pair_randomized",
-    diagnostic_sha256_48_mod_10000_v1: "diagnostic_randomized",
-    none: "unassigned",
-  }[payload.assignment_algorithm];
+  const assignmentMode = resolveLearningExposureAssignmentMode(payload);
   const hasLegacyItems = items.some((item) => item.decision_completeness === "legacy_served_only");
   const policyAffected = items.some((item) => item.decision_completeness === "complete"
     && item.served_action !== item.recorded_action);

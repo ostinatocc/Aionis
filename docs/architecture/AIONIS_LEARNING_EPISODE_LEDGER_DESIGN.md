@@ -4031,6 +4031,7 @@ type ExposureCommittedV1 = {
   assignment_algorithm:
     | "matched_pair_csprng_bit_v1"
     | "diagnostic_sha256_48_mod_10000_v1"
+    | "fixed_non_randomized_v1"
     | "none";
   assignment_namespace_sha256: string | null;
   candidate_allocation_bps: number | null;
@@ -4053,6 +4054,9 @@ type ExposureCommittedV1 = {
 
 The served surface remains authoritative in `lite_product_guide_receipts`; the
 episode payload preserves the otherwise-ephemeral policy comparison.
+`fixed_non_randomized_v1` is the explicit algorithm for new global or legacy
+fixed overrides. Historical `none` payloads and their `unassigned` derived
+cache remain immutable and valid; they are never reclassified in place.
 
 Promotion-eligible guide input also carries this strict pre-assignment envelope:
 

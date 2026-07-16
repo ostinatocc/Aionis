@@ -19,9 +19,11 @@ import {
   type AionisAdmissionCandidatePolicyProfileRule,
 } from "../../src/config.ts";
 import {
+  learningAssignmentUnitSha256,
   learningCollectionPrincipalSha256,
   learningEpisodeEventDigest,
   learningEpisodeId,
+  learningMemoryNamespaceSha256,
   type EventWithoutDigest,
 } from "../../src/memory/learning-episode-ledger.ts";
 import {
@@ -61,6 +63,10 @@ import {
   createLiteLearningEpisodeLedgerAccess,
   type LiteLearningEpisodeLedgerAccess,
 } from "../../src/store/lite-learning-episode-ledger.ts";
+import { createLiteLearningExperimentProvisioner } from
+  "../../src/store/lite-learning-experiment-provisioning.ts";
+import { createLiteLearningControlJobAccess } from
+  "../../src/store/lite-learning-control-jobs.ts";
 import {
   EFFECT_EXPECTED_V1_EVIDENCE_PREFIX,
   assertProductMeasureReceiptAuthoritySetIntegrity,
@@ -88,6 +94,102 @@ import {
 function tmpDbPath(name: string): string {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), "aionis-lite-product-facade-"));
   return path.join(dir, `${name}.sqlite`);
+}
+
+const TASK7_AA_SCOPE_MANIFEST = Object.freeze([
+  "learning-aa-cluster-00",
+  "learning-aa-cluster-01",
+  "learning-aa-cluster-02",
+  "learning-aa-cluster-03",
+  "learning-aa-cluster-04",
+  "learning-aa-cluster-05",
+  "learning-aa-cluster-06",
+  "learning-aa-cluster-07",
+  "learning-aa-cluster-08",
+  "learning-aa-cluster-09",
+  "learning-aa-cluster-10",
+  "learning-aa-cluster-11",
+  "learning-aa-cluster-12",
+  "learning-aa-cluster-13",
+  "learning-aa-cluster-14",
+  "learning-aa-cluster-15",
+] as const);
+
+function task7IntegrityProfile(args: {
+  experimentId: string;
+  revision: number;
+  servingPhase: "aa" | "shadow";
+  scopes: readonly string[];
+  candidateAllocationBps?: number;
+  mode?: "shadow" | "active";
+}): AionisAdmissionCandidatePolicyProfileRule {
+  const base = createConfirmatoryProfile();
+  assert.ok(base.experiment);
+  const [profile] = parseAdmissionCandidatePolicyProfileRules(stableStringify([{
+    ...base,
+    profile_id: `${args.experimentId}-profile`,
+    mode: args.mode ?? "shadow",
+    scopes: [...args.scopes],
+    task_families: [CONFIRMATORY_TASK_FAMILY],
+    experiment: {
+      ...base.experiment,
+      experiment_id: args.experimentId,
+      revision: args.revision,
+      serving_phase: args.servingPhase,
+      evidence_intent: "integrity_only",
+      assignment_design: "diagnostic_hash_v1",
+      candidate_allocation_bps: args.candidateAllocationBps ?? 5_000,
+      required_evidence_series: {
+        offline_paired: `${args.experimentId}-r${args.revision}-offline`,
+        production_shadow: `${args.experimentId}-r${args.revision}-shadow`,
+        tool_e2e: `${args.experimentId}-r${args.revision}-tool`,
+        runtime_integrity: `${args.experimentId}-r${args.revision}-integrity`,
+      },
+      required_external_inputs: {},
+      collection_sources: [],
+    },
+  }]));
+  assert.ok(profile?.experiment);
+  return profile;
+}
+
+type Task7AaAssignment = Readonly<{
+  scope: string;
+  assignment_arm: "candidate" | "control";
+}>;
+
+function assertTask7AaAssignmentCoverage(assignments: readonly Task7AaAssignment[]): void {
+  assert.ok(assignments.length > 1, "A/A requires more than one canonical store scope");
+  assert.equal(
+    new Set(assignments.map((entry) => entry.scope)).size,
+    assignments.length,
+    "A/A manifest entries must be distinct canonical store scopes",
+  );
+  assert.deepEqual(
+    new Set(assignments.map((entry) => entry.assignment_arm)),
+    new Set(["candidate", "control"]),
+    "A/A requires observed diagnostic assignments in both arms",
+  );
+}
+
+function normalizeTask7AaAgentContext(
+  value: unknown,
+  replacements: readonly string[],
+): string {
+  const normalize = (entry: unknown): unknown => {
+    if (typeof entry === "string") {
+      return replacements.reduce(
+        (current, replacement) => current.replaceAll(replacement, "<matched-identity>"),
+        entry,
+      );
+    }
+    if (Array.isArray(entry)) return entry.map(normalize);
+    if (!entry || typeof entry !== "object") return entry;
+    return Object.fromEntries(
+      Object.entries(entry as Record<string, unknown>).map(([key, child]) => [key, normalize(child)]),
+    );
+  };
+  return stableStringify(normalize(value));
 }
 
 function sortedKeys(value: unknown): string[] {
@@ -493,6 +595,7 @@ function registerProductFacade(args: {
   skillCandidateReviewAccess?: ReturnType<ReturnType<typeof createLiteSkillCandidateReviewStore>["createSkillCandidateReviewAccess"]>;
   captureGuidePrincipal?: (principal: AuthPrincipal | null) => void;
   learningEpisodeLedgerAccess?: LiteLearningEpisodeLedgerAccess | null;
+  learningControlJobAccess?: ReturnType<typeof createLiteLearningControlJobAccess>;
   learningExperimentResolverRegistry?: LearningExperimentResolverRegistry;
   admissionCandidatePolicyProfileRules?: readonly AionisAdmissionCandidatePolicyProfileRule[];
 }) {
@@ -512,6 +615,7 @@ function registerProductFacade(args: {
     handoffRouteService: args.handoffRouteService ?? null,
     skillCandidateReviewAccess: args.skillCandidateReviewAccess,
     learningEpisodeLedgerAccess: args.learningEpisodeLedgerAccess ?? null,
+    learningControlJobAccess: args.learningControlJobAccess,
     learningExperimentResolverRegistry: args.learningExperimentResolverRegistry,
     admissionCandidatePolicyProfileRules: args.admissionCandidatePolicyProfileRules,
   });
@@ -1421,6 +1525,441 @@ test("protected guide operation rolls back a real prepared tool decision when ov
     await liteRecallStore.close();
     await liteWriteStore.close();
     await runtimeDatabase.close();
+    fs.rmSync(path.dirname(dbPath), { recursive: true, force: true });
+  }
+});
+
+test("A/A manifest rejects a single canonical store scope instead of passing vacuously", () => {
+  assert.throws(
+    () => assertTask7AaAssignmentCoverage([{
+      scope: TASK7_AA_SCOPE_MANIFEST[0],
+      assignment_arm: "candidate",
+    }]),
+    /more than one canonical store scope/u,
+  );
+});
+
+test("A/A serves normalized recorded surfaces in both arms and shadow phase uses a new revision", async () => {
+  const dbPath = tmpDbPath("task7-aa-shadow-phase");
+  const experimentId = "task7-aa-shadow-experiment";
+  const aaProfile = task7IntegrityProfile({
+    experimentId,
+    revision: 1,
+    servingPhase: "aa",
+    scopes: TASK7_AA_SCOPE_MANIFEST,
+  });
+  const shadowProfile = task7IntegrityProfile({
+    experimentId,
+    revision: 2,
+    servingPhase: "shadow",
+    scopes: TASK7_AA_SCOPE_MANIFEST,
+  });
+  const phaseDriftProfile = task7IntegrityProfile({
+    experimentId,
+    revision: 1,
+    servingPhase: "shadow",
+    scopes: TASK7_AA_SCOPE_MANIFEST,
+  });
+  const allocationDriftProfile = task7IntegrityProfile({
+    experimentId,
+    revision: 1,
+    servingPhase: "aa",
+    scopes: TASK7_AA_SCOPE_MANIFEST,
+    candidateAllocationBps: 4_000,
+  });
+  const activeControl = createConfirmatoryProfile();
+  assert.throws(
+    () => parseAdmissionCandidatePolicyProfileRules(stableStringify([{
+      ...activeControl,
+      mode: "shadow",
+      scopes: [...TASK7_AA_SCOPE_MANIFEST],
+    }])),
+    /authority ceiling/u,
+  );
+
+  const registry = createConfirmatoryPassedRegistry();
+  let entropyCalls = 0;
+  const provisioningDependencies = {
+    registry,
+    now: () => "2026-07-16T02:00:00.000Z",
+    randomBytes: (size: number) => {
+      assert.equal(size, 32);
+      const draw = entropyCalls;
+      entropyCalls += 1;
+      return Uint8Array.from(
+        { length: size },
+        (_, index) => (0x41 + draw * 0x20 + index) & 0xff,
+      );
+    },
+  };
+  const openRuntime = (profile: AionisAdmissionCandidatePolicyProfileRule) => {
+    const runtimeDatabase = createLiteRuntimeDatabase(dbPath);
+    const liteWriteStore = createLiteWriteStoreFromDatabase(runtimeDatabase, {
+      annProjectionEnabled: false,
+    });
+    const liteRecallStore = createLiteRecallStore(dbPath);
+    const learningEpisodeLedgerAccess = createLiteLearningEpisodeLedgerAccess(runtimeDatabase);
+    const app = Fastify();
+    const env = {
+      ...liteEnv(),
+      AIONIS_ADMISSION_CANDIDATE_POLICY_MODE: "off",
+    };
+    const guards = requestGuards(env, DeterministicEmbeddingProvider);
+    registerFullProductMemoryApp({
+      app,
+      env,
+      guards,
+      liteWriteStore,
+      liteRecallStore,
+      learningEpisodeLedgerAccess,
+      learningExperimentResolverRegistry: registry,
+      admissionCandidatePolicyProfileRules: [profile],
+    });
+    return {
+      app,
+      runtimeDatabase,
+      liteWriteStore,
+      liteRecallStore,
+      learningEpisodeLedgerAccess,
+      async close() {
+        await app.close();
+        await liteRecallStore.close();
+        await liteWriteStore.close();
+        await runtimeDatabase.close();
+      },
+    };
+  };
+  const guidePayload = (scope: string, index: number, pass: string) => ({
+    operation_id: `task7-aa-guide-${pass}-${String(index).padStart(2, "0")}`,
+    tenant_id: "default",
+    scope,
+    run_id: `task7-aa-run-${pass}-${String(index).padStart(2, "0")}`,
+    consumer_agent_id: "local-user",
+    query_text: "Continue TASK7_AA_MATCHED_MEMORY through the recorded guide surface.",
+    context: {
+      task_family: CONFIRMATORY_TASK_FAMILY,
+      task_signature: "task7-aa-matched-task",
+      repository_signature: "task7-aa-matched-repository",
+    },
+    limit: 8,
+  });
+  let runtime: ReturnType<typeof openRuntime> | null = openRuntime(aaProfile);
+  try {
+    const provisioner = createLiteLearningExperimentProvisioner({
+      database: runtime.runtimeDatabase,
+      writeStore: runtime.liteWriteStore,
+      ledger: runtime.learningEpisodeLedgerAccess,
+      dependencies: provisioningDependencies,
+    });
+    const aaProvision = await provisioner.provision({
+      tenantId: "default",
+      actor: "task7-aa-provisioner",
+      operationId: "task7-aa-provision-revision-1",
+      profileRule: aaProfile,
+      taskFamily: CONFIRMATORY_TASK_FAMILY,
+      experimentId,
+      experimentRevision: 1,
+    });
+    assert.equal(aaProvision.replayed, false);
+    assert.equal(aaProvision.applicabilityManifest.serving_phase, "aa");
+    assert.equal(entropyCalls, 1);
+
+    const memoryIds = new Map<string, string>();
+    for (const scope of TASK7_AA_SCOPE_MANIFEST) {
+      const observed = await runtime.app.inject({
+        method: "POST",
+        url: "/v1/observe",
+        payload: {
+          tenant_id: "default",
+          scope,
+          actor: "local-user",
+          auto_embed: true,
+          nodes: [{
+            client_id: "task7-aa-matched-memory",
+            type: "concept",
+            title: "TASK7_AA_MATCHED_MEMORY",
+            text_summary: "TASK7_AA_MATCHED_MEMORY must stay direct-use in A/A while the candidate proposes inspection.",
+            tier: "warm",
+            confidence: 0.95,
+            salience: 0.95,
+          }],
+        },
+      });
+      assert.equal(observed.statusCode, 200, observed.body);
+      const memoryId = observed.json().memory_write.nodes[0]?.id;
+      assert.equal(typeof memoryId, "string");
+      memoryIds.set(scope, memoryId);
+    }
+
+    const firstAssignments: Array<Task7AaAssignment & {
+      assignment_bucket: number;
+      assignment_namespace_sha256: string;
+    }> = [];
+    const firstContexts = new Map<string, string>();
+    const firstSurfaces = new Map<string, string>();
+    for (const [index, scope] of TASK7_AA_SCOPE_MANIFEST.entries()) {
+      const payload = guidePayload(scope, index, "before-restart");
+      const response = await runtime.app.inject({ method: "POST", url: "/v1/guide", payload });
+      assert.equal(response.statusCode, 200, response.body);
+      const body = response.json();
+      assert.deepEqual(body.source_map.admission_candidate_policy, {
+        mode: "shadow",
+        source: "profile_rule",
+        profile_id: aaProfile.profile_id,
+        serving_authority: "experiment",
+        serving_arm: "control",
+        enrollment_state: "diagnostic",
+        promotion_eligible: false,
+        collection_class: "unverified",
+        experiment_id: experimentId,
+        experiment_revision: 1,
+        experiment_config_sha256: aaProvision.applicabilityManifest.experiment_config_sha256,
+        reason_codes: ["diagnostic_assignment", "control_arm_served"],
+      });
+      assert.doesNotMatch(response.body, /diagnostic_assignment_seed|assignment_randomness_sha256/u);
+      const event = runtime.runtimeDatabase.db.prepare(
+        `SELECT event_id, assignment_arm, assignment_bucket,
+                assignment_namespace_sha256, assignment_mode, served_arm,
+                serving_phase, policy_affected, promotion_eligible
+         FROM lite_learning_episode_events
+         WHERE operation_id = ?`,
+      ).get(payload.operation_id) as Record<string, unknown> | undefined;
+      assert.ok(event);
+      assert.ok(event.assignment_arm === "candidate" || event.assignment_arm === "control");
+      assert.equal(event.assignment_mode, "diagnostic_randomized");
+      assert.equal(event.served_arm, "control");
+      assert.equal(event.serving_phase, "aa");
+      assert.equal(event.policy_affected, 0);
+      assert.equal(event.promotion_eligible, 0);
+      assert.equal(typeof event.assignment_bucket, "number");
+      assert.match(String(event.assignment_namespace_sha256), /^[0-9a-f]{64}$/u);
+      assert.equal(body.agent_context.use_now_memory_ids.includes(memoryIds.get(scope)), true);
+      assert.equal(body.agent_context.inspect_before_use_memory_ids.includes(memoryIds.get(scope)), false);
+      const items = runtime.runtimeDatabase.db.prepare(
+        `SELECT memory_id, decision_completeness, recorded_action,
+                candidate_action, served_action, learning_track, track_reason
+         FROM lite_learning_exposure_items
+         WHERE tenant_id = ? AND scope = ? AND event_id = ?
+         ORDER BY memory_id`,
+      ).all("default", scope, event.event_id) as Array<Record<string, unknown>>;
+      assert.equal(items.length, 1);
+      assert.equal(items[0]?.memory_id, memoryIds.get(scope));
+      assert.equal(items[0]?.recorded_action, "use_now");
+      assert.equal(items[0]?.candidate_action, "inspect_before_use");
+      assert.equal(items[0]?.served_action, "use_now");
+      const normalizedSurface = stableStringify(items.map((item) => ({
+        decision_completeness: item.decision_completeness,
+        recorded_action: item.recorded_action,
+        candidate_action: item.candidate_action,
+        served_action: item.served_action,
+        learning_track: item.learning_track,
+        track_reason: item.track_reason,
+      })));
+      const normalizedContext = normalizeTask7AaAgentContext(
+        body.agent_context,
+        [scope, memoryIds.get(scope)!],
+      );
+      firstSurfaces.set(scope, normalizedSurface);
+      firstContexts.set(scope, normalizedContext);
+      firstAssignments.push({
+        scope,
+        assignment_arm: event.assignment_arm,
+        assignment_bucket: Number(event.assignment_bucket),
+        assignment_namespace_sha256: String(event.assignment_namespace_sha256),
+      });
+    }
+    assertTask7AaAssignmentCoverage(firstAssignments);
+    assert.equal(new Set(firstSurfaces.values()).size, 1);
+    assert.equal(new Set(firstContexts.values()).size, 1);
+
+    const revisionOneBefore = runtime.runtimeDatabase.db.prepare(
+      `SELECT config_sha256 FROM lite_learning_experiment_revisions
+       WHERE tenant_id = ? AND experiment_id = ? AND experiment_revision = 1`,
+    ).get("default", experimentId) as { config_sha256: string };
+    const expectRevisionConflict = async (
+      profileRule: AionisAdmissionCandidatePolicyProfileRule,
+      operationId: string,
+    ) => {
+      await assert.rejects(
+        () => provisioner.provision({
+          tenantId: "default",
+          actor: "task7-aa-provisioner",
+          operationId,
+          profileRule,
+          taskFamily: CONFIRMATORY_TASK_FAMILY,
+          experimentId,
+          experimentRevision: 1,
+        }),
+        (error: any) => error?.code === "learning_experiment_revision_already_provisioned",
+      );
+      const after = runtime!.runtimeDatabase.db.prepare(
+        `SELECT config_sha256 FROM lite_learning_experiment_revisions
+         WHERE tenant_id = ? AND experiment_id = ? AND experiment_revision = 1`,
+      ).get("default", experimentId) as { config_sha256: string };
+      assert.equal(after.config_sha256, revisionOneBefore.config_sha256);
+      assert.equal(entropyCalls, 1);
+    };
+    await expectRevisionConflict(phaseDriftProfile, "task7-aa-phase-drift-rejected");
+    await expectRevisionConflict(allocationDriftProfile, "task7-aa-allocation-drift-rejected");
+
+    const shadowProvision = await provisioner.provision({
+      tenantId: "default",
+      actor: "task7-shadow-provisioner",
+      operationId: "task7-shadow-provision-revision-2",
+      profileRule: shadowProfile,
+      taskFamily: CONFIRMATORY_TASK_FAMILY,
+      experimentId,
+      experimentRevision: 2,
+    });
+    assert.equal(shadowProvision.replayed, false);
+    assert.equal(shadowProvision.applicabilityManifest.serving_phase, "shadow");
+    assert.equal(entropyCalls, 2);
+    const revisions = runtime.runtimeDatabase.db.prepare(
+      `SELECT experiment_revision, serving_phase, config_sha256,
+              diagnostic_assignment_seed_sha256, required_evidence_series_sha256
+       FROM lite_learning_experiment_revisions
+       WHERE tenant_id = ? AND experiment_id = ?
+       ORDER BY experiment_revision`,
+    ).all("default", experimentId) as Array<Record<string, unknown>>;
+    assert.deepEqual(revisions.map((row) => [row.experiment_revision, row.serving_phase]), [
+      [1, "aa"],
+      [2, "shadow"],
+    ]);
+    assert.notEqual(revisions[0]?.config_sha256, revisions[1]?.config_sha256);
+    assert.notEqual(
+      revisions[0]?.diagnostic_assignment_seed_sha256,
+      revisions[1]?.diagnostic_assignment_seed_sha256,
+    );
+    assert.notEqual(
+      revisions[0]?.required_evidence_series_sha256,
+      revisions[1]?.required_evidence_series_sha256,
+    );
+
+    await runtime.close();
+    runtime = openRuntime(aaProfile);
+    const restartedAssignments: Task7AaAssignment[] = [];
+    for (const [index, scope] of TASK7_AA_SCOPE_MANIFEST.entries()) {
+      const payload = guidePayload(scope, index, "after-restart");
+      const response = await runtime.app.inject({ method: "POST", url: "/v1/guide", payload });
+      assert.equal(response.statusCode, 200, response.body);
+      const event = runtime.runtimeDatabase.db.prepare(
+        `SELECT event_id, assignment_arm, assignment_bucket,
+                assignment_namespace_sha256
+         FROM lite_learning_episode_events
+         WHERE operation_id = ?`,
+      ).get(payload.operation_id) as Record<string, unknown> | undefined;
+      assert.ok(event);
+      const prior = firstAssignments.find((entry) => entry.scope === scope);
+      assert.ok(prior);
+      assert.equal(event.assignment_arm, prior.assignment_arm);
+      assert.equal(event.assignment_bucket, prior.assignment_bucket);
+      assert.equal(event.assignment_namespace_sha256, prior.assignment_namespace_sha256);
+      assert.equal(response.json().agent_context.use_now_memory_ids.includes(memoryIds.get(scope)), true);
+      assert.equal(response.json().agent_context.inspect_before_use_memory_ids.includes(memoryIds.get(scope)), false);
+      const items = runtime.runtimeDatabase.db.prepare(
+        `SELECT decision_completeness, recorded_action, candidate_action,
+                served_action, learning_track, track_reason
+         FROM lite_learning_exposure_items
+         WHERE tenant_id = ? AND scope = ? AND event_id = ?
+         ORDER BY memory_id`,
+      ).all("default", scope, event.event_id) as Array<Record<string, unknown>>;
+      assert.equal(stableStringify(items), firstSurfaces.get(scope));
+      assert.equal(
+        normalizeTask7AaAgentContext(response.json().agent_context, [scope, memoryIds.get(scope)!]),
+        firstContexts.get(scope),
+      );
+      restartedAssignments.push({
+        scope,
+        assignment_arm: event.assignment_arm as "candidate" | "control",
+      });
+    }
+    assertTask7AaAssignmentCoverage(restartedAssignments);
+
+    await runtime.close();
+    runtime = openRuntime(shadowProfile);
+    const shadowPayload = guidePayload(TASK7_AA_SCOPE_MANIFEST[0], 0, "shadow-revision-2");
+    const shadowResponse = await runtime.app.inject({
+      method: "POST",
+      url: "/v1/guide",
+      payload: shadowPayload,
+    });
+    assert.equal(shadowResponse.statusCode, 200, shadowResponse.body);
+    assert.equal(
+      shadowResponse.json().source_map.admission_candidate_policy.experiment_revision,
+      2,
+    );
+    assert.deepEqual(shadowResponse.json().source_map.admission_candidate_policy, {
+      mode: "shadow",
+      source: "profile_rule",
+      profile_id: shadowProfile.profile_id,
+      serving_authority: "experiment",
+      serving_arm: "control",
+      enrollment_state: "diagnostic",
+      promotion_eligible: false,
+      collection_class: "unverified",
+      experiment_id: experimentId,
+      experiment_revision: 2,
+      experiment_config_sha256: shadowProvision.applicabilityManifest.experiment_config_sha256,
+      reason_codes: ["diagnostic_assignment", "control_arm_served"],
+    });
+    assert.equal(
+      shadowResponse.json().agent_context.use_now_memory_ids.includes(memoryIds.get(TASK7_AA_SCOPE_MANIFEST[0])),
+      true,
+    );
+    assert.equal(
+      shadowResponse.json().agent_context.inspect_before_use_memory_ids.includes(memoryIds.get(TASK7_AA_SCOPE_MANIFEST[0])),
+      false,
+    );
+    const shadowEvent = runtime.runtimeDatabase.db.prepare(
+      `SELECT event_id, assignment_mode, served_arm, serving_phase,
+              policy_affected, promotion_eligible
+       FROM lite_learning_episode_events
+       WHERE operation_id = ?`,
+    ).get(shadowPayload.operation_id) as Record<string, unknown> | undefined;
+    assert.ok(shadowEvent);
+    assert.deepEqual({
+      assignment_mode: shadowEvent.assignment_mode,
+      served_arm: shadowEvent.served_arm,
+      serving_phase: shadowEvent.serving_phase,
+      policy_affected: shadowEvent.policy_affected,
+      promotion_eligible: shadowEvent.promotion_eligible,
+    }, {
+      assignment_mode: "diagnostic_randomized",
+      served_arm: "control",
+      serving_phase: "shadow",
+      policy_affected: 0,
+      promotion_eligible: 0,
+    });
+    const shadowItem = runtime.runtimeDatabase.db.prepare(
+      `SELECT recorded_action, candidate_action, served_action
+       FROM lite_learning_exposure_items
+       WHERE tenant_id = ? AND scope = ? AND event_id = ?`,
+    ).get("default", TASK7_AA_SCOPE_MANIFEST[0], shadowEvent.event_id) as Record<string, unknown> | undefined;
+    assert.deepEqual({ ...shadowItem }, {
+      recorded_action: "use_now",
+      candidate_action: "inspect_before_use",
+      served_action: "use_now",
+    });
+    const evidencePartitions = runtime.runtimeDatabase.db.prepare(
+      `SELECT experiment_revision, serving_phase, COUNT(*) AS count,
+              COUNT(DISTINCT episode_id) AS episode_count
+       FROM lite_learning_episode_events
+       WHERE tenant_id = ? AND experiment_id = ?
+       GROUP BY experiment_revision, serving_phase
+       ORDER BY experiment_revision`,
+    ).all("default", experimentId) as Array<Record<string, unknown>>;
+    assert.deepEqual(evidencePartitions.map((row) => [
+      row.experiment_revision,
+      row.serving_phase,
+      row.count,
+      row.episode_count,
+    ]), [
+      [1, "aa", TASK7_AA_SCOPE_MANIFEST.length * 2, TASK7_AA_SCOPE_MANIFEST.length * 2],
+      [2, "shadow", 1, 1],
+    ]);
+    await runtime.learningEpisodeLedgerAccess.verifyIntegrity();
+  } finally {
+    if (runtime) await runtime.close();
     fs.rmSync(path.dirname(dbPath), { recursive: true, force: true });
   }
 });
@@ -2372,6 +2911,7 @@ function registerFullProductMemoryApp(args: {
   embedder?: typeof DeterministicEmbeddingProvider | null;
   skillCandidateReviewAccess?: ReturnType<ReturnType<typeof createLiteSkillCandidateReviewStore>["createSkillCandidateReviewAccess"]>;
   learningEpisodeLedgerAccess?: LiteLearningEpisodeLedgerAccess | null;
+  learningControlJobAccess?: ReturnType<typeof createLiteLearningControlJobAccess>;
   learningExperimentResolverRegistry?: LearningExperimentResolverRegistry;
   admissionCandidatePolicyProfileRules?: readonly AionisAdmissionCandidatePolicyProfileRule[];
   decoratePlanningContextService?: (service: MemoryPlanningContextService) => MemoryPlanningContextService;
@@ -3031,10 +3571,61 @@ test("product guide can opt into admission candidate policy active projection", 
   };
   const guards = requestGuards(env, DeterministicEmbeddingProvider);
   const dbPath = tmpDbPath("admission-candidate-policy-active");
-  const liteWriteStore = createLiteWriteStore(dbPath);
+  const runtimeDatabase = createLiteRuntimeDatabase(dbPath);
+  const liteWriteStore = createLiteWriteStoreFromDatabase(runtimeDatabase, {
+    annProjectionEnabled: false,
+  });
   const liteRecallStore = createLiteRecallStore(dbPath);
+  const baseLearningEpisodeLedgerAccess = createLiteLearningEpisodeLedgerAccess(runtimeDatabase);
+  let authorityReadCount = 0;
+  const learningEpisodeLedgerAccess: LiteLearningEpisodeLedgerAccess = {
+    ...baseLearningEpisodeLedgerAccess,
+    async resolveGuideExperimentAuthority(args) {
+      authorityReadCount += 1;
+      return await baseLearningEpisodeLedgerAccess.resolveGuideExperimentAuthority(args);
+    },
+  };
+  const experimentProfile = task7IntegrityProfile({
+    experimentId: "task7-global-active-blocked-experiment",
+    revision: 1,
+    servingPhase: "aa",
+    scopes: ["default"],
+  });
+  const registry = createConfirmatoryPassedRegistry();
   try {
-    registerFullProductMemoryApp({ app, env, guards, liteWriteStore, liteRecallStore });
+    const provisioned = await createLiteLearningExperimentProvisioner({
+      database: runtimeDatabase,
+      writeStore: liteWriteStore,
+      ledger: baseLearningEpisodeLedgerAccess,
+      dependencies: {
+        registry,
+        now: () => "2026-07-16T03:00:00.000Z",
+        randomBytes: (size) => Uint8Array.from(
+          { length: size },
+          (_, index) => (0x71 + index) & 0xff,
+        ),
+      },
+    }).provision({
+      tenantId: "default",
+      actor: "task7-global-active-provisioner",
+      operationId: "task7-global-active-provision-operation",
+      profileRule: experimentProfile,
+      taskFamily: CONFIRMATORY_TASK_FAMILY,
+      experimentId: experimentProfile.experiment!.experiment_id,
+      experimentRevision: experimentProfile.experiment!.revision,
+    });
+    assert.equal(provisioned.replayed, false);
+    registerFullProductMemoryApp({
+      app,
+      env,
+      guards,
+      liteWriteStore,
+      liteRecallStore,
+      learningEpisodeLedgerAccess,
+      learningControlJobAccess: createLiteLearningControlJobAccess(runtimeDatabase),
+      learningExperimentResolverRegistry: registry,
+      admissionCandidatePolicyProfileRules: [experimentProfile],
+    });
     const observe = await app.inject({
       method: "POST",
       url: "/v1/observe",
@@ -3083,10 +3674,17 @@ test("product guide can opt into admission candidate policy active projection", 
       method: "POST",
       url: "/v1/guide",
       payload: {
+        operation_id: "task7-global-active-guide-operation",
         tenant_id: "default",
         scope: "default",
+        run_id: "task7-global-active-run",
         query_text: "Continue ADMISSION_ACTIVE_POLICY_ROUTE using current route context.",
         consumer_agent_id: "local-user",
+        context: {
+          task_family: CONFIRMATORY_TASK_FAMILY,
+          task_signature: "task7-global-active-task",
+          repository_signature: "task7-global-active-repository",
+        },
         context_char_budget: 1200,
         context_compaction_profile: "aggressive",
         limit: 8,
@@ -3119,10 +3717,81 @@ test("product guide can opt into admission candidate policy active projection", 
     assert.match(body.agent_context.prompt_text, /AIONIS_CTX v2/);
     assert.doesNotMatch(body.agent_context.prompt_text, /AIONIS_AGENT_CONTEXT v1/);
     assert.ok(body.agent_context.prompt_text.length <= 1200);
+    assert.deepEqual(body.source_map.admission_candidate_policy, {
+      mode: "active",
+      source: "global_env",
+      serving_authority: "fixed_active",
+      serving_arm: "candidate",
+      enrollment_state: "not_enrolled",
+      promotion_eligible: false,
+      collection_class: "unverified",
+      reason_codes: [
+        "global_fixed_active_override",
+        "promotion_ineligible_non_randomized",
+      ],
+    });
+    assert.equal(authorityReadCount, 0, "global active must bypass profile experiment enrollment");
+    const event = runtimeDatabase.db.prepare(
+      `SELECT serving_phase, assignment_mode, assignment_arm, served_arm, payload_json,
+              promotion_eligible, profile_id, experiment_id, experiment_revision
+       FROM lite_learning_episode_events
+       WHERE operation_id = ?`,
+    ).get("task7-global-active-guide-operation") as Record<string, unknown> | undefined;
+    assert.ok(event);
+    assert.equal(JSON.parse(String(event.payload_json)).assignment_algorithm, "fixed_non_randomized_v1");
+    const { payload_json: _payloadJson, ...eventProjection } = event;
+    assert.deepEqual({ ...eventProjection }, {
+      serving_phase: "fixed_active",
+      assignment_mode: "non_randomized",
+      assignment_arm: "not_enrolled",
+      served_arm: "candidate",
+      promotion_eligible: 0,
+      profile_id: null,
+      experiment_id: null,
+      experiment_revision: null,
+    });
+    assert.equal(
+      Number((runtimeDatabase.db.prepare(
+        `SELECT COUNT(*) AS count
+         FROM lite_learning_episode_events
+         WHERE experiment_id = ?`,
+      ).get(experimentProfile.experiment!.experiment_id) as { count: number }).count),
+      0,
+    );
+    const feedback = await app.inject({
+      method: "POST",
+      url: "/v1/feedback",
+      payload: {
+        operation_id: "task7-global-active-feedback-operation",
+        tenant_id: "default",
+        scope: "default",
+        guide_trace_id: body.guide_trace_id,
+        used_memory_ids: [projectMemoryId],
+        run_id: "task7-global-active-run",
+        outcome: "positive",
+        used_surface: "use_now",
+        verifier_status: "passed",
+        tool_status: "succeeded",
+        runtime_signal_refs: ["task7:global-active:verified"],
+        reason: "The fixed-active recorded memory supported the verified continuation.",
+      },
+    });
+    assert.equal(feedback.statusCode, 200, feedback.body);
+    const feedbackEvent = runtimeDatabase.db.prepare(
+      `SELECT assignment_mode, serving_phase, experiment_id
+       FROM lite_learning_episode_events
+       WHERE operation_id = ? AND event_kind = 'feedback_attributed'`,
+    ).get("task7-global-active-feedback-operation") as Record<string, unknown> | undefined;
+    assert.deepEqual({ ...feedbackEvent }, {
+      assignment_mode: "non_randomized",
+      serving_phase: "fixed_active",
+      experiment_id: null,
+    });
   } finally {
-    await liteWriteStore.close();
-    await liteRecallStore.close();
     await app.close();
+    await liteRecallStore.close();
+    await liteWriteStore.close();
+    await runtimeDatabase.close();
   }
 });
 

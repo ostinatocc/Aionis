@@ -13,6 +13,7 @@ import {
   learningEpisodeEventDigest,
   learningEpisodeTrackSummary,
   learningItemSetDigest,
+  resolveLearningExposureAssignmentMode,
   type EventWithoutDigest,
   type EffectMeasuredV1,
   type ExposureCommittedV1,
@@ -4440,11 +4441,7 @@ function validateExposureBindings(
   items: readonly LearningLedgerItem[],
 ): void {
   const envelope = payload.host_task_envelope;
-  const assignmentMode = {
-    matched_pair_csprng_bit_v1: "matched_pair_randomized",
-    diagnostic_sha256_48_mod_10000_v1: "diagnostic_randomized",
-    none: "unassigned",
-  }[payload.assignment_algorithm];
+  const assignmentMode = resolveLearningExposureAssignmentMode(payload);
   const servedArm = payload.served_arm;
   const policyAffected = items.some((item) => (
     item.decision_completeness === "complete" && item.served_action !== item.recorded_action

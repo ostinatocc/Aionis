@@ -908,6 +908,166 @@ function legacyExposureFixture() {
   return { episodeId, event, item, payload, row };
 }
 
+function historicalFixedActiveExposureFixture() {
+  const base = legacyExposureFixture();
+  const guideTraceId = "guide-fixed-active";
+  const item: LearningLedgerItem = {
+    decision_completeness: "complete",
+    memory_id: "memory-fixed-active",
+    memory_type: "concept",
+    source_backend: "lite",
+    recorded_action: "use_now",
+    candidate_action: "inspect_before_use",
+    served_action: "inspect_before_use",
+    policy_changed: true,
+    hard_boundary_preserved: true,
+    prior_supported_use_count: 0,
+    prior_contradicted_use_count: 0,
+    prior_rehydrate_requested_count: 0,
+    prior_effect_state: "no_prior",
+    repeated_negative_posture: false,
+    learning_track: "explore",
+    track_reason: "no_prior",
+  };
+  const payload: ExposureCommittedV1 = {
+    ...base.payload,
+    guide_trace_id: guideTraceId,
+    guide_commit_id: "commit-fixed-active",
+    assignment_reason_codes: [
+      "global_fixed_active_override",
+      "promotion_ineligible_non_randomized",
+    ],
+    served_arm: "candidate",
+    relevant_memory_ids: [item.memory_id],
+    recorded_surface_sha256: learningDecisionSurfaceDigest([{
+      memory_id: item.memory_id,
+      action: item.recorded_action,
+    }]),
+    candidate_surface_sha256: learningDecisionSurfaceDigest([{
+      memory_id: item.memory_id,
+      action: item.candidate_action,
+    }]),
+    served_surface_sha256: learningDecisionSurfaceDigest([{
+      memory_id: item.memory_id,
+      action: item.served_action,
+    }]),
+    projection_complete: true,
+    projection_incomplete_reason_codes: [],
+  };
+  const payloadEncoding = canonicalJson(payload);
+  const event: EventWithoutDigest = {
+    ...base.event,
+    event_id: "event-fixed-active",
+    episode_id: learningEpisodeId({
+      tenantId: base.event.tenant_id,
+      scope: base.event.scope,
+      guideTraceId,
+    }),
+    source_id: guideTraceId,
+    payload_sha256: payloadEncoding.sha256,
+    item_set_sha256: learningItemSetDigest([item]),
+    source_commit_id: payload.guide_commit_id,
+    operation_id: "operation-fixed-active",
+  };
+  return {
+    event,
+    item,
+    payload,
+    row: episodeEventRow(event, payload, {
+      serving_phase: "fixed_active",
+      assignment_mode: "unassigned",
+      served_arm: "candidate",
+      policy_affected: 1,
+      predecision_track: "explore",
+      projection_complete: 1,
+    }),
+  };
+}
+
+function historicalFixedFeedbackFixture(
+  exposure: ReturnType<typeof historicalFixedActiveExposureFixture>,
+) {
+  const payload = {
+    contract_version: "aionis_learning_feedback_v1",
+    feedback_kind: "memory",
+    guide_trace_id: exposure.payload.guide_trace_id,
+    request_sha256: sha256("historical-fixed-feedback-request"),
+    operation_protection: "legacy_unprotected",
+    operation_receipt_sha256: null,
+    run_id: "run-historical-fixed-feedback",
+    source_commit_id: "commit-historical-fixed-feedback",
+    host_use_receipt_sha256: null,
+    runtime_signal_refs: [],
+    unused_exposure_ids: [],
+  } as const;
+  const eventId = "event-historical-fixed-feedback";
+  const attributionBase = authorityRow("lite_learning_feedback_attributions", {
+    tenant_id: exposure.event.tenant_id,
+    scope: exposure.event.scope,
+    event_id: eventId,
+    episode_id: exposure.event.episode_id,
+    subject_kind: "memory",
+    subject_id: exposure.item.memory_id,
+    outcome: "negative",
+    action_outcome: null,
+    used_surface: exposure.item.served_action,
+    exposure_action: exposure.item.served_action,
+    boundary_outcome: "aligned",
+    attribution_strength: "weak_counter_signal",
+    evidence_class: "legacy_unverified",
+    host_use_receipt_id: null,
+    host_use_receipt_sha256: null,
+    receipt_item_sha256: null,
+    host_task_envelope_sha256: null,
+    collection_principal_sha256: null,
+    collector_id: null,
+    collector_version: null,
+    content_evidence_sha256: null,
+    verifier_kind: null,
+    verifier_version: null,
+    verifier_config_sha256: null,
+    verifier_status: null,
+    tool_status: null,
+    runtime_signal_refs_sha256: null,
+    item_sha256: "0".repeat(64),
+  });
+  const attribution = {
+    ...attributionBase,
+    item_sha256: learningFeedbackAttributionItemDigest(attributionBase),
+  } satisfies LiteLearningAuthorityRow;
+  const encoded = canonicalJson(payload);
+  const event: EventWithoutDigest = {
+    ...exposure.event,
+    event_id: eventId,
+    episode_sequence: 2,
+    event_kind: "feedback_attributed",
+    source_kind: "memory_feedback_operation",
+    source_id: "historical-fixed-feedback-operation",
+    source_sha256: payload.request_sha256,
+    previous_event_sha256: learningEpisodeEventDigest(exposure.event),
+    payload_sha256: encoded.sha256,
+    item_set_sha256: learningFeedbackAttributionSetDigest([attribution]),
+    source_commit_id: payload.source_commit_id,
+    operation_id: "historical-fixed-feedback-operation",
+    run_id: payload.run_id,
+    recorded_at: "2026-07-13T00:01:00.000Z",
+  };
+  return {
+    attribution,
+    event,
+    payload,
+    row: episodeEventRow(event, payload, {
+      serving_phase: "fixed_active",
+      assignment_mode: "unassigned",
+      assignment_arm: "not_enrolled",
+      served_arm: "candidate",
+      policy_affected: 1,
+      predecision_track: "explore",
+      projection_complete: 1,
+    }),
+  };
+}
+
 function legacyExposureProbe(args: {
   suffix: string;
   scope?: string;
@@ -1461,6 +1621,60 @@ test("fresh Runtime initialization atomically installs the current v4 learning s
       assert.match(identity.database_instance_id, /^[0-9a-f]{64}$/);
     } finally {
       db.close();
+    }
+  } finally {
+    fs.rmSync(temp.directory, { recursive: true, force: true });
+  }
+});
+
+test("historical fixed override keeps its none/unassigned cache valid after reopen", async () => {
+  const temp = tempDatabase("historical-fixed-assignment-cache");
+  const fixture = historicalFixedActiveExposureFixture();
+  const feedback = historicalFixedFeedbackFixture(fixture);
+  try {
+    const database = createLiteRuntimeDatabase(temp.path);
+    const store = createLiteWriteStoreFromDatabase(database, { annProjectionEnabled: false });
+    try {
+      const ledger = createLiteLearningEpisodeLedgerAccess(database);
+      await database.transaction.run(async () => await ledger.appendEpisodeEvent({
+        row: fixture.row,
+        event: fixture.event,
+        payload: fixture.payload,
+        exposureItems: [fixture.item],
+      }));
+      await database.transaction.run(async () => await ledger.appendEpisodeEvent({
+        row: feedback.row,
+        event: feedback.event,
+        payload: feedback.payload,
+        feedbackAttributions: [feedback.attribution],
+      }));
+      await ledger.verifyIntegrity();
+    } finally {
+      await store.close();
+      await database.close();
+    }
+
+    const reopenedDatabase = createLiteRuntimeDatabase(temp.path);
+    const reopenedStore = createLiteWriteStoreFromDatabase(reopenedDatabase, {
+      annProjectionEnabled: false,
+    });
+    try {
+      await createLiteLearningEpisodeLedgerAccess(reopenedDatabase).verifyIntegrity();
+      const rows = reopenedDatabase.db.prepare(
+        `SELECT event_kind, assignment_mode, payload_json
+         FROM lite_learning_episode_events
+         WHERE episode_id = ?
+         ORDER BY episode_sequence`,
+      ).all(fixture.event.episode_id) as Array<Record<string, unknown>>;
+      assert.deepEqual(rows.map((row) => [row.event_kind, row.assignment_mode]), [
+        ["exposure_committed", "unassigned"],
+        ["feedback_attributed", "unassigned"],
+      ]);
+      assert.equal(JSON.parse(String(rows[0]?.payload_json)).assignment_algorithm, "none");
+      assert.equal(inspectLiteRuntimeSchema(reopenedDatabase.db).detected_version, 4);
+    } finally {
+      await reopenedStore.close();
+      await reopenedDatabase.close();
     }
   } finally {
     fs.rmSync(temp.directory, { recursive: true, force: true });

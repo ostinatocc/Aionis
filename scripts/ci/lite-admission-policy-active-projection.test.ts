@@ -13,7 +13,15 @@ import {
   buildAionisAgentContext,
 } from "../../src/memory/agent-context-compiler.js";
 import { buildAionisMemoryPacket } from "../../src/memory/product-output/memory-packet.js";
+import { productGuideCandidateServingEnabled } from "../../src/product/guide-service.js";
 import { createLiteWriteStore } from "../../src/store/lite-write-store.js";
+
+test("A/A and shadow guide phases cannot activate the candidate serving branch", () => {
+  assert.equal(productGuideCandidateServingEnabled({ mode: "shadow", serving_arm: "control" }, true), false);
+  assert.equal(productGuideCandidateServingEnabled({ mode: "active", serving_arm: "control" }, true), false);
+  assert.equal(productGuideCandidateServingEnabled({ mode: "active", serving_arm: "candidate" }, false), false);
+  assert.equal(productGuideCandidateServingEnabled({ mode: "active", serving_arm: "candidate" }, true), true);
+});
 
 test("admission candidate active projection only downgrades current use-now entries", () => {
   const memoryPacket = buildAionisMemoryPacket({

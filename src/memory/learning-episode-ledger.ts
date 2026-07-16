@@ -245,6 +245,7 @@ const ExposureCommittedV1ObjectSchema = z.object({
   assignment_algorithm: z.enum([
     "matched_pair_csprng_bit_v1",
     "diagnostic_sha256_48_mod_10000_v1",
+    "fixed_non_randomized_v1",
     "none",
   ]),
   assignment_namespace_sha256: NullableDigestSchema,
@@ -270,6 +271,10 @@ const ExposureCommittedV1ObjectSchema = z.object({
   projection_incomplete_reason_codes: z.array(BoundedKindSchema).max(32),
   hard_boundary_upgrade_count: z.number().int().nonnegative(),
 }).strict();
+
+const FIXED_NON_RANDOMIZED_SOURCE_REASONS = new Set([
+  "global_fixed_active_override", "global_fixed_shadow_override", "legacy_fixed_profile",
+]);
 
 function validateExposureCommittedV1(
   value: z.infer<typeof ExposureCommittedV1ObjectSchema>,
@@ -385,7 +390,14 @@ function validateExposureCommittedV1(
       issue("assignment_algorithm", "Diagnostic assignment cannot claim confirmatory pair facts");
     }
   }
-  if (value.assignment_algorithm === "none") {
+  if (value.assignment_algorithm === "fixed_non_randomized_v1" && (
+    value.collection_class !== "unverified"
+    || !value.assignment_reason_codes.includes("promotion_ineligible_non_randomized")
+    || value.assignment_reason_codes.filter((reason) => FIXED_NON_RANDOMIZED_SOURCE_REASONS.has(reason)).length !== 1
+  )) {
+    issue("assignment_reason_codes", "Fixed non-randomized assignment requires one fixed source and its promotion-ineligible marker");
+  }
+  if (value.assignment_algorithm === "none" || value.assignment_algorithm === "fixed_non_randomized_v1") {
     if (
       value.assignment_arm !== "not_enrolled"
       || value.assignment_namespace_sha256 !== null
@@ -399,7 +411,7 @@ function validateExposureCommittedV1(
       || value.index_window_ends_at !== null
       || value.wave_analysis_at !== null
     ) {
-      issue("assignment_arm", "Unassigned exposure cannot claim assignment, pair, or wave facts");
+      issue("assignment_arm", "Unenrolled exposure cannot claim assignment, pair, or wave facts");
     }
   }
   if (
@@ -420,6 +432,12 @@ export const ExposureCommittedV1Schema = ExposureCommittedV1ObjectSchema.superRe
 );
 
 export type ExposureCommittedV1 = z.infer<typeof ExposureCommittedV1Schema>;
+
+export function resolveLearningExposureAssignmentMode(exposure: Pick<ExposureCommittedV1, "assignment_algorithm">) {
+  if (exposure.assignment_algorithm === "matched_pair_csprng_bit_v1") return "matched_pair_randomized" as const;
+  if (exposure.assignment_algorithm === "diagnostic_sha256_48_mod_10000_v1") return "diagnostic_randomized" as const;
+  return exposure.assignment_algorithm === "fixed_non_randomized_v1" ? "non_randomized" as const : "unassigned" as const;
+}
 
 const FeedbackAttributedV1ObjectSchema = z.object({
   contract_version: z.literal("aionis_learning_feedback_v1"),

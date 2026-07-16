@@ -494,6 +494,10 @@ function unresolvedLearningExperimentGuideResolution(
   };
 }
 
+export const productGuideCandidateServingEnabled = (
+  resolution: Pick<LearningExperimentGuideResolution, "mode" | "serving_arm">, projectionComplete: boolean,
+): boolean => projectionComplete && resolution.mode === "active" && resolution.serving_arm === "candidate";
+
 function firstStringValue(...values: unknown[]): string | null {
   for (const value of values) {
     if (typeof value !== "string") continue;
@@ -2622,7 +2626,10 @@ function buildGuideLearningExposurePayload(args: {
     namespace_lease_id: lease?.namespace_lease_id ?? null,
     namespace_lease_generation: lease?.namespace_lease_generation ?? null,
     assignment_reason_codes: canonicalLearningReasonCodes(args.resolution.reason_codes),
-    assignment_algorithm: assignment?.assignment_algorithm ?? "none",
+    assignment_algorithm: assignment?.assignment_algorithm ?? (
+      args.resolution.serving_authority === "fixed_active" || args.resolution.serving_authority === "fixed_shadow"
+        ? "fixed_non_randomized_v1" : "none"
+    ),
     assignment_namespace_sha256: assignment?.assignment_namespace_sha256 ?? null,
     candidate_allocation_bps: assignment ? experiment!.candidate_allocation_bps : null,
     assignment_bucket: assignment?.assignment_bucket ?? null,
@@ -3304,8 +3311,7 @@ async function executeProductGuide(args: {
     ...configuredAdmissionCandidatePolicyMode,
     mode: learningExperimentResolution.mode,
   };
-  const candidateMayServe = admissionCandidatePolicyMode.mode === "active"
-    && guideLearningDecisionSet.projection_complete;
+  const candidateMayServe = productGuideCandidateServingEnabled(learningExperimentResolution, guideLearningDecisionSet.projection_complete);
   const candidateAgentContext = candidateMayServe
     ? applyAionisInspectBeforeUseActiveProjection({
         agent_context: recordedAgentContext,
@@ -3414,17 +3420,17 @@ async function executeProductGuide(args: {
           mode: branchMode.mode,
           source: branchMode.source,
           ...(branchMode.profile_id ? { profile_id: branchMode.profile_id } : {}),
-          ...(branchArgs.branchResolution.source === "experiment" ? {
+          ...(branchArgs.branchResolution.source !== "off" ? {
             serving_authority: branchArgs.branchResolution.serving_authority,
             serving_arm: branchArgs.branchResolution.serving_arm,
             enrollment_state: branchArgs.branchResolution.enrollment_state,
             promotion_eligible: branchArgs.branchResolution.promotion_eligible,
             collection_class: branchArgs.branchResolution.collection_class,
-            ...(branchArgs.branchResolution.experiment_id
+            ...(branchArgs.branchResolution.source === "experiment" && branchArgs.branchResolution.experiment_id
               ? { experiment_id: branchArgs.branchResolution.experiment_id } : {}),
-            ...(branchArgs.branchResolution.experiment_revision !== null
+            ...(branchArgs.branchResolution.source === "experiment" && branchArgs.branchResolution.experiment_revision !== null
               ? { experiment_revision: branchArgs.branchResolution.experiment_revision } : {}),
-            ...(branchArgs.branchResolution.experiment_config_sha256
+            ...(branchArgs.branchResolution.source === "experiment" && branchArgs.branchResolution.experiment_config_sha256
               ? { experiment_config_sha256: branchArgs.branchResolution.experiment_config_sha256 } : {}),
             reason_codes: branchArgs.branchResolution.reason_codes,
           } : {}),

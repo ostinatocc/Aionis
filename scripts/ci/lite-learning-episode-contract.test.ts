@@ -31,6 +31,7 @@ import {
   learningMemoryNamespaceSha256,
   reconcileCanonicalLearningTaskIdentity,
   resolveLearningAssignment,
+  resolveLearningExposureAssignmentMode,
   resolveLearningExperimentCompatibility,
 } from "../../src/memory/learning-episode-ledger.js";
 import {
@@ -416,6 +417,65 @@ test("exposure, feedback, and effect payloads are strict, bounded, and legacy is
   assert.equal(isLearningExposurePromotionEligible({ ...exposure, operation_protection: "legacy_unprotected" }), false);
   assert.equal(isLearningExposurePromotionEligible({ ...exposure, collection_class: "fixture_pilot" }), false);
   assert.throws(() => ExposureCommittedV1Schema.parse({ ...exposure, collection_class: "fixture_pilot" }));
+  const fixedExposure = ExposureCommittedV1Schema.parse({
+    ...exposure,
+    collection_class: "unverified",
+    collection_principal_sha256: null,
+    collection_source_policy_sha256: null,
+    collector_id: null,
+    collector_version: null,
+    host_task_id: null,
+    host_task_envelope: null,
+    host_task_envelope_sha256: null,
+    profile_rule_sha256: null,
+    experiment_config_sha256: null,
+    evidence_intent: null,
+    namespace_set_sha256: null,
+    namespace_lease_id: null,
+    namespace_lease_generation: null,
+    assignment_reason_codes: [
+      "global_fixed_active_override",
+      "promotion_ineligible_non_randomized",
+    ],
+    assignment_algorithm: "fixed_non_randomized_v1",
+    assignment_namespace_sha256: null,
+    candidate_allocation_bps: null,
+    assignment_bucket: null,
+    randomization_pair_sha256: null,
+    matching_covariate_sha256: null,
+    pair_member_ordinal: null,
+    activation_wave_index: null,
+    activation_starts_at: null,
+    index_window_ends_at: null,
+    wave_analysis_at: null,
+    assignment_arm: "not_enrolled",
+  });
+  assert.equal(resolveLearningExposureAssignmentMode(fixedExposure), "non_randomized");
+  const historicalFixedExposure = ExposureCommittedV1Schema.parse({
+    ...fixedExposure,
+    assignment_algorithm: "none",
+  });
+  assert.equal(resolveLearningExposureAssignmentMode(historicalFixedExposure), "unassigned");
+  assert.throws(() => ExposureCommittedV1Schema.parse({
+    ...fixedExposure,
+    assignment_reason_codes: ["global_fixed_active_override"],
+  }));
+  assert.throws(() => ExposureCommittedV1Schema.parse({
+    ...fixedExposure,
+    assignment_reason_codes: [
+      "global_fixed_active_override",
+      "legacy_fixed_profile",
+      "promotion_ineligible_non_randomized",
+    ],
+  }));
+  assert.throws(() => ExposureCommittedV1Schema.parse({
+    ...fixedExposure,
+    assignment_namespace_sha256: D.a,
+  }));
+  assert.throws(() => ExposureCommittedV1Schema.parse({
+    ...fixedExposure,
+    collection_class: "fixture_pilot",
+  }));
   assert.throws(() => ExposureCommittedV1Schema.parse({
     ...exposure,
     assignment_algorithm: "none",
