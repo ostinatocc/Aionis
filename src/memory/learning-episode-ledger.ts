@@ -1223,6 +1223,10 @@ const ExternalExecutionRoleV1Schema = z.object({
   credential_session_class: z.enum(["eligible_host_adapter", "formal_tool_eval", "immutable_paired_eval"]),
   broker_policy_sha256: DigestSha256Schema,
   broker_binary_sha256: DigestSha256Schema,
+  broker_public_key_base64: z.string().refine(
+    base64Ed25519PublicKey,
+    "Expected canonical 32-byte Ed25519 public key",
+  ),
   broker_public_key_sha256: DigestSha256Schema,
   broker_key_id: BoundedIdSchema,
   service_launcher_policy_sha256: DigestSha256Schema,
@@ -1236,11 +1240,29 @@ const ExternalExecutionRoleV1Schema = z.object({
   credential_scope_sha256: DigestSha256Schema,
   supervisor_bind_ttl_seconds: z.number().int().positive().max(86_400),
   credential_session_hard_ttl_seconds: z.number().int().positive().max(86_400),
-  credential_session_heartbeat_seconds: z.number().int().positive().max(3_600),
-  credential_session_max_calls: z.number().int().positive().max(100_000),
-  per_call_capability_ttl_seconds: z.number().int().positive().max(3_600),
+  credential_session_heartbeat_seconds: z.number().int().positive().max(60),
+  credential_session_max_calls: z.number().int().positive().max(10_000),
+  per_call_capability_ttl_seconds: z.number().int().positive().max(60),
   post_quiesce_finalize_ttl_seconds: z.number().int().positive().max(86_400),
-}).strict();
+}).strict().superRefine((value, context) => {
+  const expected = createHash("sha256")
+    .update(Buffer.from(value.broker_public_key_base64, "base64"))
+    .digest("hex");
+  if (value.broker_public_key_sha256 !== expected) {
+    context.addIssue({
+      code: z.ZodIssueCode.custom,
+      path: ["broker_public_key_sha256"],
+      message: "broker_public_key_sha256 does not bind the supplied raw Ed25519 public key",
+    });
+  }
+  if (value.credential_session_hard_ttl_seconds < value.supervisor_bind_ttl_seconds) {
+    context.addIssue({
+      code: z.ZodIssueCode.custom,
+      path: ["credential_session_hard_ttl_seconds"],
+      message: "credential session hard TTL must cover the supervisor binding TTL",
+    });
+  }
+});
 
 export const ExternalExecutionPolicyV1Schema = z.object({
   policy_version: z.literal("external-execution-v1"),
@@ -1256,6 +1278,14 @@ export const ExternalExecutionPolicyV1Schema = z.object({
     production_shadow: "eligible_host_adapter",
     tool_e2e: "formal_tool_eval",
   } as const;
+  const attestor = value.runtime_authority_attestor;
+  if (attestor.attestor_public_key_sha256 === attestor.service_launcher_public_key_sha256) {
+    context.addIssue({
+      code: z.ZodIssueCode.custom,
+      path: ["runtime_authority_attestor", "service_launcher_public_key_sha256"],
+      message: "Runtime attestor and service launcher must use distinct Ed25519 keys",
+    });
+  }
   for (const roleName of Object.keys(expected) as Array<keyof typeof expected>) {
     if (value.roles[roleName].credential_session_class !== expected[roleName]) {
       context.addIssue({
@@ -1265,7 +1295,14 @@ export const ExternalExecutionPolicyV1Schema = z.object({
       });
     }
     const role = value.roles[roleName];
-    const attestor = value.runtime_authority_attestor;
+    if (role.broker_public_key_sha256 === attestor.attestor_public_key_sha256
+      || role.broker_public_key_sha256 === attestor.service_launcher_public_key_sha256) {
+      context.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ["roles", roleName, "broker_public_key_sha256"],
+        message: `${roleName} broker must use a key distinct from Runtime attestor and launcher`,
+      });
+    }
     const launcherBindings = [
       ["service_launcher_policy_sha256", attestor.service_launcher_policy_sha256],
       ["service_launcher_binary_sha256", attestor.service_launcher_binary_sha256],

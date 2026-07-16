@@ -61,49 +61,56 @@ function tempDatabase(name: string) {
 }
 
 function externalExecutionPolicy(databaseInstanceId: string) {
-  const publicKey = Buffer.alloc(32, 19);
-  const publicKeyBase64 = publicKey.toString("base64");
-  const publicKeySha256 = sha256(publicKey);
+  const attestorPublicKey = Buffer.alloc(32, 19);
+  const launcherPublicKey = Buffer.alloc(32, 20);
+  const attestorPublicKeyBase64 = attestorPublicKey.toString("base64");
+  const attestorPublicKeySha256 = sha256(attestorPublicKey);
+  const launcherPublicKeyBase64 = launcherPublicKey.toString("base64");
+  const launcherPublicKeySha256 = sha256(launcherPublicKey);
   const launcher = {
     service_launcher_policy_sha256: sha256("provision-launcher-policy"),
     service_launcher_binary_sha256: sha256("provision-launcher-binary"),
-    service_launcher_public_key_sha256: publicKeySha256,
+    service_launcher_public_key_sha256: launcherPublicKeySha256,
     service_launcher_key_id: "provision-launcher-key-v1",
   };
   const role = (
     credentialSessionClass: "eligible_host_adapter" | "formal_tool_eval" | "immutable_paired_eval",
     suffix: string,
-  ) => ({
-    runner_principal_sha256: sha256(`provision-runner:${suffix}`),
-    credential_session_class: credentialSessionClass,
-    broker_policy_sha256: sha256(`provision-broker-policy:${suffix}`),
-    broker_binary_sha256: sha256(`provision-broker-binary:${suffix}`),
-    broker_public_key_sha256: sha256(`provision-broker-key:${suffix}`),
-    broker_key_id: `provision-broker-key-${suffix}`,
-    ...launcher,
-    supervisor_executable_sha256: sha256(`provision-supervisor-executable:${suffix}`),
-    supervisor_argv_policy_sha256: sha256(`provision-supervisor-argv:${suffix}`),
-    supervisor_sandbox_policy_sha256: sha256(`provision-supervisor-sandbox:${suffix}`),
-    receipt_signature_algorithm: "ed25519-v1" as const,
-    credential_scope_sha256: sha256(`provision-credential-scope:${suffix}`),
-    supervisor_bind_ttl_seconds: 30,
-    credential_session_hard_ttl_seconds: 3600,
-    credential_session_heartbeat_seconds: 10,
-    credential_session_max_calls: 100,
-    per_call_capability_ttl_seconds: 60,
-    post_quiesce_finalize_ttl_seconds: 600,
-  });
+  ) => {
+    const brokerPublicKey = createHash("sha256").update(`provision-broker-key:${suffix}`).digest();
+    return {
+      runner_principal_sha256: sha256(`provision-runner:${suffix}`),
+      credential_session_class: credentialSessionClass,
+      broker_policy_sha256: sha256(`provision-broker-policy:${suffix}`),
+      broker_binary_sha256: sha256(`provision-broker-binary:${suffix}`),
+      broker_public_key_base64: brokerPublicKey.toString("base64"),
+      broker_public_key_sha256: sha256(brokerPublicKey),
+      broker_key_id: `provision-broker-key-${suffix}`,
+      ...launcher,
+      supervisor_executable_sha256: sha256(`provision-supervisor-executable:${suffix}`),
+      supervisor_argv_policy_sha256: sha256(`provision-supervisor-argv:${suffix}`),
+      supervisor_sandbox_policy_sha256: sha256(`provision-supervisor-sandbox:${suffix}`),
+      receipt_signature_algorithm: "ed25519-v1" as const,
+      credential_scope_sha256: sha256(`provision-credential-scope:${suffix}`),
+      supervisor_bind_ttl_seconds: 30,
+      credential_session_hard_ttl_seconds: 3600,
+      credential_session_heartbeat_seconds: 10,
+      credential_session_max_calls: 100,
+      per_call_capability_ttl_seconds: 60,
+      post_quiesce_finalize_ttl_seconds: 600,
+    };
+  };
   return {
     policy_version: "external-execution-v1" as const,
     runtime_authority_attestor: {
       service_identity: "provision-runtime-authority-attestor-v1",
       attestor_binary_sha256: sha256("provision-attestor-binary"),
       attestor_policy_sha256: sha256("provision-attestor-policy"),
-      attestor_public_key_base64: publicKeyBase64,
-      attestor_public_key_sha256: publicKeySha256,
+      attestor_public_key_base64: attestorPublicKeyBase64,
+      attestor_public_key_sha256: attestorPublicKeySha256,
       attestor_key_id: "provision-attestor-key-v1",
       ...launcher,
-      service_launcher_public_key_base64: publicKeyBase64,
+      service_launcher_public_key_base64: launcherPublicKeyBase64,
       receipt_signature_algorithm: "ed25519-v1" as const,
       expected_database_instance_id: databaseInstanceId,
     },

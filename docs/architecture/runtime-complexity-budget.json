@@ -1,13 +1,13 @@
 {
   "schema_version": "aionis_runtime_complexity_budget_v1",
-  "baseline_commit": "11eb4066d589292c4f6d542fac0dfbf491a3eaef",
-  "intent": "Structural growth guard only; the latter Task 8.2A rebaseline adds exact lattice confidence inversion as a diagnostic, four caller-proof policy-fixed online endpoint wrappers with endpoint-specific missingness, explicit unresolved fail-closed policy requirements, and one reservation-bound outcome-free scheduled-risk-set read model. The read model uses tenant/reservation/attempt-scoped protected structural integrity, leaves external evidence to its later authority verifier, exposes calibration_pending and authority-ineligible status, and emits no evidence verdict or mutation. The ledger authority file grows deliberately so global and scoped checks reuse one Runtime-prefix, release, generation, and release-reference rule set instead of duplicating authority logic; independent inversion oracles and real-SQLite orphan-reservation, partial-release, and external-evidence-isolation regressions cover the change. It adds no route, environment field, or import cycle.",
+  "baseline_commit": "47fc6625dff6daf5cb179ba5cd0b639e7ab92899",
+  "intent": "Structural growth guard only; the Task 8.2B rebaseline adds the signed external-authority lifecycle kernel: strict Ed25519 broker authorization for reservation and ticket consumption, protected-provisioning applicability regeneration, immutable input/retry contracts, fixed-domain lifecycle operations, launcher/broker receipt verification, append-only operation fencing, atomic close-reserved-run, and reopen/tamper integrity replay. The collector now intentionally counts tracked and untracked workspace TypeScript so new authority modules cannot sit outside the budget. Growth includes an extracted acyclic applicability projection plus the lifecycle verifier and its state machine; external evidence artifact ingestion, aggregation, and release verdict authority remain fail-closed for a later batch. It adds no route, environment field, evidence verdict, or import cycle.",
   "thresholds": {
-    "source_files": 321,
-    "source_lines": 160344,
+    "source_files": 324,
+    "source_lines": 164013,
     "route_matrix_entries": 21,
     "env_schema_fields": 177,
     "import_cycles": 0,
-    "largest_file_lines": 7486
+    "largest_file_lines": 7511
   }
 }

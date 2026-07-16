@@ -2373,9 +2373,9 @@ The CLI contract is explicit:
 | `status` | `--db --tenant --actor --task-family --experiment-id --revision`; read-only and outcome-redacted |
 | `propose-look` | the status identity plus required `--out`; writes a canonical outcome-redacted next-look proposal |
 | `export-shadow` | `--db --tenant --actor --task-family --experiment-id --revision --out-dir`; only an immutable `shadow` revision is accepted |
-| `reserve-external` | Internal broker-daemon use only. Common: `--db --tenant --actor --operation-id --kind --series-id --task-family --applicable-experiment-id --applicable-revision --immutable-input-manifest --retry-policy --run-id --out --ticket-stdin`. `tool_e2e_gate` additionally requires `--tool-manifest`. `offline_paired_rerun` additionally requires `--holdout-membership-projection --sealed-holdout-manifest --model-snapshot --execution-profile --tool-manifest --execution-order`. Runtime verifies the broker service identity, reads the broker-prefsynced raw ticket only from stdin, re-derives candidate/gate/applicability and frozen role policy, stores its hash, and rejects ticket generation/output paths, caller trust-root flags, or a non-broker parent. |
-| `consume-external-ticket` | `--db --tenant --actor --operation-id --reservation --ticket-stdin --runner-principal-sha256 --broker-process-nonce-sha256 --out`; the only command accepting raw ticket bytes atomically inserts the sole append-only consumption before offline decrypt/validation, so every post-commit crash is non-retryable. Raw ticket is never argv/log data. |
-| `claim-external` | `--db --tenant --actor --operation-id --reservation --ticket-consumption --runner-principal-sha256 --execution-nonce-sha256 --credential-broker-receipt --out`; revalidates the committed consumption, rejects a pre-claim hold, and atomically inserts the only claim before supervisor binding or capability issue; raw ticket input is forbidden. |
+| `reserve-external` | Internal broker-daemon use only. Common: `--db --tenant --kind --series-id --task-family --applicable-experiment-id --applicable-revision --immutable-input-manifest --retry-policy --run-id --broker-authorization-receipt --out --ticket-stdin`. `tool_e2e_gate` additionally requires `--tool-manifest`. `offline_paired_rerun` additionally requires `--holdout-membership-projection --sealed-holdout-manifest --model-snapshot --execution-profile --tool-manifest --execution-order`. The signed authorization binds the operation ID, full canonical request, raw-ticket hash, frozen broker identity, and DB lineage; Runtime derives the actor, re-derives candidate/gate/protected-provisioning applicability and frozen role policy, and rejects caller trust-root flags. |
+| `consume-external-ticket` | `--db --tenant --reservation --ticket-stdin --runner-principal-sha256 --broker-process-nonce-sha256 --broker-authorization-receipt --out`; the signed authorization binds the operation and full consumption request. This is the only normal command accepting raw ticket bytes and atomically inserts the sole append-only consumption before offline decrypt/validation. A post-commit raw-ticket replay is rejected; recovery reads the committed receipt. Raw ticket is never argv/log data. |
+| `claim-external` | `--db --tenant --reservation --ticket-consumption --runner-principal-sha256 --execution-nonce-sha256 --credential-broker-receipt --out`; revalidates the committed consumption, rejects a pre-claim hold, derives the fixed-domain operation ID from the signed claim-receipt digest, and atomically inserts the only claim before supervisor binding or capability issue. Caller actor/operation ID and raw ticket input are forbidden. |
 | `record-external-preclaim-hold` | Internal broker-daemon use only: `--db --tenant --reservation --ticket-consumption --broker-preclaim-hold-receipt --out`; verifies the receipt-derived service actor, fixed-domain operation ID, reason, and zero claim/capability/mount/provider-call proof, atomically inserts or exactly replays the sole hold, and permanently fences `claim-external`. Caller actor/operation ID is forbidden. |
 | `close-reserved-run` | Broker-daemon recovery only: `--broker-socket --db --tenant --reservation --triggering-terminal-fact --out`; for a still-unconsumed reservation it first fsyncs the close intent, atomically consumes the existing private ticket, destroys it only after commit, then records a signed `operator_abort` pre-claim hold with zero-effects proof bound to the triggering fact. Crash after consumption replays that intent and cannot enter validation or change reason. It never mints a ticket or performs a provider/mount call. A reserved-but-unconsumed run cannot enter coverage-final or an acceptance root. |
 | `bind-external-supervisor` | Internal broker-daemon use only: `--db --tenant --reservation --ticket-consumption --claim --broker-binding-receipt --service-launcher-receipt --out`; verifies both registered signatures and exact runner/executable/argv/PID-start-cgroup-job/inherited-channel bindings, derives the fixed-domain operation ID, and atomically inserts or exactly replays the sole binding before Runtime allows mount/provider access. Caller actor/operation ID is forbidden. |
@@ -2417,8 +2417,8 @@ operation and ticket; crash after commit re-reads the row and proves the same
 hash before returning the public reservation. It never mints a replacement.
 
 The reviewed `$FORMAL_RUN_BROKER claim-learning-run` client requires
-`--broker-socket --db --tenant --actor --consume-operation-id
---claim-operation-id --reservation --runner-identity
+`--broker-socket --db --tenant --consume-operation-id
+--reservation --runner-identity
 --credential-secret-ref --ticket-consumption-out --claim-out
 --broker-conformance-receipt-out`; offline additionally requires
 `--sealed-holdout-ref`. Caller-selected
@@ -3790,7 +3790,6 @@ npx tsx scripts/learning-host-receipt.ts verify \
   --broker-socket "$BROKER_SOCKET" \
   --db "$RUNTIME_DB" --tenant "$TENANT" --actor formal-run-broker \
   --consume-operation-id "consume-external:shadow:$SHADOW_RUN_ID" \
-  --claim-operation-id "claim-external:shadow:$SHADOW_RUN_ID" \
   --reservation "$SHADOW_RESERVATION" \
   --runner-identity "$HOST_ADAPTER_IDENTITY" \
   --credential-secret-ref "$HOST_SECRET_REF" \
@@ -3948,7 +3947,6 @@ node scripts/learning-acceptance-runtime.mjs clone-one \
   --broker-socket "$BROKER_SOCKET" \
   --db "$RUNTIME_DB" --tenant "$TENANT" --actor formal-run-broker \
   --consume-operation-id "consume-external:tool:$ACTION_RUN_ID" \
-  --claim-operation-id "claim-external:tool:$ACTION_RUN_ID" \
   --reservation "$TOOL_RESERVATION" \
   --runner-identity "$EVAL_IDENTITY" \
   --credential-secret-ref secret-manager://aionis/formal-tool-providers \
@@ -4108,7 +4106,6 @@ node scripts/run-learning-harness.mjs verify-model-snapshot \
   --broker-socket "$BROKER_SOCKET" \
   --db "$RUNTIME_DB" --tenant "$TENANT" --actor formal-run-broker \
   --consume-operation-id "consume-external:paired:$PAIRED_RUN_ID" \
-  --claim-operation-id "claim-external:paired:$PAIRED_RUN_ID" \
   --reservation "$PAIRED_RESERVATION" \
   --runner-identity "$EVAL_IDENTITY" \
   --credential-secret-ref secret-manager://aionis/immutable-paired-runtime \

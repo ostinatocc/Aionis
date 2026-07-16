@@ -1,5 +1,10 @@
 import assert from "node:assert/strict";
-import { createHash } from "node:crypto";
+import {
+  createHash,
+  generateKeyPairSync,
+  sign as signMessage,
+  type KeyObject,
+} from "node:crypto";
 import { spawn, spawnSync } from "node:child_process";
 import fs from "node:fs";
 import os from "node:os";
@@ -55,6 +60,8 @@ import {
   "../../src/store/lite-learning-schema-migration.ts";
 import { normalizeSqliteSchemaSql } from "../../src/store/sqlite-schema-sql.ts";
 import {
+  ExternalExecutionPolicyV1Schema,
+  RequiredExternalInputsV1Schema,
   learningEpisodeEventDigest,
   learningEpisodeId,
   learningDecisionSurfaceDigest,
@@ -67,6 +74,16 @@ import {
   type HostUseReceiptV1Body,
   type LearningLedgerItem,
 } from "../../src/memory/learning-episode-ledger.ts";
+import {
+  LEARNING_EXTERNAL_BROKER_SERVICE_IDENTITY,
+  learningExternalPreclaimHoldOperationId,
+  learningExternalReceiptDigest,
+} from "../../src/memory/learning-external-authority.ts";
+import {
+  LEARNING_COLLECTION_SOURCE_POLICY_STRICT_VALIDATION_CONTRACT,
+  LearningExperimentProvisionReceiptV1Schema,
+  learningExperimentApplicabilityManifestDigest,
+} from "../../src/memory/learning-experiment-provisioning.ts";
 import {
   LearningExperimentCloseApprovalV1Schema,
   learningLookProposalDigest,
@@ -92,6 +109,8 @@ import {
 import { createLiteRuntimeDatabase } from "../../src/store/lite-runtime-database.ts";
 import { createLiteLearningExperimentCloser } from
   "../../src/store/lite-learning-experiment-closing.ts";
+import { buildApplicabilityManifestFromDatabase } from
+  "../../src/store/lite-learning-experiment-applicability.ts";
 import {
   backupLiteRuntimeDatabase,
   restoreLiteRuntimeDatabase,
@@ -382,46 +401,53 @@ function insertAuthorityRowDirect(
 }
 
 function externalExecutionPolicy(databaseInstanceId: string) {
-  const publicKey = Buffer.alloc(32, 7);
-  const publicKeyBase64 = publicKey.toString("base64");
-  const publicKeySha256 = createHash("sha256").update(publicKey).digest("hex");
+  const attestorPublicKey = Buffer.alloc(32, 7);
+  const launcherPublicKey = Buffer.alloc(32, 8);
+  const attestorPublicKeyBase64 = attestorPublicKey.toString("base64");
+  const attestorPublicKeySha256 = createHash("sha256").update(attestorPublicKey).digest("hex");
+  const launcherPublicKeyBase64 = launcherPublicKey.toString("base64");
+  const launcherPublicKeySha256 = createHash("sha256").update(launcherPublicKey).digest("hex");
   const launcher = {
     service_launcher_policy_sha256: "1".repeat(64),
     service_launcher_binary_sha256: "2".repeat(64),
-    service_launcher_public_key_sha256: publicKeySha256,
+    service_launcher_public_key_sha256: launcherPublicKeySha256,
     service_launcher_key_id: "launcher-key-v1",
   };
-  const role = (credentialSessionClass: string, suffix: string) => ({
-    runner_principal_sha256: sha256(`runner:${suffix}`),
-    credential_session_class: credentialSessionClass,
-    broker_policy_sha256: sha256(`broker-policy:${suffix}`),
-    broker_binary_sha256: sha256(`broker-binary:${suffix}`),
-    broker_public_key_sha256: sha256(`broker-key:${suffix}`),
-    broker_key_id: `broker-key-${suffix}`,
-    ...launcher,
-    supervisor_executable_sha256: sha256(`supervisor-executable:${suffix}`),
-    supervisor_argv_policy_sha256: sha256(`supervisor-argv:${suffix}`),
-    supervisor_sandbox_policy_sha256: sha256(`supervisor-sandbox:${suffix}`),
-    receipt_signature_algorithm: "ed25519-v1",
-    credential_scope_sha256: sha256(`credential-scope:${suffix}`),
-    supervisor_bind_ttl_seconds: 30,
-    credential_session_hard_ttl_seconds: 3600,
-    credential_session_heartbeat_seconds: 10,
-    credential_session_max_calls: 100,
-    per_call_capability_ttl_seconds: 60,
-    post_quiesce_finalize_ttl_seconds: 600,
-  });
+  const role = (credentialSessionClass: string, suffix: string) => {
+    const brokerPublicKey = createHash("sha256").update(`broker-key:${suffix}`).digest();
+    return {
+      runner_principal_sha256: sha256(`runner:${suffix}`),
+      credential_session_class: credentialSessionClass,
+      broker_policy_sha256: sha256(`broker-policy:${suffix}`),
+      broker_binary_sha256: sha256(`broker-binary:${suffix}`),
+      broker_public_key_base64: brokerPublicKey.toString("base64"),
+      broker_public_key_sha256: createHash("sha256").update(brokerPublicKey).digest("hex"),
+      broker_key_id: `broker-key-${suffix}`,
+      ...launcher,
+      supervisor_executable_sha256: sha256(`supervisor-executable:${suffix}`),
+      supervisor_argv_policy_sha256: sha256(`supervisor-argv:${suffix}`),
+      supervisor_sandbox_policy_sha256: sha256(`supervisor-sandbox:${suffix}`),
+      receipt_signature_algorithm: "ed25519-v1",
+      credential_scope_sha256: sha256(`credential-scope:${suffix}`),
+      supervisor_bind_ttl_seconds: 30,
+      credential_session_hard_ttl_seconds: 3600,
+      credential_session_heartbeat_seconds: 10,
+      credential_session_max_calls: 100,
+      per_call_capability_ttl_seconds: 60,
+      post_quiesce_finalize_ttl_seconds: 600,
+    };
+  };
   return {
     policy_version: "external-execution-v1",
     runtime_authority_attestor: {
       service_identity: "runtime-authority-attestor-v1",
       attestor_binary_sha256: "3".repeat(64),
       attestor_policy_sha256: "4".repeat(64),
-      attestor_public_key_base64: publicKeyBase64,
-      attestor_public_key_sha256: publicKeySha256,
+      attestor_public_key_base64: attestorPublicKeyBase64,
+      attestor_public_key_sha256: attestorPublicKeySha256,
       attestor_key_id: "attestor-key-v1",
       ...launcher,
-      service_launcher_public_key_base64: publicKeyBase64,
+      service_launcher_public_key_base64: launcherPublicKeyBase64,
       receipt_signature_algorithm: "ed25519-v1",
       expected_database_instance_id: databaseInstanceId,
     },
@@ -534,8 +560,8 @@ function confirmatoryFixture(databaseInstanceId: string) {
   const pairManifestSha256 = learningRandomizationPairManifestDigest(pairs);
   const activationScheduleSha256 = learningActivationScheduleDigest(pairs);
   const sourcePolicy = canonicalJson({
-    contract_version: "test-collection-source-policy-v1",
-    principals: [],
+    contract_version: "aionis_collection_source_policy_v1",
+    collection_sources: [],
   });
   const evidenceSeries = canonicalJson({
     offline_paired: "offline",
@@ -567,6 +593,8 @@ function confirmatoryFixture(databaseInstanceId: string) {
     provision_operation_id_sha256: sha256("operation-provision-confirmatory"),
     provisioning_actor_sha256: sha256("test-provisioner"),
     collection_source_policy_sha256: sourcePolicy.sha256,
+    collection_source_policy_validation_contract:
+      LEARNING_COLLECTION_SOURCE_POLICY_STRICT_VALIDATION_CONTRACT,
     external_execution_policy_sha256: externalPolicy.sha256,
     gate_prospective_calibration_sha256: gate.prospective_calibration_sha256,
     namespace_set_sha256: namespaceSetSha256,
@@ -1438,6 +1466,9 @@ async function createV2Fixture(dbPath: string): Promise<void> {
   const db = createSqliteDatabase(dbPath);
   try {
     db.exec("BEGIN IMMEDIATE");
+    for (const trigger of LITE_LEARNING_LEDGER_REQUIRED_TRIGGER_NAMES) {
+      db.exec(`DROP TRIGGER IF EXISTS ${trigger}`);
+    }
     for (const table of [...LITE_LEARNING_LEDGER_REQUIRED_TABLE_NAMES].reverse()) {
       db.exec(`DROP TABLE IF EXISTS ${table}`);
     }
@@ -4815,6 +4846,126 @@ test("experiment revisions require evidence-intent-specific external inputs", as
   }
 });
 
+test("pre-strict source-policy revisions reopen while fresh writes require strict-v1", async () => {
+  const temp = tempDatabase("historical-source-policy-compatibility");
+  let historicalRevision: LiteLearningAuthorityRow | null = null;
+  {
+    const database = createLiteRuntimeDatabase(temp.path);
+    const writeStore = createLiteWriteStoreFromDatabase(database, { annProjectionEnabled: false });
+    try {
+      const ledger = createLiteLearningEpisodeLedgerAccess(database);
+      const fixture = confirmatoryFixture(await ledger.databaseInstanceId());
+      await database.transaction.run(async () => {
+        await ledger.insertPolicyVersion(fixture.candidate);
+        await ledger.insertPolicyVersion(fixture.gate);
+      });
+
+      const historicalSourcePolicy = canonicalJson({
+        contract_version: "aionis_collection_source_policy_v1",
+        collection_sources: [
+          {
+            principal_sha256: "b".repeat(64),
+            class: "eligible_host",
+            collector_id: "historical-collector-b",
+            collector_version: "historical-v1",
+            verifier_policy_sha256: "d".repeat(64),
+          },
+          {
+            principal_sha256: "a".repeat(64),
+            class: "fixture_pilot",
+            collector_id: "historical-collector-a",
+            collector_version: "historical-v1",
+            verifier_policy_sha256: "c".repeat(64),
+          },
+        ],
+      });
+      const emptyInputs = canonicalJson({});
+      const historicalConfigValue = {
+        ...(JSON.parse(String(fixture.revision.config_json)) as Record<string, unknown>),
+        collection_source_policy_sha256: historicalSourcePolicy.sha256,
+        required_external_inputs_sha256: emptyInputs.sha256,
+      };
+      delete historicalConfigValue.collection_source_policy_validation_contract;
+      const historicalConfig = canonicalJson(historicalConfigValue);
+      historicalRevision = {
+        ...fixture.revision,
+        experiment_id: "experiment-historical-source-policy",
+        serving_phase: "shadow",
+        evidence_intent: "integrity_only",
+        eligible_memory_namespace_set_sha256: null,
+        eligible_memory_namespace_count: null,
+        assignment_design: "diagnostic_hash_v1",
+        randomization_pair_manifest_sha256: null,
+        randomization_pair_count: null,
+        activation_schedule_sha256: null,
+        confirmatory_assignment_bits: null,
+        confirmatory_assignment_bit_count: null,
+        confirmatory_assignment_bits_sha256: null,
+        collection_source_policy_sha256: historicalSourcePolicy.sha256,
+        collection_source_policy_json: historicalSourcePolicy.json,
+        required_external_inputs_sha256: emptyInputs.sha256,
+        required_external_inputs_json: emptyInputs.json,
+        config_sha256: historicalConfig.sha256,
+        config_json: historicalConfig.json,
+      } satisfies LiteLearningAuthorityRow;
+
+      await assert.rejects(
+        database.transaction.run(async () => await ledger.insertExperimentRevision(
+          historicalRevision!,
+        )),
+        /requires the strict collection source policy validation contract/,
+      );
+
+      const strictConfig = canonicalJson({
+        ...historicalConfigValue,
+        collection_source_policy_validation_contract:
+          LEARNING_COLLECTION_SOURCE_POLICY_STRICT_VALIDATION_CONTRACT,
+      });
+      await assert.rejects(
+        database.transaction.run(async () => await ledger.insertExperimentRevision({
+          ...historicalRevision!,
+          experiment_id: "experiment-fresh-unsorted-source-policy",
+          config_sha256: strictConfig.sha256,
+          config_json: strictConfig.json,
+        })),
+        /canonically sorted/,
+      );
+
+      await database.transaction.run(async () => {
+        insertAuthorityRowDirect(
+          database.db,
+          "lite_learning_experiment_revisions",
+          historicalRevision!,
+        );
+      });
+      await writeStore.close();
+    } finally {
+      await database.close();
+    }
+  }
+
+  try {
+    assert.ok(historicalRevision);
+    const reopenedDatabase = createLiteRuntimeDatabase(temp.path);
+    const reopenedStore = createLiteWriteStoreFromDatabase(
+      reopenedDatabase,
+      { annProjectionEnabled: false },
+    );
+    try {
+      const reopenedLedger = createLiteLearningEpisodeLedgerAccess(reopenedDatabase);
+      const replay = await reopenedDatabase.transaction.run(
+        async () => await reopenedLedger.insertExperimentRevision(historicalRevision!),
+      );
+      assert.equal(replay.replayed, true);
+      await reopenedStore.close();
+    } finally {
+      await reopenedDatabase.close();
+    }
+  } finally {
+    fs.rmSync(temp.directory, { recursive: true, force: true });
+  }
+});
+
 test("episode store appends a canonical exposure once and replays it after reopen", async () => {
   const temp = tempDatabase("episode-replay");
   const fixture = legacyExposureFixture();
@@ -5895,144 +6046,308 @@ test("feedback and effect rows stay atomic while legal control blockers fail lea
   }
 });
 
-test("external reservation and ticket consumption bind one runner while signed facts fail closed", async () => {
-  const temp = tempDatabase("external-prefix");
+test("protected external lifecycle verifies frozen Ed25519 authority and survives reopen", async () => {
+  const temp = tempDatabase("external-protected-lifecycle");
   const database = createLiteRuntimeDatabase(temp.path);
+  let databaseClosed = false;
   let writeStore: ReturnType<typeof createLiteWriteStoreFromDatabase> | null = null;
+  let reopenedDatabase: ReturnType<typeof createLiteRuntimeDatabase> | null = null;
+  let reopenedWriteStore: ReturnType<typeof createLiteWriteStoreFromDatabase> | null = null;
   try {
-    writeStore = createLiteWriteStoreFromDatabase(database, { annProjectionEnabled: false });
-    const ledger = createLiteLearningEpisodeLedgerAccess(database);
-    const retryPolicy = canonicalJson({ contract_version: "test-retry-policy-v1", max_attempts: 1 });
-    const inputManifest = canonicalJson({ contract_version: "test-input-manifest-v1", source: "sealed" });
-    const runnerPrincipalSha256 = sha256("external-runner-principal-a");
-    const reservationBase = authorityRow("lite_learning_external_run_reservations", {
+    const keyring = storeCloseKeyring();
+    writeStore = createLiteWriteStoreFromDatabase(database, {
+      annProjectionEnabled: false,
+      authorityReceiptKeyring: keyring,
+    });
+    const ledger = createLiteLearningEpisodeLedgerAccess(database, {
+      authorityReceiptKeyring: keyring,
+    });
+    const brokerKeys = generateKeyPairSync("ed25519");
+    const launcherKeys = generateKeyPairSync("ed25519");
+    const attestorKeys = generateKeyPairSync("ed25519");
+    const rawPublicKeyBase64 = (publicKey: KeyObject): string => {
+      const spki = publicKey.export({ format: "der", type: "spki" });
+      return Buffer.from(spki).subarray(-32).toString("base64");
+    };
+    const signReceipt = <TBody extends Record<string, unknown>>(
+      body: TBody,
+      privateKey: KeyObject,
+    ) => ({
+      body,
+      signature_algorithm: "ed25519-v1" as const,
+      signature_base64: signMessage(
+        null,
+        Buffer.from(stableStringify(body), "utf8"),
+        privateKey,
+      ).toString("base64"),
+    });
+    const brokerPublicKeyBase64 = rawPublicKeyBase64(brokerKeys.publicKey);
+    const brokerPublicKeySha256 = createHash("sha256")
+      .update(Buffer.from(brokerPublicKeyBase64, "base64"))
+      .digest("hex");
+    const launcherPublicKeyBase64 = rawPublicKeyBase64(launcherKeys.publicKey);
+    const launcherPublicKeySha256 = createHash("sha256")
+      .update(Buffer.from(launcherPublicKeyBase64, "base64"))
+      .digest("hex");
+    const attestorPublicKeyBase64 = rawPublicKeyBase64(attestorKeys.publicKey);
+    const attestorPublicKeySha256 = createHash("sha256")
+      .update(Buffer.from(attestorPublicKeyBase64, "base64"))
+      .digest("hex");
+
+    const databaseInstanceId = await ledger.databaseInstanceId();
+    const fixture = confirmatoryFixture(databaseInstanceId);
+    const rawOriginalPolicy = JSON.parse(
+      String(fixture.revision.external_execution_policy_json),
+    ) as { runtime_authority_attestor: Record<string, unknown> } & Record<string, unknown>;
+    const originalPolicy = ExternalExecutionPolicyV1Schema.parse({
+      ...rawOriginalPolicy,
+      runtime_authority_attestor: {
+        ...rawOriginalPolicy.runtime_authority_attestor,
+        attestor_public_key_base64: attestorPublicKeyBase64,
+        attestor_public_key_sha256: attestorPublicKeySha256,
+      },
+    });
+    const withLauncherKey = <TRole extends typeof originalPolicy.roles.production_shadow>(
+      role: TRole,
+    ): TRole => ({
+      ...role,
+      service_launcher_public_key_sha256: launcherPublicKeySha256,
+    });
+    const externalPolicy = ExternalExecutionPolicyV1Schema.parse({
+      ...originalPolicy,
+      runtime_authority_attestor: {
+        ...originalPolicy.runtime_authority_attestor,
+        service_launcher_public_key_base64: launcherPublicKeyBase64,
+        service_launcher_public_key_sha256: launcherPublicKeySha256,
+      },
+      roles: {
+        offline_paired: withLauncherKey(originalPolicy.roles.offline_paired),
+        production_shadow: {
+          ...withLauncherKey(originalPolicy.roles.production_shadow),
+          broker_public_key_base64: brokerPublicKeyBase64,
+          broker_public_key_sha256: brokerPublicKeySha256,
+        },
+        tool_e2e: {
+          ...withLauncherKey(originalPolicy.roles.tool_e2e),
+          broker_public_key_base64: brokerPublicKeyBase64,
+          broker_public_key_sha256: brokerPublicKeySha256,
+        },
+      },
+    });
+    const encodedExternalPolicy = canonicalJson(externalPolicy);
+    const productionRole = externalPolicy.roles.production_shadow;
+    const toolRole = externalPolicy.roles.tool_e2e;
+    const originalInputs = RequiredExternalInputsV1Schema.parse(
+      JSON.parse(String(fixture.revision.required_external_inputs_json)),
+    );
+    const retryPolicy = canonicalJson({
+      contract_version: "aionis_learning_external_retry_policy_v1",
+      max_formal_attempts: 1,
+      retry_after_ticket_consumption: false,
+      retry_after_claim: false,
+    });
+    const productionInputManifest = canonicalJson({
+      contract_version: "aionis_learning_external_immutable_input_manifest_v1",
       tenant_id: "tenant-a",
-      reservation_id: "reservation-external-a",
       artifact_kind: "production_shadow_gate",
-      evidence_series_id: "series-external-a",
+      evidence_series_id: "host",
       task_family: "runtime-learning",
-      candidate_policy_id: "candidate-a",
-      candidate_policy_version: "v1",
-      candidate_policy_implementation_sha256: sha256("candidate-implementation-a"),
-      candidate_policy_config_sha256: sha256("candidate-config-a"),
-      applicable_experiment_id: "experiment-a",
-      applicable_experiment_revision: 1,
-      gate_policy_id: "gate-a",
-      gate_policy_version: "v1",
-      gate_policy_config_sha256: sha256("gate-config-a"),
-      applicability_manifest_sha256: sha256("applicability-a"),
-      harness_bundle_sha256: sha256("harness-a"),
-      source_snapshot_sha256: sha256("source-snapshot-a"),
-      case_set_sha256: null,
-      holdout_membership_projection_sha256: null,
-      sealed_holdout_ref_sha256: null,
-      sealed_holdout_ciphertext_sha256: null,
-      execution_profile_sha256: sha256("execution-profile-a"),
-      model_identity_sha256: sha256("model-identity-a"),
-      immutable_model_snapshot_sha256: null,
-      tool_manifest_sha256: null,
-      execution_order_sha256: null,
-      retry_policy_sha256: retryPolicy.sha256,
-      retry_policy_json: retryPolicy.json,
-      immutable_input_manifest_sha256: inputManifest.sha256,
-      immutable_input_manifest_json: inputManifest.json,
-      expected_runner_principal_sha256: runnerPrincipalSha256,
-      credential_broker_policy_sha256: sha256("broker-policy-a"),
-      service_launcher_policy_sha256: sha256("launcher-policy-a"),
-      service_launcher_binary_sha256: sha256("launcher-binary-a"),
-      service_launcher_key_id: "launcher-key-a",
-      supervisor_executable_sha256: sha256("supervisor-executable-a"),
-      supervisor_argv_policy_sha256: sha256("supervisor-argv-policy-a"),
-      supervisor_sandbox_policy_sha256: sha256("supervisor-sandbox-a"),
-      credential_session_class: "eligible_host_adapter",
-      run_id: "run-external-a",
-      reserve_operation_id: "operation-reserve-external-a",
-      runner_ticket_sha256: sha256("runner-ticket-a"),
-      reservation_sha256: "0".repeat(64),
-      reserved_at: "2026-07-13T00:00:00.000Z",
+      applicable_experiment_id: fixture.revision.experiment_id,
+      applicable_experiment_revision: fixture.revision.experiment_revision,
+      candidate_policy_id: fixture.revision.candidate_policy_id,
+      candidate_policy_version: fixture.revision.candidate_policy_version,
+      candidate_policy_implementation_sha256:
+        fixture.revision.candidate_policy_implementation_sha256,
+      candidate_policy_config_sha256: fixture.revision.candidate_policy_config_sha256,
+      gate_policy_id: fixture.revision.gate_policy_id,
+      gate_policy_version: fixture.revision.gate_policy_version,
+      gate_policy_config_sha256: fixture.revision.gate_policy_config_sha256,
+      harness_bundle_sha256: sha256("harness:normal"),
+      source_snapshot_sha256: sha256("source:normal"),
+      execution_profile_sha256: sha256("profile:normal"),
+      model_identity_sha256: sha256("model:normal"),
+      expected_runner_principal_sha256: productionRole.runner_principal_sha256,
+      run_id: originalInputs.production_shadow.planned_run_id,
     });
-    const reservation = {
-      ...reservationBase,
-      reservation_sha256: learningExternalRunReservationDigest(reservationBase),
-    } satisfies LiteLearningAuthorityRow;
-    await assert.rejects(
-      database.transaction.run(async () => await ledger.insertAuthorityFact(
-        "lite_learning_external_run_reservations",
-        { ...reservation, reservation_sha256: sha256("forged-reservation-record") },
-      )),
-      /reservation record digest mismatch/,
-    );
-    await database.transaction.run(async () => await ledger.insertAuthorityFact(
-      "lite_learning_external_run_reservations",
-      reservation,
-    ));
-
-    const consumptionBase = authorityRow("lite_learning_external_ticket_consumptions", {
+    const toolManifestSha256 = sha256("tool-manifest:held");
+    const toolInputManifest = canonicalJson({
+      contract_version: "aionis_learning_external_immutable_input_manifest_v1",
       tenant_id: "tenant-a",
-      consumption_id: "consumption-external-a",
-      reservation_id: reservation.reservation_id,
-      runner_ticket_sha256: reservation.runner_ticket_sha256,
-      runner_principal_sha256: runnerPrincipalSha256,
-      broker_process_nonce_sha256: sha256("broker-process-nonce-a"),
-      consume_operation_id: "operation-consume-external-a",
-      consumed_at: "2026-07-13T00:01:00.000Z",
-      consumption_sha256: "0".repeat(64),
+      artifact_kind: "tool_e2e_gate",
+      evidence_series_id: "tool",
+      task_family: "runtime-learning",
+      applicable_experiment_id: fixture.revision.experiment_id,
+      applicable_experiment_revision: fixture.revision.experiment_revision,
+      candidate_policy_id: fixture.revision.candidate_policy_id,
+      candidate_policy_version: fixture.revision.candidate_policy_version,
+      candidate_policy_implementation_sha256:
+        fixture.revision.candidate_policy_implementation_sha256,
+      candidate_policy_config_sha256: fixture.revision.candidate_policy_config_sha256,
+      gate_policy_id: fixture.revision.gate_policy_id,
+      gate_policy_version: fixture.revision.gate_policy_version,
+      gate_policy_config_sha256: fixture.revision.gate_policy_config_sha256,
+      harness_bundle_sha256: sha256("harness:held"),
+      source_snapshot_sha256: sha256("source:held"),
+      execution_profile_sha256: sha256("profile:held"),
+      model_identity_sha256: sha256("model:held"),
+      expected_runner_principal_sha256: toolRole.runner_principal_sha256,
+      run_id: originalInputs.tool_e2e.planned_run_id,
+      tool_manifest_sha256: toolManifestSha256,
     });
-    const consumption = {
-      ...consumptionBase,
-      consumption_sha256: learningExternalTicketConsumptionDigest(consumptionBase),
+    const requiredExternalInputs = RequiredExternalInputsV1Schema.parse({
+      ...originalInputs,
+      production_shadow: {
+        ...originalInputs.production_shadow,
+        immutable_input_manifest_sha256: productionInputManifest.sha256,
+        retry_policy_sha256: retryPolicy.sha256,
+      },
+      tool_e2e: {
+        ...originalInputs.tool_e2e,
+        immutable_input_manifest_sha256: toolInputManifest.sha256,
+        retry_policy_sha256: retryPolicy.sha256,
+      },
+    });
+    const encodedRequiredInputs = canonicalJson(requiredExternalInputs);
+    const collectionSourcePolicy = canonicalJson({
+      contract_version: "aionis_collection_source_policy_v1",
+      collection_sources: [],
+    });
+    const originalConfig = JSON.parse(String(fixture.revision.config_json)) as unknown;
+    assert.ok(originalConfig !== null && typeof originalConfig === "object" && !Array.isArray(originalConfig));
+    const revisionConfig = canonicalJson({
+      ...originalConfig,
+      provision_request_sha256: sha256("external-lifecycle-provision-request"),
+      experiment_declaration_sha256: sha256("external-lifecycle-experiment-declaration"),
+      memory_namespace_manifest_sha256: sha256("external-lifecycle-namespace-manifest"),
+      external_input_set_sha256: sha256("external-lifecycle-input-set"),
+      tenant_scope_encoding_sha256: sha256("external-lifecycle-tenant-scope-encoding"),
+      applicability_profile_projection: {
+        contract_version: "aionis_learning_experiment_applicability_profile_v1",
+        profile_id: fixture.revision.profile_id,
+        mode: "active",
+        task_family: "runtime-learning",
+        scope_selector_sha256s: [],
+        scope_prefix_selector_sha256s: [],
+        task_signature_selector_sha256s: [],
+        agent_roles: [],
+        context_modes: [],
+        guide_modes: [],
+      },
+      collection_source_policy_sha256: collectionSourcePolicy.sha256,
+      external_execution_policy_sha256: encodedExternalPolicy.sha256,
+      required_external_inputs_sha256: encodedRequiredInputs.sha256,
+    });
+    const revision = {
+      ...fixture.revision,
+      required_external_inputs_sha256: encodedRequiredInputs.sha256,
+      required_external_inputs_json: encodedRequiredInputs.json,
+      external_execution_policy_sha256: encodedExternalPolicy.sha256,
+      external_execution_policy_json: encodedExternalPolicy.json,
+      collection_source_policy_sha256: collectionSourcePolicy.sha256,
+      collection_source_policy_json: collectionSourcePolicy.json,
+      config_sha256: revisionConfig.sha256,
+      config_json: revisionConfig.json,
     } satisfies LiteLearningAuthorityRow;
-    await assert.rejects(
-      database.transaction.run(async () => await ledger.insertAuthorityFact(
-        "lite_learning_external_ticket_consumptions",
-        { ...consumption, runner_principal_sha256: sha256("wrong-runner") },
-      )),
-      /consumption reservation mismatch/,
-    );
-    await assert.rejects(
-      database.transaction.run(async () => await ledger.insertAuthorityFact(
-        "lite_learning_external_ticket_consumptions",
-        { ...consumption, consumption_sha256: sha256("forged-consumption-record") },
-      )),
-      /consumption record digest mismatch/,
-    );
-    await database.transaction.run(async () => await ledger.insertAuthorityFact(
-      "lite_learning_external_ticket_consumptions",
-      consumption,
-    ));
-
-    const claim = authorityRow("lite_learning_external_run_claims", {
-      tenant_id: "tenant-a",
-      claim_id: "claim-external-a",
-      reservation_id: reservation.reservation_id,
-      ticket_consumption_id: consumption.consumption_id,
-      ticket_consumption_sha256: consumption.consumption_sha256,
-      runner_principal_sha256: runnerPrincipalSha256,
-      runner_execution_nonce_sha256: sha256("runner-execution-nonce-a"),
-      credential_broker_receipt_sha256: sha256("broker-claim-receipt-a"),
-      credential_broker_policy_sha256: reservation.credential_broker_policy_sha256,
-      credential_broker_binary_sha256: sha256("broker-binary-a"),
-      credential_broker_key_id: "broker-key-a",
-      credential_broker_receipt_json: stableStringify({ contract_version: "test-broker-claim-v1" }),
-      credential_broker_receipt_signature: "s".repeat(64),
-      credential_session_id_sha256: sha256("credential-session-a"),
-      supervisor_bind_expires_at: "2026-07-13T00:06:00.000Z",
-      credential_session_expires_at: "2026-07-13T01:01:00.000Z",
-      credential_session_heartbeat_seconds: 10,
-      credential_session_max_calls: 100,
-      claim_operation_id: "operation-claim-external-a",
-      claimed_at: "2026-07-13T00:02:00.000Z",
-      claim_sha256: sha256("claim-record-a"),
+    await database.transaction.run(async () => {
+      await ledger.insertPolicyVersion(fixture.candidate);
+      await ledger.insertPolicyVersion(fixture.gate);
+      await ledger.provisionConfirmatorySet({
+        revision,
+        attempt: fixture.attempt,
+        pairs: fixture.pairs,
+        leases: fixture.leases,
+      });
     });
-    await assert.rejects(
-      database.transaction.run(async () => await ledger.insertAuthorityFact(
-        "lite_learning_external_run_claims",
-        claim,
-      )),
-      /protected Task 8 external receipt verifier/,
+    const applicabilityManifest = buildApplicabilityManifestFromDatabase({
+      db: database.db,
+      tenantId: "tenant-a",
+      experimentId: String(revision.experiment_id),
+      experimentRevision: Number(revision.experiment_revision),
+    });
+    if (applicabilityManifest.evidence_intent !== "confirmatory") {
+      throw new Error("external lifecycle fixture requires confirmatory applicability");
+    }
+    const applicabilityManifestSha256 = learningExperimentApplicabilityManifestDigest(
+      applicabilityManifest,
     );
+    const provisionOperationId = "operation-provision-confirmatory";
+    const provisionRequestSha256 = sha256("external-lifecycle-provision-request");
+    const provisionActor = "test-provisioner";
+    const provisionReceipt = LearningExperimentProvisionReceiptV1Schema.parse({
+      contract_version: "aionis_learning_experiment_provision_receipt_v1",
+      operation_kind: "learning_experiment_provision_v1",
+      operation_id: provisionOperationId,
+      request_sha256: provisionRequestSha256,
+      tenant_id: "tenant-a",
+      authority_scope: "learning-experiment-authority-v1",
+      runtime_authority_lineage_sha256: sha256(databaseInstanceId),
+      actor: provisionActor,
+      status: "provisioned",
+      experiment: {
+        experiment_id: String(revision.experiment_id),
+        experiment_revision: Number(revision.experiment_revision),
+        profile_id: String(revision.profile_id),
+        profile_rule_sha256: String(revision.profile_rule_sha256),
+        experiment_config_sha256: String(revision.config_sha256),
+        serving_phase: "active_control",
+        evidence_intent: "confirmatory",
+      },
+      policy_bindings: applicabilityManifest.policy_bindings,
+      input_bindings: {
+        memory_namespace_manifest_sha256:
+          applicabilityManifest.memory_namespace_manifest_sha256,
+        external_input_set_sha256: applicabilityManifest.external_input_set_sha256,
+        tenant_scope_encoding_sha256: applicabilityManifest.tenant_scope_encoding_sha256,
+      },
+      cohort: {
+        contract_version: "aionis_learning_confirmatory_provision_summary_v1",
+        confirmatory_attempt_id: applicabilityManifest.cohort.confirmatory_attempt_id,
+        confirmatory_attempt_sha256: applicabilityManifest.cohort.confirmatory_attempt_sha256,
+        eligible_memory_namespace_set_sha256:
+          applicabilityManifest.cohort.eligible_memory_namespace_set_sha256,
+        eligible_memory_namespace_count: 768,
+        randomization_pair_manifest_sha256:
+          applicabilityManifest.cohort.randomization_pair_manifest_sha256,
+        randomization_pair_count: 384,
+        activation_schedule_sha256: applicabilityManifest.cohort.activation_schedule_sha256,
+        namespace_lease_membership_sha256:
+          applicabilityManifest.cohort.namespace_lease_membership_sha256,
+        namespace_lease_count: 768,
+        planned_candidate_namespace_count: 384,
+        planned_control_namespace_count: 384,
+        assignment: {
+          assignment_design: "matched_pair_complete_randomization_v1",
+          assignment_algorithm: "matched_pair_csprng_bit_v1",
+          confirmatory_assignment_bits_sha256:
+            String(revision.confirmatory_assignment_bits_sha256),
+          confirmatory_assignment_bit_count: 384,
+          confirmatory_assignment_random_bytes: 48,
+          confirmatory_assignment_bit_order:
+            "canonical_pair_hash_ascending_bit_zero_first_msb_first",
+          randomness_rejection_or_redraw_allowed: false,
+        },
+      },
+      applicability_manifest_sha256: applicabilityManifestSha256,
+      applicability_manifest: applicabilityManifest,
+    });
+    await writeStore!.withTx(async () => {
+      await writeStore!.insertWriteOperation({
+        tenantId: "tenant-a",
+        scope: "learning-experiment-authority-v1",
+        operationKind: "learning_experiment_provision_v1",
+        operationId: provisionOperationId,
+        requestSha256: provisionRequestSha256,
+        receiptJson: stableStringify(provisionReceipt),
+        commitId: null,
+      });
+    });
+
     for (const table of [
+      "lite_learning_external_run_reservations",
+      "lite_learning_external_holdout_members",
+      "lite_learning_external_ticket_consumptions",
       "lite_learning_external_preclaim_holds",
+      "lite_learning_external_run_claims",
       "lite_learning_external_supervisor_bindings",
       "lite_learning_external_session_terminations",
     ] as const) {
@@ -6041,36 +6356,1069 @@ test("external reservation and ticket consumption bind one runner while signed f
           table,
           authorityRow(table, { tenant_id: "tenant-a" }),
         )),
-        /protected Task 8 external receipt verifier/,
+        /protected Task 8 lifecycle workflow/,
       );
     }
-    const consumptionReplay = await database.transaction.run(
-      async () => await ledger.insertAuthorityFact(
-        "lite_learning_external_ticket_consumptions",
-        consumption,
-      ),
+    await assert.rejects(
+      database.transaction.run(async () => await ledger.insertAuthorityFact(
+        "lite_learning_evidence_artifacts",
+        authorityRow("lite_learning_evidence_artifacts", {
+          tenant_id: "tenant-a",
+          artifact_kind: "production_shadow_gate",
+        }),
+      )),
+      /protected Task 8 ingestion verifier/,
     );
-    assert.equal(consumptionReplay.replayed, true);
-    await ledger.verifyIntegrity();
-    const claimColumns = LITE_LEARNING_LEDGER_REQUIRED_COLUMNS.lite_learning_external_run_claims
-      .filter((column) => column !== "row_id");
+
+    const brokerAuthority = (role: typeof productionRole) => ({
+      broker_service_identity: LEARNING_EXTERNAL_BROKER_SERVICE_IDENTITY,
+      broker_policy_sha256: role.broker_policy_sha256,
+      broker_binary_sha256: role.broker_binary_sha256,
+      broker_public_key_sha256: role.broker_public_key_sha256,
+      broker_key_id: role.broker_key_id,
+    });
+    const buildReservation = (args: Readonly<{
+      artifactKind: "production_shadow_gate" | "tool_e2e_gate";
+      evidenceSeriesId: string;
+      reservationId: string;
+      operationId: string;
+      role: typeof productionRole;
+      runId: string;
+      runnerTicket: Uint8Array;
+      suffix: string;
+      toolManifestSha256: string | null;
+      reservedAt: string;
+    }>): LiteLearningAuthorityRow => {
+      const immutableInputManifest = args.artifactKind === "production_shadow_gate"
+        ? productionInputManifest
+        : toolInputManifest;
+      const base = authorityRow("lite_learning_external_run_reservations", {
+        tenant_id: "tenant-a",
+        reservation_id: args.reservationId,
+        artifact_kind: args.artifactKind,
+        evidence_series_id: args.evidenceSeriesId,
+        task_family: "runtime-learning",
+        candidate_policy_id: revision.candidate_policy_id,
+        candidate_policy_version: revision.candidate_policy_version,
+        candidate_policy_implementation_sha256: revision.candidate_policy_implementation_sha256,
+        candidate_policy_config_sha256: revision.candidate_policy_config_sha256,
+        applicable_experiment_id: revision.experiment_id,
+        applicable_experiment_revision: revision.experiment_revision,
+        gate_policy_id: revision.gate_policy_id,
+        gate_policy_version: revision.gate_policy_version,
+        gate_policy_config_sha256: revision.gate_policy_config_sha256,
+        applicability_manifest_sha256: applicabilityManifestSha256,
+        harness_bundle_sha256: sha256(`harness:${args.suffix}`),
+        source_snapshot_sha256: sha256(`source:${args.suffix}`),
+        case_set_sha256: null,
+        holdout_membership_projection_sha256: null,
+        sealed_holdout_ref_sha256: null,
+        sealed_holdout_ciphertext_sha256: null,
+        execution_profile_sha256: sha256(`profile:${args.suffix}`),
+        model_identity_sha256: sha256(`model:${args.suffix}`),
+        immutable_model_snapshot_sha256: null,
+        tool_manifest_sha256: args.toolManifestSha256,
+        execution_order_sha256: null,
+        retry_policy_sha256: retryPolicy.sha256,
+        retry_policy_json: retryPolicy.json,
+        immutable_input_manifest_sha256: immutableInputManifest.sha256,
+        immutable_input_manifest_json: immutableInputManifest.json,
+        expected_runner_principal_sha256: args.role.runner_principal_sha256,
+        credential_broker_policy_sha256: args.role.broker_policy_sha256,
+        service_launcher_policy_sha256: args.role.service_launcher_policy_sha256,
+        service_launcher_binary_sha256: args.role.service_launcher_binary_sha256,
+        service_launcher_key_id: args.role.service_launcher_key_id,
+        supervisor_executable_sha256: args.role.supervisor_executable_sha256,
+        supervisor_argv_policy_sha256: args.role.supervisor_argv_policy_sha256,
+        supervisor_sandbox_policy_sha256: args.role.supervisor_sandbox_policy_sha256,
+        credential_session_class: args.role.credential_session_class,
+        run_id: args.runId,
+        reserve_operation_id: args.operationId,
+        runner_ticket_sha256: createHash("sha256").update(args.runnerTicket).digest("hex"),
+        reservation_sha256: "0".repeat(64),
+        reserved_at: args.reservedAt,
+      });
+      return {
+        ...base,
+        reservation_sha256: learningExternalRunReservationDigest(base),
+      } satisfies LiteLearningAuthorityRow;
+    };
+    const buildConsumption = (args: Readonly<{
+      consumptionId: string;
+      reservation: LiteLearningAuthorityRow;
+      role: typeof productionRole;
+      operationId: string;
+      consumedAt: string;
+      suffix: string;
+    }>): LiteLearningAuthorityRow => {
+      const base = authorityRow("lite_learning_external_ticket_consumptions", {
+        tenant_id: "tenant-a",
+        consumption_id: args.consumptionId,
+        reservation_id: args.reservation.reservation_id,
+        runner_ticket_sha256: args.reservation.runner_ticket_sha256,
+        runner_principal_sha256: args.role.runner_principal_sha256,
+        broker_process_nonce_sha256: sha256(`broker-process:${args.suffix}`),
+        consume_operation_id: args.operationId,
+        consumed_at: args.consumedAt,
+        consumption_sha256: "0".repeat(64),
+      });
+      return {
+        ...base,
+        consumption_sha256: learningExternalTicketConsumptionDigest(base),
+      } satisfies LiteLearningAuthorityRow;
+    };
+    const operationAt = new Date().toISOString();
+    const addSeconds = (timestamp: string, seconds: number): string =>
+      new Date(Date.parse(timestamp) + (seconds * 1_000)).toISOString();
+    const addMilliseconds = (timestamp: string, milliseconds: number): string =>
+      new Date(Date.parse(timestamp) + milliseconds).toISOString();
+    const reservationAuthorization = (args: Readonly<{
+      reservation: LiteLearningAuthorityRow;
+      role: typeof productionRole;
+      externalRole: "production_shadow" | "tool_e2e";
+      artifactKind: "production_shadow_gate" | "tool_e2e_gate";
+      signingKey?: KeyObject;
+      overrides?: Partial<{
+        database_instance_id: string;
+        broker_policy_sha256: string;
+        broker_binary_sha256: string;
+        authority_request_sha256: string;
+        authorized_at: string;
+        authorization_expires_at: string;
+      }>;
+    }>) => {
+      const authorityRequestSha256 = sha256(stableStringify({
+        contract_version: "aionis_learning_external_reservation_authority_request_v1",
+        reservation: args.reservation,
+        holdout_member_sha256s: [],
+        runner_ticket_sha256: args.reservation.runner_ticket_sha256,
+      }));
+      const body = {
+        contract_version:
+          "aionis_learning_external_run_reservation_authorization_receipt_v1" as const,
+        tenant_id: "tenant-a",
+        database_instance_id: databaseInstanceId,
+        reservation_id: String(args.reservation.reservation_id),
+        artifact_kind: args.artifactKind,
+        evidence_series_id: String(args.reservation.evidence_series_id),
+        external_role: args.externalRole,
+        applicable_experiment_id: String(args.reservation.applicable_experiment_id),
+        applicable_experiment_revision: Number(args.reservation.applicable_experiment_revision),
+        run_id: String(args.reservation.run_id),
+        expected_runner_principal_sha256:
+          String(args.reservation.expected_runner_principal_sha256),
+        reserve_operation_id: String(args.reservation.reserve_operation_id),
+        reservation_sha256: String(args.reservation.reservation_sha256),
+        runner_ticket_sha256: String(args.reservation.runner_ticket_sha256),
+        authority_request_sha256: authorityRequestSha256,
+        ...brokerAuthority(args.role),
+        authorized_at: String(args.reservation.reserved_at),
+        authorization_expires_at: addSeconds(String(args.reservation.reserved_at), 60),
+        ...args.overrides,
+      };
+      return signReceipt(body, args.signingKey ?? brokerKeys.privateKey);
+    };
+    const consumptionAuthorization = (args: Readonly<{
+      reservation: LiteLearningAuthorityRow;
+      consumption: LiteLearningAuthorityRow;
+      role: typeof productionRole;
+      externalRole: "production_shadow" | "tool_e2e";
+      artifactKind: "production_shadow_gate" | "tool_e2e_gate";
+      signingKey?: KeyObject;
+      overrides?: Partial<{
+        authority_request_sha256: string;
+        authorized_at: string;
+        authorization_expires_at: string;
+      }>;
+    }>) => {
+      const authorityRequestSha256 = sha256(stableStringify({
+        contract_version:
+          "aionis_learning_external_ticket_consumption_authority_request_v1",
+        consumption: args.consumption,
+        reservation_sha256: args.reservation.reservation_sha256,
+        runner_ticket_sha256: args.consumption.runner_ticket_sha256,
+      }));
+      const body = {
+        contract_version:
+          "aionis_learning_external_ticket_consumption_authorization_receipt_v1" as const,
+        tenant_id: "tenant-a",
+        database_instance_id: databaseInstanceId,
+        reservation_id: String(args.reservation.reservation_id),
+        consumption_id: String(args.consumption.consumption_id),
+        artifact_kind: args.artifactKind,
+        evidence_series_id: String(args.reservation.evidence_series_id),
+        external_role: args.externalRole,
+        applicable_experiment_id: String(args.reservation.applicable_experiment_id),
+        applicable_experiment_revision: Number(args.reservation.applicable_experiment_revision),
+        run_id: String(args.reservation.run_id),
+        consume_operation_id: String(args.consumption.consume_operation_id),
+        reservation_sha256: String(args.reservation.reservation_sha256),
+        consumption_sha256: String(args.consumption.consumption_sha256),
+        runner_ticket_sha256: String(args.consumption.runner_ticket_sha256),
+        runner_principal_sha256: String(args.consumption.runner_principal_sha256),
+        broker_process_nonce_sha256: String(args.consumption.broker_process_nonce_sha256),
+        authority_request_sha256: authorityRequestSha256,
+        ...brokerAuthority(args.role),
+        authorized_at: String(args.consumption.consumed_at),
+        authorization_expires_at: addSeconds(String(args.consumption.consumed_at), 60),
+        ...args.overrides,
+      };
+      return signReceipt(body, args.signingKey ?? brokerKeys.privateKey);
+    };
+
+    const productionTicket = Buffer.alloc(32, 0x41);
+    const reservation = buildReservation({
+      artifactKind: "production_shadow_gate",
+      evidenceSeriesId: "host",
+      reservationId: "reservation-external-normal",
+      operationId: "operation-reserve-external-normal",
+      role: productionRole,
+      runId: requiredExternalInputs.production_shadow.planned_run_id,
+      runnerTicket: productionTicket,
+      suffix: "normal",
+      toolManifestSha256: null,
+      reservedAt: operationAt,
+    });
+    const reserveAuthorization = reservationAuthorization({
+      reservation,
+      role: productionRole,
+      externalRole: "production_shadow",
+      artifactKind: "production_shadow_gate",
+    });
+    const protectedProvisionOperation = database.db.prepare(
+      `SELECT tenant_id, scope, operation_kind, operation_id, request_sha256,
+              receipt_json, commit_id, created_at
+       FROM lite_runtime_write_operations
+       WHERE tenant_id = ? AND scope = ? AND operation_kind = ? AND operation_id = ?`,
+    ).get(
+      "tenant-a",
+      "learning-experiment-authority-v1",
+      "learning_experiment_provision_v1",
+      provisionOperationId,
+    ) as Record<string, string | null> | undefined;
+    assert.ok(protectedProvisionOperation);
+    const deletedProvisionOperation = database.db.prepare(
+      `DELETE FROM lite_runtime_write_operations
+       WHERE tenant_id = ? AND scope = ? AND operation_kind = ? AND operation_id = ?`,
+    ).run(
+      "tenant-a",
+      "learning-experiment-authority-v1",
+      "learning_experiment_provision_v1",
+      provisionOperationId,
+    );
+    assert.equal(Number(deletedProvisionOperation.changes ?? 0), 1);
+    await assert.rejects(
+      database.transaction.run(async () => await ledger.reserveExternalRun({
+        reservation,
+        runnerTicket: productionTicket,
+        authorization: reserveAuthorization,
+      })),
+      /protected provisioning authority is missing or ambiguous/,
+    );
+    assert.equal(Number((database.db.prepare(
+      "SELECT COUNT(*) AS count FROM lite_learning_external_run_reservations",
+    ).get() as { count: number }).count), 0);
+    assert.equal(Number((database.db.prepare(
+      `SELECT COUNT(*) AS count FROM lite_runtime_write_operations
+       WHERE scope = 'learning_external_authority_v1'
+         AND operation_kind = 'learning_external_run_reservation_v1'`,
+    ).get() as { count: number }).count), 0);
     database.db.prepare(
-      `INSERT INTO lite_learning_external_run_claims
-       (${claimColumns.join(", ")})
-       VALUES (${claimColumns.map(() => "?").join(", ")})`,
-    ).run(...claimColumns.map((column) => claim[column]));
+      `INSERT INTO lite_runtime_write_operations
+         (tenant_id, scope, operation_kind, operation_id, request_sha256,
+          receipt_json, commit_id, created_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+    ).run(
+      protectedProvisionOperation.tenant_id,
+      protectedProvisionOperation.scope,
+      protectedProvisionOperation.operation_kind,
+      protectedProvisionOperation.operation_id,
+      protectedProvisionOperation.request_sha256,
+      protectedProvisionOperation.receipt_json,
+      protectedProvisionOperation.commit_id,
+      protectedProvisionOperation.created_at,
+    );
+    const reservationAt = (reservedAt: string): LiteLearningAuthorityRow => {
+      const base = {
+        ...reservation,
+        reserved_at: reservedAt,
+        reservation_sha256: "0".repeat(64),
+      } satisfies LiteLearningAuthorityRow;
+      return {
+        ...base,
+        reservation_sha256: learningExternalRunReservationDigest(base),
+      } satisfies LiteLearningAuthorityRow;
+    };
+    const expiredReservation = reservationAt(addSeconds(operationAt, -120));
+    const futureReservation = reservationAt(addSeconds(operationAt, 30));
+    const reservationAuthorizationCases: ReadonlyArray<Readonly<{
+      name: string;
+      inputReservation: LiteLearningAuthorityRow;
+      runnerTicket: Uint8Array;
+      authorization: ReturnType<typeof reservationAuthorization>;
+      error: RegExp;
+    }>> = [
+      {
+        name: "wrong signature key",
+        inputReservation: reservation,
+        runnerTicket: productionTicket,
+        authorization: reservationAuthorization({
+          reservation,
+          role: productionRole,
+          externalRole: "production_shadow",
+          artifactKind: "production_shadow_gate",
+          signingKey: launcherKeys.privateKey,
+        }),
+        error: /signature_invalid/,
+      },
+      {
+        name: "wrong database lineage",
+        inputReservation: reservation,
+        runnerTicket: productionTicket,
+        authorization: reservationAuthorization({
+          reservation,
+          role: productionRole,
+          externalRole: "production_shadow",
+          artifactKind: "production_shadow_gate",
+          overrides: { database_instance_id: sha256("wrong-database-lineage") },
+        }),
+        error: /authorization binding mismatch: database_instance_id/,
+      },
+      {
+        name: "wrong broker policy",
+        inputReservation: reservation,
+        runnerTicket: productionTicket,
+        authorization: reservationAuthorization({
+          reservation,
+          role: productionRole,
+          externalRole: "production_shadow",
+          artifactKind: "production_shadow_gate",
+          overrides: { broker_policy_sha256: sha256("wrong-broker-policy") },
+        }),
+        error: /broker authority mismatch/,
+      },
+      {
+        name: "wrong broker binary",
+        inputReservation: reservation,
+        runnerTicket: productionTicket,
+        authorization: reservationAuthorization({
+          reservation,
+          role: productionRole,
+          externalRole: "production_shadow",
+          artifactKind: "production_shadow_gate",
+          overrides: { broker_binary_sha256: sha256("wrong-broker-binary") },
+        }),
+        error: /broker authority mismatch/,
+      },
+      {
+        name: "wrong authority request digest",
+        inputReservation: reservation,
+        runnerTicket: productionTicket,
+        authorization: reservationAuthorization({
+          reservation,
+          role: productionRole,
+          externalRole: "production_shadow",
+          artifactKind: "production_shadow_gate",
+          overrides: { authority_request_sha256: sha256("wrong-reservation-request") },
+        }),
+        error: /authorization binding mismatch: authority_request_sha256/,
+      },
+      {
+        name: "expired authorization",
+        inputReservation: expiredReservation,
+        runnerTicket: productionTicket,
+        authorization: reservationAuthorization({
+          reservation: expiredReservation,
+          role: productionRole,
+          externalRole: "production_shadow",
+          artifactKind: "production_shadow_gate",
+        }),
+        error: /authorization is not currently valid/,
+      },
+      {
+        name: "future authorization",
+        inputReservation: futureReservation,
+        runnerTicket: productionTicket,
+        authorization: reservationAuthorization({
+          reservation: futureReservation,
+          role: productionRole,
+          externalRole: "production_shadow",
+          artifactKind: "production_shadow_gate",
+        }),
+        error: /authorization is not currently valid/,
+      },
+      {
+        name: "short runner ticket",
+        inputReservation: reservation,
+        runnerTicket: Buffer.alloc(31, 0x41),
+        authorization: reserveAuthorization,
+        error: /32 to 4096 opaque bytes/,
+      },
+      {
+        name: "oversized runner ticket",
+        inputReservation: reservation,
+        runnerTicket: Buffer.alloc(4_097, 0x41),
+        authorization: reserveAuthorization,
+        error: /32 to 4096 opaque bytes/,
+      },
+    ];
+    for (const authCase of reservationAuthorizationCases) {
+      await assert.rejects(
+        database.transaction.run(async () => await ledger.reserveExternalRun({
+          reservation: authCase.inputReservation,
+          runnerTicket: authCase.runnerTicket,
+          authorization: authCase.authorization,
+        })),
+        authCase.error,
+        authCase.name,
+      );
+      assert.equal(Number((database.db.prepare(
+        "SELECT COUNT(*) AS count FROM lite_learning_external_run_reservations",
+      ).get() as { count: number }).count), 0, authCase.name);
+      assert.equal(Number((database.db.prepare(
+        `SELECT COUNT(*) AS count FROM lite_runtime_write_operations
+         WHERE scope = 'learning_external_authority_v1'
+           AND operation_kind = 'learning_external_run_reservation_v1'`,
+      ).get() as { count: number }).count), 0, authCase.name);
+    }
+    const wrongApplicabilityBase = {
+      ...reservation,
+      applicability_manifest_sha256: sha256("wrong-applicability-manifest"),
+      reservation_sha256: "0".repeat(64),
+    } satisfies LiteLearningAuthorityRow;
+    const wrongApplicabilityReservation = {
+      ...wrongApplicabilityBase,
+      reservation_sha256: learningExternalRunReservationDigest(wrongApplicabilityBase),
+    } satisfies LiteLearningAuthorityRow;
+    const wrongApplicabilityAuthorization = reservationAuthorization({
+      reservation: wrongApplicabilityReservation,
+      role: productionRole,
+      externalRole: "production_shadow",
+      artifactKind: "production_shadow_gate",
+    });
     await assert.rejects(
-      ledger.verifyIntegrity(),
-      /unverified_external_authority_fact/,
+      database.transaction.run(async () => await ledger.reserveExternalRun({
+        reservation: wrongApplicabilityReservation,
+        runnerTicket: productionTicket,
+        authorization: wrongApplicabilityAuthorization,
+      })),
+      /applicability manifest binding mismatch/,
+    );
+    assert.equal(Number((database.db.prepare(
+      "SELECT COUNT(*) AS count FROM lite_learning_external_run_reservations",
+    ).get() as { count: number }).count), 0);
+    assert.equal(Number((database.db.prepare(
+      `SELECT COUNT(*) AS count FROM lite_runtime_write_operations
+       WHERE scope = 'learning_external_authority_v1'
+         AND operation_kind = 'learning_external_run_reservation_v1'`,
+    ).get() as { count: number }).count), 0);
+    const reserveResult = await database.transaction.run(async () =>
+      await ledger.reserveExternalRun({
+        reservation,
+        runnerTicket: productionTicket,
+        authorization: reserveAuthorization,
+      }));
+    assert.equal(reserveResult.replayed, false);
+    const reserveReplay = await database.transaction.run(async () =>
+      await ledger.reserveExternalRun({
+        reservation,
+        runnerTicket: productionTicket,
+        authorization: reserveAuthorization,
+      }));
+    assert.equal(reserveReplay.replayed, true);
+
+    const consumption = buildConsumption({
+      consumptionId: "consumption-external-normal",
+      reservation,
+      role: productionRole,
+      operationId: "operation-consume-external-normal",
+      consumedAt: operationAt,
+      suffix: "normal",
+    });
+    const consumeAuthorization = consumptionAuthorization({
+      reservation,
+      consumption,
+      role: productionRole,
+      externalRole: "production_shadow",
+      artifactKind: "production_shadow_gate",
+    });
+    const futureConsumption = buildConsumption({
+      consumptionId: "consumption-external-normal",
+      reservation,
+      role: productionRole,
+      operationId: "operation-consume-external-normal",
+      consumedAt: addSeconds(new Date().toISOString(), 30),
+      suffix: "normal",
+    });
+    const consumptionAuthorizationCases: ReadonlyArray<Readonly<{
+      name: string;
+      inputConsumption: LiteLearningAuthorityRow;
+      authorization: ReturnType<typeof consumptionAuthorization>;
+      error: RegExp;
+    }>> = [
+      {
+        name: "wrong consumption signature key",
+        inputConsumption: consumption,
+        authorization: consumptionAuthorization({
+          reservation,
+          consumption,
+          role: productionRole,
+          externalRole: "production_shadow",
+          artifactKind: "production_shadow_gate",
+          signingKey: launcherKeys.privateKey,
+        }),
+        error: /signature_invalid/,
+      },
+      {
+        name: "expired consumption authorization",
+        inputConsumption: consumption,
+        authorization: consumptionAuthorization({
+          reservation,
+          consumption,
+          role: productionRole,
+          externalRole: "production_shadow",
+          artifactKind: "production_shadow_gate",
+          overrides: { authorization_expires_at: addMilliseconds(operationAt, 1) },
+        }),
+        error: /authorization is not currently valid/,
+      },
+      {
+        name: "future consumption authorization",
+        inputConsumption: futureConsumption,
+        authorization: consumptionAuthorization({
+          reservation,
+          consumption: futureConsumption,
+          role: productionRole,
+          externalRole: "production_shadow",
+          artifactKind: "production_shadow_gate",
+        }),
+        error: /authorization is not currently valid/,
+      },
+      {
+        name: "wrong consumption request digest",
+        inputConsumption: consumption,
+        authorization: consumptionAuthorization({
+          reservation,
+          consumption,
+          role: productionRole,
+          externalRole: "production_shadow",
+          artifactKind: "production_shadow_gate",
+          overrides: { authority_request_sha256: sha256("wrong-consumption-request") },
+        }),
+        error: /authorization binding mismatch: authority_request_sha256/,
+      },
+    ];
+    for (const authCase of consumptionAuthorizationCases) {
+      await assert.rejects(
+        database.transaction.run(async () => await ledger.consumeExternalTicket({
+          consumption: authCase.inputConsumption,
+          runnerTicket: productionTicket,
+          authorization: authCase.authorization,
+        })),
+        authCase.error,
+        authCase.name,
+      );
+      assert.equal(Number((database.db.prepare(
+        "SELECT COUNT(*) AS count FROM lite_learning_external_ticket_consumptions",
+      ).get() as { count: number }).count), 0, authCase.name);
+      assert.equal(Number((database.db.prepare(
+        `SELECT COUNT(*) AS count FROM lite_runtime_write_operations
+         WHERE scope = 'learning_external_authority_v1'
+           AND operation_kind = 'learning_external_ticket_consumption_v1'`,
+      ).get() as { count: number }).count), 0, authCase.name);
+    }
+    const consumeResult = await database.transaction.run(async () =>
+      await ledger.consumeExternalTicket({
+        consumption,
+        runnerTicket: productionTicket,
+        authorization: consumeAuthorization,
+      }));
+    assert.equal(consumeResult.replayed, false);
+    await assert.rejects(
+      database.transaction.run(async () => await ledger.consumeExternalTicket({
+        consumption,
+        runnerTicket: productionTicket,
+        authorization: consumeAuthorization,
+      })),
+      /raw-ticket replay is forbidden/,
+    );
+
+    const claimBody = {
+      contract_version: "aionis_learning_external_claim_receipt_v1" as const,
+      tenant_id: "tenant-a",
+      reservation_id: String(reservation.reservation_id),
+      ticket_consumption_id: String(consumption.consumption_id),
+      claim_id: "claim-external-normal",
+      ticket_consumption_sha256: String(consumption.consumption_sha256),
+      runner_ticket_sha256: String(reservation.runner_ticket_sha256),
+      runner_principal_sha256: productionRole.runner_principal_sha256,
+      runner_execution_nonce_sha256: sha256("runner-execution:normal"),
+      credential_scope_sha256: productionRole.credential_scope_sha256,
+      credential_session_class: productionRole.credential_session_class,
+      credential_session_id_sha256: sha256("credential-session:normal"),
+      supervisor_bind_expires_at: addSeconds(
+        operationAt,
+        productionRole.supervisor_bind_ttl_seconds,
+      ),
+      credential_session_expires_at: addSeconds(
+        operationAt,
+        productionRole.credential_session_hard_ttl_seconds,
+      ),
+      credential_session_heartbeat_seconds: productionRole.credential_session_heartbeat_seconds,
+      credential_session_max_calls: productionRole.credential_session_max_calls,
+      per_call_capability_ttl_seconds: productionRole.per_call_capability_ttl_seconds,
+      post_quiesce_finalize_ttl_seconds: productionRole.post_quiesce_finalize_ttl_seconds,
+      ...brokerAuthority(productionRole),
+      claimed_at: operationAt,
+    };
+    const claimReceipt = signReceipt(claimBody, brokerKeys.privateKey);
+    const invalidClaimReceipt = signReceipt(claimBody, launcherKeys.privateKey);
+    await assert.rejects(
+      database.transaction.run(async () => await ledger.claimExternalRun({
+        receipt: invalidClaimReceipt,
+      })),
+      /signature_invalid/,
+    );
+    assert.equal(Number((database.db.prepare(
+      "SELECT COUNT(*) AS count FROM lite_learning_external_run_claims",
+    ).get() as { count: number }).count), 0);
+    assert.equal(Number((database.db.prepare(
+      `SELECT COUNT(*) AS count FROM lite_runtime_write_operations
+       WHERE scope = 'learning_external_authority_v1'
+         AND operation_kind = 'learning_external_run_claim_v1'`,
+    ).get() as { count: number }).count), 0);
+    const claimResult = await database.transaction.run(async () =>
+      await ledger.claimExternalRun({
+        receipt: claimReceipt,
+      }));
+    assert.equal(claimResult.replayed, false);
+    const claimReplay = await database.transaction.run(async () =>
+      await ledger.claimExternalRun({
+        receipt: claimReceipt,
+      }));
+    assert.equal(claimReplay.replayed, true);
+
+    const launcherBody = {
+      contract_version: "aionis_learning_external_launcher_spawn_receipt_v1" as const,
+      tenant_id: "tenant-a",
+      reservation_id: String(reservation.reservation_id),
+      ticket_consumption_id: String(consumption.consumption_id),
+      claim_id: claimBody.claim_id,
+      credential_session_id_sha256: claimBody.credential_session_id_sha256,
+      broker_challenge_sha256: sha256("broker-challenge:normal"),
+      runner_principal_sha256: productionRole.runner_principal_sha256,
+      runner_uid: 501,
+      runner_gid: 20,
+      supervisor_pid: 4242,
+      supervisor_process_start_identity_sha256: sha256("process-start:normal"),
+      supervisor_cgroup_identity_sha256: sha256("cgroup:normal"),
+      supervisor_service_job_identity_sha256: sha256("service-job:normal"),
+      supervisor_process_identity_sha256: sha256("process:normal"),
+      supervisor_executable_sha256: productionRole.supervisor_executable_sha256,
+      supervisor_argv_policy_sha256: productionRole.supervisor_argv_policy_sha256,
+      supervisor_argv_sha256: sha256("argv:normal"),
+      inherited_channel_sha256: sha256("inherited-channel:normal"),
+      broker_channel_fingerprint_sha256: sha256("broker-channel:normal"),
+      supervisor_channel_fingerprint_sha256: sha256("supervisor-channel:normal"),
+      service_launcher_policy_sha256: productionRole.service_launcher_policy_sha256,
+      service_launcher_binary_sha256: productionRole.service_launcher_binary_sha256,
+      service_launcher_public_key_sha256: launcherPublicKeySha256,
+      service_launcher_key_id: productionRole.service_launcher_key_id,
+      supervisor_sandbox_policy_sha256: productionRole.supervisor_sandbox_policy_sha256,
+      spawned_at: operationAt,
+    };
+    const launcherReceipt = signReceipt(launcherBody, launcherKeys.privateKey);
+    const bindingBody = {
+      contract_version: "aionis_learning_external_broker_supervisor_binding_receipt_v1" as const,
+      tenant_id: "tenant-a",
+      reservation_id: String(reservation.reservation_id),
+      ticket_consumption_id: String(consumption.consumption_id),
+      binding_id: "binding-external-normal",
+      claim_id: claimBody.claim_id,
+      credential_session_id_sha256: claimBody.credential_session_id_sha256,
+      runner_principal_sha256: productionRole.runner_principal_sha256,
+      supervisor_process_identity_sha256: launcherBody.supervisor_process_identity_sha256,
+      supervisor_executable_sha256: launcherBody.supervisor_executable_sha256,
+      supervisor_argv_policy_sha256: launcherBody.supervisor_argv_policy_sha256,
+      supervisor_argv_sha256: launcherBody.supervisor_argv_sha256,
+      inherited_channel_sha256: launcherBody.inherited_channel_sha256,
+      service_launcher_receipt_sha256: learningExternalReceiptDigest(launcherReceipt),
+      service_launcher_receipt: launcherReceipt,
+      service_launcher_policy_sha256: launcherBody.service_launcher_policy_sha256,
+      service_launcher_binary_sha256: launcherBody.service_launcher_binary_sha256,
+      service_launcher_public_key_sha256: launcherBody.service_launcher_public_key_sha256,
+      service_launcher_key_id: launcherBody.service_launcher_key_id,
+      supervisor_sandbox_policy_sha256: launcherBody.supervisor_sandbox_policy_sha256,
+      ...brokerAuthority(productionRole),
+      bound_at: operationAt,
+    };
+    const bindingReceipt = signReceipt(bindingBody, brokerKeys.privateKey);
+    const bindingResult = await database.transaction.run(async () =>
+      await ledger.bindExternalSupervisor({ receipt: bindingReceipt }));
+    assert.equal(bindingResult.replayed, false);
+    const bindingReplay = await database.transaction.run(async () =>
+      await ledger.bindExternalSupervisor({ receipt: bindingReceipt }));
+    assert.equal(bindingReplay.replayed, true);
+
+    const runnerOutputManifestSha256 = sha256("runner-output-manifest:normal");
+    const attemptChainSha256 = sha256("attempt-chain:normal");
+    const quiesceBody = {
+      contract_version: "aionis_learning_external_clean_quiesce_receipt_v1" as const,
+      tenant_id: "tenant-a",
+      reservation_id: String(reservation.reservation_id),
+      ticket_consumption_id: String(consumption.consumption_id),
+      claim_id: claimBody.claim_id,
+      supervisor_binding_id: bindingBody.binding_id,
+      credential_session_id_sha256: claimBody.credential_session_id_sha256,
+      runner_output_manifest_sha256: runnerOutputManifestSha256,
+      attempt_chain_sha256: attemptChainSha256,
+      cleanup_proof_sha256: sha256("cleanup-proof:normal"),
+      post_revoke_access_denial_proof_sha256: sha256("post-revoke-denial:normal"),
+      finalize_deadline_at: addSeconds(
+        operationAt,
+        productionRole.post_quiesce_finalize_ttl_seconds,
+      ),
+      ...brokerAuthority(productionRole),
+      quiesced_at: operationAt,
+    };
+    const quiesceReceipt = signReceipt(quiesceBody, brokerKeys.privateKey);
+    const terminationBody = {
+      contract_version: "aionis_learning_external_session_termination_receipt_v1" as const,
+      tenant_id: "tenant-a",
+      reservation_id: String(reservation.reservation_id),
+      ticket_consumption_id: String(consumption.consumption_id),
+      termination_id: "termination-external-normal",
+      claim_id: claimBody.claim_id,
+      supervisor_binding_id: bindingBody.binding_id,
+      credential_session_id_sha256: claimBody.credential_session_id_sha256,
+      termination_reason: "failed" as const,
+      broker_quiesce_receipt_sha256: learningExternalReceiptDigest(quiesceReceipt),
+      broker_quiesce_receipt: quiesceReceipt,
+      runner_output_manifest_sha256: runnerOutputManifestSha256,
+      terminal_run_manifest_sha256: sha256("terminal-run-manifest:normal"),
+      attempt_chain_sha256: attemptChainSha256,
+      ...brokerAuthority(productionRole),
+      terminated_at: operationAt,
+    };
+    const terminationReceipt = signReceipt(terminationBody, brokerKeys.privateKey);
+    const preBindingAt = addMilliseconds(operationAt, -1);
+    const preBindingQuiesceBody = {
+      ...quiesceBody,
+      finalize_deadline_at: addSeconds(
+        preBindingAt,
+        productionRole.post_quiesce_finalize_ttl_seconds,
+      ),
+      quiesced_at: preBindingAt,
+    };
+    const preBindingQuiesceReceipt = signReceipt(
+      preBindingQuiesceBody,
+      brokerKeys.privateKey,
+    );
+    const preBindingTerminationBody = {
+      ...terminationBody,
+      termination_id: "termination-external-pre-binding",
+      broker_quiesce_receipt_sha256: learningExternalReceiptDigest(
+        preBindingQuiesceReceipt,
+      ),
+      broker_quiesce_receipt: preBindingQuiesceReceipt,
+      terminated_at: preBindingAt,
+    };
+    const preBindingTerminationReceipt = signReceipt(
+      preBindingTerminationBody,
+      brokerKeys.privateKey,
     );
     await assert.rejects(
-      writeStore.close(),
-      /unverified_external_authority_fact/,
+      database.transaction.run(async () => await ledger.terminateExternalSession({
+        receipt: preBindingTerminationReceipt,
+      })),
+      /committed claim prefix|committed supervisor binding/,
     );
+    assert.equal(Number((database.db.prepare(
+      "SELECT COUNT(*) AS count FROM lite_learning_external_session_terminations",
+    ).get() as { count: number }).count), 0);
+    assert.equal(Number((database.db.prepare(
+      `SELECT COUNT(*) AS count FROM lite_runtime_write_operations
+       WHERE scope = 'learning_external_authority_v1'
+         AND operation_kind = 'learning_external_session_termination_v1'`,
+    ).get() as { count: number }).count), 0);
+    const terminationResult = await database.transaction.run(async () =>
+      await ledger.terminateExternalSession({ receipt: terminationReceipt }));
+    assert.equal(terminationResult.replayed, false);
+    const productionTerminationSha256 = String(
+      terminationResult.termination.termination_sha256,
+    );
+    const terminationReplay = await database.transaction.run(async () =>
+      await ledger.terminateExternalSession({ receipt: terminationReceipt }));
+    assert.equal(terminationReplay.replayed, true);
+
+    const toolTicket = Buffer.alloc(32, 0x42);
+    const heldReservation = buildReservation({
+      artifactKind: "tool_e2e_gate",
+      evidenceSeriesId: "tool",
+      reservationId: "reservation-external-held",
+      operationId: "operation-reserve-external-held",
+      role: toolRole,
+      runId: requiredExternalInputs.tool_e2e.planned_run_id,
+      runnerTicket: toolTicket,
+      suffix: "held",
+      toolManifestSha256,
+      reservedAt: operationAt,
+    });
+    const heldConsumption = buildConsumption({
+      consumptionId: "consumption-external-held",
+      reservation: heldReservation,
+      role: toolRole,
+      operationId: "operation-consume-external-held",
+      consumedAt: operationAt,
+      suffix: "held",
+    });
+    const heldReserveAuthorization = reservationAuthorization({
+      reservation: heldReservation,
+      role: toolRole,
+      externalRole: "tool_e2e",
+      artifactKind: "tool_e2e_gate",
+    });
+    const heldConsumeAuthorization = consumptionAuthorization({
+      reservation: heldReservation,
+      consumption: heldConsumption,
+      role: toolRole,
+      externalRole: "tool_e2e",
+      artifactKind: "tool_e2e_gate",
+    });
+    assert.equal((await database.transaction.run(async () =>
+      await ledger.reserveExternalRun({
+        reservation: heldReservation,
+        runnerTicket: toolTicket,
+        authorization: heldReserveAuthorization,
+      }))).replayed, false);
+    assert.equal((await database.transaction.run(async () =>
+      await ledger.reserveExternalRun({
+        reservation: heldReservation,
+        runnerTicket: toolTicket,
+        authorization: heldReserveAuthorization,
+      }))).replayed, true);
+    const holdBody = {
+      contract_version: "aionis_learning_external_preclaim_hold_receipt_v1" as const,
+      tenant_id: "tenant-a",
+      reservation_id: String(heldReservation.reservation_id),
+      ticket_consumption_id: String(heldConsumption.consumption_id),
+      hold_id: "hold-external-held",
+      ticket_consumption_sha256: String(heldConsumption.consumption_sha256),
+      hold_reason: "operator_abort" as const,
+      triggering_terminal_fact_sha256: productionTerminationSha256,
+      zero_effects_proof_sha256: sha256("zero-effects:held"),
+      journal_phase: "closing_reserved_run" as const,
+      ...brokerAuthority(toolRole),
+      held_at: operationAt,
+    };
+    const holdReceipt = signReceipt(holdBody, brokerKeys.privateKey);
+    const invalidHoldReceipt = signReceipt(holdBody, launcherKeys.privateKey);
+    const sourceTerminationOperation = database.db.prepare(
+      `SELECT tenant_id, scope, operation_kind, operation_id, request_sha256,
+              receipt_json, commit_id, created_at
+       FROM lite_runtime_write_operations
+       WHERE tenant_id = ? AND scope = 'learning_external_authority_v1'
+         AND operation_kind = 'learning_external_session_termination_v1'
+         AND operation_id = ?`,
+    ).get(
+      "tenant-a",
+      terminationResult.termination.terminate_operation_id,
+    ) as Record<string, string | null> | undefined;
+    assert.ok(sourceTerminationOperation);
+    const assertCloseTargetUnwritten = (): void => {
+      assert.equal(Number((database.db.prepare(
+        `SELECT COUNT(*) AS count FROM lite_learning_external_ticket_consumptions
+         WHERE tenant_id = ? AND consumption_id = ?`,
+      ).get("tenant-a", heldConsumption.consumption_id) as { count: number }).count), 0);
+      assert.equal(Number((database.db.prepare(
+        `SELECT COUNT(*) AS count FROM lite_learning_external_preclaim_holds
+         WHERE tenant_id = ? AND hold_id = ?`,
+      ).get("tenant-a", holdBody.hold_id) as { count: number }).count), 0);
+      assert.equal(Number((database.db.prepare(
+        `SELECT COUNT(*) AS count FROM lite_runtime_write_operations
+         WHERE tenant_id = ? AND scope = 'learning_external_authority_v1'
+           AND ((operation_kind = 'learning_external_ticket_consumption_v1'
+                 AND operation_id = ?)
+             OR (operation_kind = 'learning_external_preclaim_hold_v1'
+                 AND operation_id = ?))`,
+      ).get(
+        "tenant-a",
+        heldConsumption.consume_operation_id,
+        learningExternalPreclaimHoldOperationId({
+          tenantId: "tenant-a",
+          receiptSha256: learningExternalReceiptDigest(holdReceipt),
+        }),
+      ) as { count: number }).count), 0);
+    };
+    mutateAppendOnlyTable(database.db, "lite_runtime_write_operations", () => {
+      database.db.prepare(
+        `DELETE FROM lite_runtime_write_operations
+         WHERE tenant_id = ? AND scope = ? AND operation_kind = ? AND operation_id = ?`,
+      ).run(
+        sourceTerminationOperation.tenant_id,
+        sourceTerminationOperation.scope,
+        sourceTerminationOperation.operation_kind,
+        sourceTerminationOperation.operation_id,
+      );
+    });
+    await assert.rejects(
+      database.transaction.run(async () => await ledger.closeReservedExternalRun({
+        consumption: heldConsumption,
+        runnerTicket: toolTicket,
+        consumptionAuthorization: heldConsumeAuthorization,
+        holdReceipt,
+        triggeringTerminalFactSha256: productionTerminationSha256,
+      })),
+      /protected operation receipt is missing/,
+    );
+    assertCloseTargetUnwritten();
+    database.db.prepare(
+      `INSERT INTO lite_runtime_write_operations
+         (tenant_id, scope, operation_kind, operation_id, request_sha256,
+          receipt_json, commit_id, created_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+    ).run(
+      sourceTerminationOperation.tenant_id,
+      sourceTerminationOperation.scope,
+      sourceTerminationOperation.operation_kind,
+      sourceTerminationOperation.operation_id,
+      sourceTerminationOperation.request_sha256,
+      sourceTerminationOperation.receipt_json,
+      sourceTerminationOperation.commit_id,
+      sourceTerminationOperation.created_at,
+    );
+    mutateAppendOnlyTable(database.db, "lite_runtime_write_operations", () => {
+      database.db.prepare(
+        `UPDATE lite_runtime_write_operations SET request_sha256 = ?
+         WHERE tenant_id = ? AND scope = ? AND operation_kind = ? AND operation_id = ?`,
+      ).run(
+        sha256("tampered-source-termination-operation-request"),
+        sourceTerminationOperation.tenant_id,
+        sourceTerminationOperation.scope,
+        sourceTerminationOperation.operation_kind,
+        sourceTerminationOperation.operation_id,
+      );
+    });
+    await assert.rejects(
+      database.transaction.run(async () => await ledger.closeReservedExternalRun({
+        consumption: heldConsumption,
+        runnerTicket: toolTicket,
+        consumptionAuthorization: heldConsumeAuthorization,
+        holdReceipt,
+        triggeringTerminalFactSha256: productionTerminationSha256,
+      })),
+      /learning_external_authority_operation_conflict/,
+    );
+    assertCloseTargetUnwritten();
+    mutateAppendOnlyTable(database.db, "lite_runtime_write_operations", () => {
+      database.db.prepare(
+        `UPDATE lite_runtime_write_operations SET request_sha256 = ?
+         WHERE tenant_id = ? AND scope = ? AND operation_kind = ? AND operation_id = ?`,
+      ).run(
+        sourceTerminationOperation.request_sha256,
+        sourceTerminationOperation.tenant_id,
+        sourceTerminationOperation.scope,
+        sourceTerminationOperation.operation_kind,
+        sourceTerminationOperation.operation_id,
+      );
+    });
+    await assert.rejects(
+      database.transaction.run(async () => await ledger.closeReservedExternalRun({
+        consumption: heldConsumption,
+        runnerTicket: toolTicket,
+        consumptionAuthorization: heldConsumeAuthorization,
+        holdReceipt: invalidHoldReceipt,
+        triggeringTerminalFactSha256: productionTerminationSha256,
+      })),
+      /signature_invalid/,
+    );
+    assertCloseTargetUnwritten();
+    const closeReservedResult = await database.transaction.run(async () =>
+      await ledger.closeReservedExternalRun({
+        consumption: heldConsumption,
+        runnerTicket: toolTicket,
+        consumptionAuthorization: heldConsumeAuthorization,
+        holdReceipt,
+        triggeringTerminalFactSha256: productionTerminationSha256,
+      }));
+    assert.equal(closeReservedResult.replayed, false);
+    await assert.rejects(
+      database.transaction.run(async () => await ledger.consumeExternalTicket({
+        consumption: heldConsumption,
+        runnerTicket: toolTicket,
+        authorization: heldConsumeAuthorization,
+      })),
+      /raw-ticket replay is forbidden/,
+    );
+
+    const operationCounts = database.db.prepare(
+      `SELECT operation_kind, COUNT(*) AS count
+       FROM lite_runtime_write_operations
+       WHERE scope = 'learning_external_authority_v1'
+       GROUP BY operation_kind`,
+    ).all() as Array<{ operation_kind: string; count: number }>;
+    assert.deepEqual(
+      Object.fromEntries(operationCounts.map((row) => [row.operation_kind, Number(row.count)])),
+      {
+        learning_external_preclaim_hold_v1: 1,
+        learning_external_run_claim_v1: 1,
+        learning_external_run_reservation_v1: 2,
+        learning_external_session_termination_v1: 1,
+        learning_external_supervisor_binding_v1: 1,
+        learning_external_ticket_consumption_v1: 2,
+      },
+    );
+    assert.throws(() => database.db.prepare(
+      `UPDATE lite_runtime_write_operations
+       SET receipt_json = receipt_json
+       WHERE scope = 'learning_external_authority_v1'`,
+    ).run(), /learning_external_authority_operation_update_forbidden/);
+    assert.throws(() => database.db.prepare(
+      `DELETE FROM lite_runtime_write_operations
+       WHERE scope = 'learning_external_authority_v1'`,
+    ).run(), /learning_external_authority_operation_delete_forbidden/);
+    await ledger.verifyIntegrity();
+
+    const storedClaim = database.db.prepare(
+      `SELECT credential_broker_receipt_signature
+       FROM lite_learning_external_run_claims
+       WHERE tenant_id = ? AND claim_id = ?`,
+    ).get("tenant-a", claimBody.claim_id) as { credential_broker_receipt_signature: string };
+    mutateAppendOnlyTable(database.db, "lite_learning_external_run_claims", () => {
+      database.db.prepare(
+        `UPDATE lite_learning_external_run_claims
+         SET credential_broker_receipt_signature = ?
+         WHERE tenant_id = ? AND claim_id = ?`,
+      ).run(invalidClaimReceipt.signature_base64, "tenant-a", claimBody.claim_id);
+    });
+    await assert.rejects(ledger.verifyIntegrity(), /external|receipt|claim|signature|digest/);
+    mutateAppendOnlyTable(database.db, "lite_learning_external_run_claims", () => {
+      database.db.prepare(
+        `UPDATE lite_learning_external_run_claims
+         SET credential_broker_receipt_signature = ?
+         WHERE tenant_id = ? AND claim_id = ?`,
+      ).run(storedClaim.credential_broker_receipt_signature, "tenant-a", claimBody.claim_id);
+    });
+    await ledger.verifyIntegrity();
+
+    await writeStore.close();
     writeStore = null;
-  } finally {
-    await writeStore?.close();
     await database.close();
+    databaseClosed = true;
+    reopenedDatabase = createLiteRuntimeDatabase(temp.path);
+    reopenedWriteStore = createLiteWriteStoreFromDatabase(reopenedDatabase, {
+      annProjectionEnabled: false,
+      authorityReceiptKeyring: keyring,
+    });
+    const reopenedLedger = createLiteLearningEpisodeLedgerAccess(reopenedDatabase, {
+      authorityReceiptKeyring: keyring,
+    });
+    await reopenedLedger.verifyIntegrity();
+  } finally {
+    await reopenedWriteStore?.close();
+    await reopenedDatabase?.close();
+    await writeStore?.close();
+    if (!databaseClosed) await database.close();
     fs.rmSync(temp.directory, { recursive: true, force: true });
   }
 });

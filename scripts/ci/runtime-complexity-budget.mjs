@@ -12,12 +12,16 @@ function toPosix(value) {
   return value.split(path.sep).join("/");
 }
 
-function trackedSourceFiles() {
-  const listed = spawnSync("git", ["ls-files", "src/**/*.ts"], {
+function workspaceSourceFiles() {
+  const listed = spawnSync(
+    "git",
+    ["ls-files", "--cached", "--others", "--exclude-standard", "src/**/*.ts"],
+    {
     cwd: ROOT,
     encoding: "utf8",
     env: { ...process.env, GIT_GLOB_PATHSPECS: "1" },
-  });
+    },
+  );
   if (listed.status !== 0) {
     throw new Error(`git source inventory failed: ${listed.stderr.trim() || `exit ${listed.status}`}`);
   }
@@ -176,7 +180,7 @@ function stronglyConnectedImportCycles(graph) {
 }
 
 export function collectRuntimeComplexity() {
-  const sourcePaths = trackedSourceFiles();
+  const sourcePaths = workspaceSourceFiles();
   const sourceSet = new Set(sourcePaths);
   const sources = new Map();
   const parsed = new Map();

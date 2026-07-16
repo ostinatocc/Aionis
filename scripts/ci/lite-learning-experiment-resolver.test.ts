@@ -16,6 +16,8 @@ import {
   resolveLearningExperimentForGuide,
   type LearningExperimentResolverRegistry,
 } from "../../src/memory/learning-experiment-resolver.ts";
+import { LEARNING_COLLECTION_SOURCE_POLICY_STRICT_VALIDATION_CONTRACT } from
+  "../../src/memory/learning-experiment-provisioning.ts";
 import {
   createLearningExternalExecutionPolicyRegistry,
   createLearningExternalExecutionPolicyRegistryEntry,
@@ -66,46 +68,53 @@ function authorityRow(
 }
 
 function externalExecutionPolicy(databaseInstanceId: string) {
-  const publicKey = Buffer.alloc(32, 9);
-  const publicKeyBase64 = publicKey.toString("base64");
-  const publicKeySha256 = sha256(publicKey.toString("binary"));
+  const attestorPublicKey = Buffer.alloc(32, 9);
+  const launcherPublicKey = Buffer.alloc(32, 10);
+  const attestorPublicKeyBase64 = attestorPublicKey.toString("base64");
+  const attestorPublicKeySha256 = sha256(attestorPublicKey.toString("binary"));
+  const launcherPublicKeyBase64 = launcherPublicKey.toString("base64");
+  const launcherPublicKeySha256 = sha256(launcherPublicKey.toString("binary"));
   const launcher = {
     service_launcher_policy_sha256: sha256("resolver-launcher-policy"),
     service_launcher_binary_sha256: sha256("resolver-launcher-binary"),
-    service_launcher_public_key_sha256: publicKeySha256,
+    service_launcher_public_key_sha256: launcherPublicKeySha256,
     service_launcher_key_id: "resolver-launcher-key-v1",
   };
-  const role = (credentialSessionClass: string, suffix: string) => ({
-    runner_principal_sha256: sha256(`resolver-runner:${suffix}`),
-    credential_session_class: credentialSessionClass,
-    broker_policy_sha256: sha256(`resolver-broker-policy:${suffix}`),
-    broker_binary_sha256: sha256(`resolver-broker-binary:${suffix}`),
-    broker_public_key_sha256: sha256(`resolver-broker-key:${suffix}`),
-    broker_key_id: `resolver-broker-key-${suffix}`,
-    ...launcher,
-    supervisor_executable_sha256: sha256(`resolver-supervisor:${suffix}`),
-    supervisor_argv_policy_sha256: sha256(`resolver-argv:${suffix}`),
-    supervisor_sandbox_policy_sha256: sha256(`resolver-sandbox:${suffix}`),
-    receipt_signature_algorithm: "ed25519-v1",
-    credential_scope_sha256: sha256(`resolver-scope:${suffix}`),
-    supervisor_bind_ttl_seconds: 30,
-    credential_session_hard_ttl_seconds: 3600,
-    credential_session_heartbeat_seconds: 10,
-    credential_session_max_calls: 100,
-    per_call_capability_ttl_seconds: 60,
-    post_quiesce_finalize_ttl_seconds: 600,
-  });
+  const role = (credentialSessionClass: string, suffix: string) => {
+    const brokerPublicKey = createHash("sha256").update(`resolver-broker-key:${suffix}`).digest();
+    return {
+      runner_principal_sha256: sha256(`resolver-runner:${suffix}`),
+      credential_session_class: credentialSessionClass,
+      broker_policy_sha256: sha256(`resolver-broker-policy:${suffix}`),
+      broker_binary_sha256: sha256(`resolver-broker-binary:${suffix}`),
+      broker_public_key_base64: brokerPublicKey.toString("base64"),
+      broker_public_key_sha256: createHash("sha256").update(brokerPublicKey).digest("hex"),
+      broker_key_id: `resolver-broker-key-${suffix}`,
+      ...launcher,
+      supervisor_executable_sha256: sha256(`resolver-supervisor:${suffix}`),
+      supervisor_argv_policy_sha256: sha256(`resolver-argv:${suffix}`),
+      supervisor_sandbox_policy_sha256: sha256(`resolver-sandbox:${suffix}`),
+      receipt_signature_algorithm: "ed25519-v1",
+      credential_scope_sha256: sha256(`resolver-scope:${suffix}`),
+      supervisor_bind_ttl_seconds: 30,
+      credential_session_hard_ttl_seconds: 3600,
+      credential_session_heartbeat_seconds: 10,
+      credential_session_max_calls: 100,
+      per_call_capability_ttl_seconds: 60,
+      post_quiesce_finalize_ttl_seconds: 600,
+    };
+  };
   return {
     policy_version: "external-execution-v1",
     runtime_authority_attestor: {
       service_identity: "resolver-runtime-authority-attestor-v1",
       attestor_binary_sha256: sha256("resolver-attestor-binary"),
       attestor_policy_sha256: sha256("resolver-attestor-policy"),
-      attestor_public_key_base64: publicKeyBase64,
-      attestor_public_key_sha256: publicKeySha256,
+      attestor_public_key_base64: attestorPublicKeyBase64,
+      attestor_public_key_sha256: attestorPublicKeySha256,
       attestor_key_id: "resolver-attestor-key-v1",
       ...launcher,
-      service_launcher_public_key_base64: publicKeyBase64,
+      service_launcher_public_key_base64: launcherPublicKeyBase64,
       receipt_signature_algorithm: "ed25519-v1",
       expected_database_instance_id: databaseInstanceId,
     },
@@ -230,6 +239,8 @@ test("immutable experiment resolver replays diagnostic assignment without exposi
       profile_rule_sha256: profileRuleSha256,
       external_execution_policy_registry_key: "external-execution-v1",
       collection_source_policy_sha256: sourcePolicy.sha256,
+      collection_source_policy_validation_contract:
+        LEARNING_COLLECTION_SOURCE_POLICY_STRICT_VALIDATION_CONTRACT,
       external_execution_policy_sha256: externalPolicy.sha256,
       gate_prospective_calibration_sha256: gateCalibration.sha256,
       required_evidence_series_sha256: evidenceSeries.sha256,

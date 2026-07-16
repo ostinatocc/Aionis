@@ -303,6 +303,7 @@ experiment: {
           | "immutable_paired_eval";
         broker_policy_sha256: string;
         broker_binary_sha256: string;
+        broker_public_key_base64: string;
         broker_public_key_sha256: string;
         broker_key_id: string;
         service_launcher_policy_sha256: string;
@@ -1643,6 +1644,15 @@ CREATE TABLE lite_learning_episode_events (
 `collection_source_policy_json` is an immutable, canonical mapping from
 authenticated principal fingerprints to class plus collector ID/version.
 Classes are `eligible_host` or `fixture_pilot`.
+Every newly committed revision freezes
+`collection_source_policy_validation_contract` =
+`"aionis_collection_source_policy_strict_v1"` in `config_json`; Runtime then
+requires the v1 source entries to be unique by principal fingerprint and sorted
+in canonical UTF-8 order. Historical immutable revisions without that marker
+remain replayable only when they match the original
+`aionis_collection_source_policy_v1` wire shape. This compatibility path is
+used for integrity/reopen and exact replay only; it cannot admit a fresh
+revision or an unknown policy contract.
 It contains hashes, not API keys or JWTs. `/v1/guide` already resolves an
 `AuthPrincipal` and, in server mode, overwrites consumer identity from that
 principal. The route must additionally pass the resolved principal to the guide
@@ -2958,6 +2968,37 @@ the stored hash before returning it. Therefore there is no commit-to-ticket-
 fsync loss window, and the acceptance shell can name the reservation but can
 never read, create, replace, or replay the ticket.
 
+The v1 Runtime writer does not trust a caller-supplied broker actor for either
+reservation or consumption. Before each write, the broker signs a strict
+Ed25519 authorization receipt with the public key frozen in the applicable
+experiment role. The receipt binds the Runtime database instance, tenant,
+artifact kind, evidence series, external role, experiment/revision, run,
+operation ID, complete authority-row digest, raw-ticket digest, expected
+runner (and consumption nonce where applicable), broker policy/binary/key
+identity, and a digest of the complete canonical request. Runtime re-derives
+the applicability manifest from the authority DB and compares its digest with
+the reservation. That digest is deliberately not embedded in the preregistered
+immutable-input manifest because the immutable-input digest is already in the
+experiment config covered by the applicability manifest; embedding it would
+create a hash cycle. Runtime derives the operation actor from the verified
+receipt and persists the exact authorization envelope and digest in the
+protected operation receipt.
+Runtime attestor, deployment launcher, and broker keys must be pairwise
+distinct; the three broker roles may share one reviewed broker key, but no
+broker key may mint launcher or Runtime-attestor receipts.
+
+Authorization v1 has a non-extendable window of at most 60 seconds. The
+broker-signed `authorized_at` is also the row and operation `recorded_at`;
+Runtime's wall clock is freshness authority and accepts a new write only when
+the signed time is no more than five seconds ahead and the authorization has
+not expired. Integrity replay and database reopen reverify the frozen key,
+signature, identity, complete request, signed/recorded time equality, and
+original window, but do not apply the current wall clock to an already
+committed historical receipt. Exact reservation replay is allowed with
+identical canonical bytes. Supplying raw ticket bytes after a committed
+consumption is always rejected; recovery reads the committed row and operation
+receipt instead.
+
 The broker is likewise the only formal caller of `consume-external-ticket` and
 `claim-external`. It owns the raw ticket and broker private key. Before
 decrypting, validating, mounting, or requesting capabilities,
@@ -3017,6 +3058,28 @@ attempt-policy, and hard-expiry checks all pass. The provider secret never
 leaves the broker, and the capability cannot call the provider except through
 that live session. The hard expiry cannot be renewed or replaced.
 
+The claim operation ID is fixed-domain and derived from tenant plus the signed
+claim-receipt digest; claim callers cannot choose it. Launcher and binding
+receipts bind both the actual argv digest and the revision-frozen argv-policy
+digest. Normal consumption and claim are blocked once the experiment revision
+is closed. A binding submitted after closure is accepted only when its signed
+claim and binding times prove that it was authorized before closure.
+Termination and exact replay remain available so closure cannot strand a live
+capability.
+
+`close-reserved-run` is the only path that may consume after revision closure,
+and it is also the explicit prerequisite-failure early-stop path before a
+global revision closure exists. In one Runtime savepoint it consumes the
+private ticket under a fresh signed consumption
+authorization and records a signed `operator_abort` pre-claim hold. V1 requires
+the supplied triggering digest to resolve to exactly one already committed,
+non-passing sibling external termination or pre-claim hold in the same
+experiment revision; the target reservation must be distinct, and the signed
+hold must bind that digest, its consumption, `closing_reserved_run`, and a
+zero-effects proof. A failure inserting either protected row or operation
+receipt rolls back both. Ordinary `record-external-preclaim-hold` cannot create
+an `operator_abort` branch outside this atomic path.
+
 `claim-learning-run` returns only public claim/conformance receipts and leaves
 the journal in `claimed_unbound`. The next operation is the broker's synchronous
 `launch-learning-supervisor`, not a caller-selected `attach`. The daemon sends a
@@ -3025,7 +3088,8 @@ launcher creates a private socket pair, passes one end only as an inherited file
 descriptor to the exact new supervisor, and transfers the other end to the
 broker over their authenticated service channel. It signs a spawn receipt that
 binds the broker challenge, claim/session, runner UID/GID, executable digest,
-canonical argv digest, PID plus kernel process-start identity, cgroup/service-
+the frozen argv-policy digest, canonical argv digest, PID plus kernel
+process-start identity, cgroup/service-
 manager job identity, and both ends' channel fingerprint. The broker verifies
 that receipt and the connected peer credentials, signs a binding receipt, and
 invokes protected `bind-external-supervisor`. Runtime re-derives the registered

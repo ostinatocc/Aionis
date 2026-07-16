@@ -246,6 +246,10 @@ export type LiteWriteOperationRow = {
   created_at: string;
 };
 
+const LITE_WRITE_OPERATION_RESERVED_SCOPE = "learning_external_authority_v1";
+const LITE_WRITE_OPERATION_RESERVED_SCOPE_ERROR =
+  "lite_write_operation_reserved_scope:learning_external_authority_v1";
+
 export type LiteProductGuideReceiptRow = {
   tenant_id: string;
   scope: string;
@@ -1786,6 +1790,9 @@ export function createLiteWriteStoreFromDatabase(
     },
 
     async insertWriteOperation(args): Promise<LiteWriteOperationRow> {
+      if (args.scope === LITE_WRITE_OPERATION_RESERVED_SCOPE) {
+        throw new Error(LITE_WRITE_OPERATION_RESERVED_SCOPE_ERROR);
+      }
       if (!transaction.inTransaction()) {
         throw new Error("Runtime write operation receipt must be inserted inside the shared Runtime transaction");
       }

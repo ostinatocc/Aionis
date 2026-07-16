@@ -322,6 +322,55 @@ const LearningExperimentPolicyBindingsV1Schema = z.object({
   external_execution_policy_sha256: DigestSha256Schema,
 }).strict();
 
+export const LEARNING_COLLECTION_SOURCE_POLICY_STRICT_VALIDATION_CONTRACT =
+  "aionis_collection_source_policy_strict_v1" as const;
+
+// Revisions committed before strict-v1 validation was introduced already used
+// this wire shape, but the declaration path did not require principal order or
+// uniqueness. Keep that historical shape explicit so immutable rows can be
+// replayed without weakening the contract for newly committed revisions.
+export const LearningCollectionSourcePolicyHistoricalV1Schema = z.object({
+  contract_version: z.literal("aionis_collection_source_policy_v1"),
+  collection_sources: z.array(z.object({
+    principal_sha256: DigestSha256Schema,
+    class: z.enum(["eligible_host", "fixture_pilot"]),
+    collector_id: ExactBoundedIdSchema,
+    collector_version: ExactBoundedKindSchema,
+    verifier_policy_sha256: DigestSha256Schema,
+  }).strict()).max(100),
+}).strict();
+
+export const LearningCollectionSourcePolicyV1Schema =
+  LearningCollectionSourcePolicyHistoricalV1Schema.superRefine((value, context) => {
+    const principals = value.collection_sources.map((source) => source.principal_sha256);
+    if (new Set(principals).size !== principals.length
+      || stableStringify(principals) !== stableStringify(canonicalUtf8Order(principals))) {
+      context.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ["collection_sources"],
+        message: "Collection source policy principals must be unique and canonically sorted",
+      });
+    }
+  });
+
+export function parseStoredLearningCollectionSourcePolicyV1(
+  value: unknown,
+  revisionConfig: Readonly<Record<string, unknown>>,
+): LearningCollectionSourcePolicyV1 {
+  const validationContract = revisionConfig.collection_source_policy_validation_contract;
+  if (validationContract === undefined) {
+    return LearningCollectionSourcePolicyHistoricalV1Schema.parse(value);
+  }
+  if (validationContract !== LEARNING_COLLECTION_SOURCE_POLICY_STRICT_VALIDATION_CONTRACT) {
+    throw new Error("Unknown collection source policy validation contract");
+  }
+  return LearningCollectionSourcePolicyV1Schema.parse(value);
+}
+
+export type LearningCollectionSourcePolicyV1 = z.infer<
+  typeof LearningCollectionSourcePolicyV1Schema
+>;
+
 const LearningExperimentApplicabilityCollectionSourceV1Schema = z.object({
   collection_principal_sha256: DigestSha256Schema,
   collection_class: z.enum(["eligible_host", "fixture_pilot"]),

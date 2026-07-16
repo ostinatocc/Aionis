@@ -15,6 +15,8 @@ import {
   PRODUCTION_LEARNING_EXTERNAL_EXECUTION_POLICY_REGISTRY,
   type LearningExternalExecutionPolicyRegistryEntry,
 } from "./learning-external-execution-policy.js";
+import { LearningCollectionSourcePolicyV1Schema } from
+  "./learning-experiment-provisioning.js";
 import {
   asPublicScope,
   asStoreScope,
@@ -152,7 +154,7 @@ function digest(value: unknown): string {
 export function learningCollectionSourcePolicyProjection(
   experiment: NonNullable<AionisAdmissionCandidatePolicyProfileRule["experiment"]>,
 ) {
-  return {
+  return LearningCollectionSourcePolicyV1Schema.parse({
     contract_version: "aionis_collection_source_policy_v1" as const,
     collection_sources: experiment.collection_sources.map((source) => ({
       principal_sha256: source.principal_sha256,
@@ -161,7 +163,7 @@ export function learningCollectionSourcePolicyProjection(
       collector_version: source.collector_version,
       verifier_policy_sha256: source.verifier_policy_sha256,
     })),
-  };
+  });
 }
 
 function principalFingerprint(principal: AuthPrincipal | null, tenantId: string): string | null {

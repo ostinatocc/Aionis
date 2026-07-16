@@ -15,7 +15,10 @@ import type {
   LiteRuntimeDataVerification,
   LiteRuntimeUpgradeReport,
 } from "../../src/store/lite-runtime-data-operations.ts";
-import { LITE_LEARNING_LEDGER_REQUIRED_TABLE_NAMES } from "../../src/store/lite-learning-episode-ledger.ts";
+import {
+  LITE_LEARNING_LEDGER_REQUIRED_TABLE_NAMES,
+  LITE_LEARNING_LEDGER_REQUIRED_TRIGGER_NAMES,
+} from "../../src/store/lite-learning-episode-ledger.ts";
 import { createLiteWriteStore } from "../../src/store/lite-write-store.ts";
 import { createSqliteDatabase, type SqliteDatabase } from "../../src/store/sqlite.ts";
 
@@ -325,6 +328,9 @@ async function createPopulatedV2Fixture(dbPath: string): Promise<void> {
   const db = createSqliteDatabase(dbPath);
   try {
     db.exec("BEGIN IMMEDIATE");
+    for (const trigger of LITE_LEARNING_LEDGER_REQUIRED_TRIGGER_NAMES) {
+      db.exec(`DROP TRIGGER IF EXISTS ${quoteIdentifier(trigger)}`);
+    }
     for (const table of [...LITE_LEARNING_LEDGER_REQUIRED_TABLE_NAMES].reverse()) {
       db.exec(`DROP TABLE IF EXISTS ${quoteIdentifier(table)}`);
     }

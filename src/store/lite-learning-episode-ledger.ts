@@ -59,6 +59,11 @@ import {
   assertNoOrphanLiteLearningControlOperations,
   buildUnusedExposureLearningControlJob,
 } from "./lite-learning-control-jobs.js";
+import {
+  LEARNING_COLLECTION_SOURCE_POLICY_STRICT_VALIDATION_CONTRACT,
+  LearningCollectionSourcePolicyV1Schema,
+  parseStoredLearningCollectionSourcePolicyV1,
+} from "../memory/learning-experiment-provisioning.js";
 import { resolveLiteLearningFeedbackSource } from "./lite-learning-feedback-source.js";
 import {
   learningFeedbackAttributionItemDigest,
@@ -70,6 +75,11 @@ import { assertProductMeasureReceiptAuthoritySetIntegrity, createLiteLearningMea
 import { assertPromotionEligibleGuideExposureRoots } from "./lite-learning-guide-root-authority.js";
 import { normalizeSqliteSchemaSql } from "./sqlite-schema-sql.js";
 import type { AuthorityReceiptResolvedKeyring } from "../util/authority-receipt-keys.js";
+import {
+  assertLiteLearningExternalAuthorityIntegrity,
+  createLiteLearningExternalAuthorityAccess,
+  type LiteLearningExternalAuthorityAccess,
+} from "./lite-learning-external-authority.js";
 export {
   learningActivationScheduleDigest, learningCollectionPrincipalBindingDigest,
   learningConfirmatoryAttemptDigest, learningEvidenceArtifactReportDigest,
@@ -2054,6 +2064,21 @@ BEFORE DELETE ON lite_learning_external_session_terminations
 BEGIN
   SELECT RAISE(ABORT, 'learning_external_session_termination_delete_forbidden');
 END;
+
+CREATE TRIGGER trg_lite_learning_external_authority_operation_update
+BEFORE UPDATE ON lite_runtime_write_operations
+WHEN OLD.scope = 'learning_external_authority_v1'
+  OR NEW.scope = 'learning_external_authority_v1'
+BEGIN
+  SELECT RAISE(ABORT, 'learning_external_authority_operation_update_forbidden');
+END;
+
+CREATE TRIGGER trg_lite_learning_external_authority_operation_delete
+BEFORE DELETE ON lite_runtime_write_operations
+WHEN OLD.scope = 'learning_external_authority_v1'
+BEGIN
+  SELECT RAISE(ABORT, 'learning_external_authority_operation_delete_forbidden');
+END;
 CREATE TABLE lite_learning_evidence_artifacts (
   row_id INTEGER PRIMARY KEY AUTOINCREMENT,
   tenant_id TEXT NOT NULL,
@@ -3073,28 +3098,7 @@ export function assertLiteLearningEpisodeLedgerIntegrity(
   assertLiteRuntimeAuthorityIdentity(db);
   assertLiteTenantScopeEncodingAnchorSetIntegrity(db);
 
-  for (const row of db.prepare(
-    `SELECT ${LITE_LEARNING_LEDGER_REQUIRED_COLUMNS.lite_learning_external_run_reservations
-      .filter((column) => column !== "row_id").join(", ")}
-     FROM lite_learning_external_run_reservations
-     ORDER BY tenant_id, reservation_id`,
-  ).all() as LiteLearningAuthorityRow[]) {
-    assertCanonicalJsonDigest(row, "retry_policy_json", "retry_policy_sha256");
-    assertCanonicalJsonDigest(row, "immutable_input_manifest_json", "immutable_input_manifest_sha256");
-    if (row.reservation_sha256 !== learningExternalRunReservationDigest(row)) {
-      throw new Error("lite_learning_integrity_failed:external_run_reservation_digest");
-    }
-  }
-  for (const row of db.prepare(
-    `SELECT ${LITE_LEARNING_LEDGER_REQUIRED_COLUMNS.lite_learning_external_ticket_consumptions
-      .filter((column) => column !== "row_id").join(", ")}
-     FROM lite_learning_external_ticket_consumptions
-     ORDER BY tenant_id, consumption_id`,
-  ).all() as LiteLearningAuthorityRow[]) {
-    if (row.consumption_sha256 !== learningExternalTicketConsumptionDigest(row)) {
-      throw new Error("lite_learning_integrity_failed:external_ticket_consumption_digest");
-    }
-  }
+  assertLiteLearningExternalAuthorityIntegrity(db);
 
   const incompleteAttempts = db.prepare(
     `SELECT attempt.tenant_id, attempt.confirmatory_attempt_id
@@ -3135,15 +3139,7 @@ export function assertLiteLearningEpisodeLedgerIntegrity(
   );
   assertLiteLearningSafetyStopBundlesIntegrity(db);
 
-  const unverifiedExternalAuthorityFacts = [
-    "lite_learning_external_preclaim_holds",
-    "lite_learning_external_run_claims",
-    "lite_learning_external_supervisor_bindings",
-    "lite_learning_external_session_terminations",
-  ].reduce((count, table) => count + scalarCount(
-    db,
-    `SELECT COUNT(*) AS count FROM ${table}`,
-  ), 0) + scalarCount(
+  const unverifiedExternalAuthorityFacts = scalarCount(
     db,
     `SELECT COUNT(*) AS count
      FROM lite_learning_evidence_artifacts
@@ -3359,6 +3355,9 @@ const AUTHORITY_FACT_REPLAY_KEYS: Readonly<Record<string, readonly string[]>> = 
 export type LiteLearningAuthorityFactTable = keyof typeof AUTHORITY_FACT_REPLAY_KEYS;
 
 const TASK_8_PROTECTED_EXTERNAL_FACT_TABLES = new Set<LiteLearningAuthorityFactTable>([
+  "lite_learning_external_run_reservations",
+  "lite_learning_external_holdout_members",
+  "lite_learning_external_ticket_consumptions",
   "lite_learning_external_preclaim_holds",
   "lite_learning_external_run_claims",
   "lite_learning_external_supervisor_bindings",
@@ -4160,7 +4159,11 @@ function validatePolicyVersion(row: LiteLearningAuthorityRow): void {
   }
 }
 
-function validateExperimentRevision(db: SqliteDatabase, row: LiteLearningAuthorityRow): void {
+function validateExperimentRevision(
+  db: SqliteDatabase,
+  row: LiteLearningAuthorityRow,
+  mode: "fresh_write" | "stored_replay",
+): void {
   for (const [jsonField, digestField] of [
     ["collection_source_policy_json", "collection_source_policy_sha256"],
     ["required_evidence_series_json", "required_evidence_series_sha256"],
@@ -4173,6 +4176,20 @@ function validateExperimentRevision(db: SqliteDatabase, row: LiteLearningAuthori
   const externalPolicy = ExternalExecutionPolicyV1Schema.parse(
     canonicalJson(row.external_execution_policy_json, "external_execution_policy_json"),
   );
+  const revisionConfig = canonicalJson(row.config_json, "config_json") as Record<string, unknown>;
+  const sourcePolicy = canonicalJson(
+    row.collection_source_policy_json,
+    "collection_source_policy_json",
+  );
+  if (mode === "fresh_write") {
+    if (revisionConfig.collection_source_policy_validation_contract
+      !== LEARNING_COLLECTION_SOURCE_POLICY_STRICT_VALIDATION_CONTRACT) {
+      throw new Error("fresh experiment revision requires the strict collection source policy validation contract");
+    }
+    LearningCollectionSourcePolicyV1Schema.parse(sourcePolicy);
+  } else {
+    parseStoredLearningCollectionSourcePolicyV1(sourcePolicy, revisionConfig);
+  }
   parseRequiredEvidenceSeries(row.required_evidence_series_json);
   const evidenceIntent = requiredString(row, "evidence_intent");
   if (evidenceIntent !== "integrity_only" && evidenceIntent !== "confirmatory") {
@@ -4182,7 +4199,6 @@ function validateExperimentRevision(db: SqliteDatabase, row: LiteLearningAuthori
     evidenceIntent,
     canonicalJson(row.required_external_inputs_json, "required_external_inputs_json"),
   );
-  const revisionConfig = canonicalJson(row.config_json, "config_json") as Record<string, unknown>;
   if (revisionConfig.gate_prospective_calibration_sha256 !== row.gate_prospective_calibration_sha256) {
     throw new Error("experiment revision configuration must freeze the registered gate calibration digest");
   }
@@ -5722,7 +5738,7 @@ function validateStoredPolicyAndRevisionRows(db: SqliteDatabase): void {
     "tenant_id, experiment_id, experiment_revision",
   )) {
     assertExactRowShape("lite_learning_experiment_revisions", row);
-    validateExperimentRevision(db, row);
+    validateExperimentRevision(db, row, "stored_replay");
   }
 }
 
@@ -5950,7 +5966,7 @@ export function assertLiteLearningGateReservationScopedIntegrity(
     assertExactRowShape("lite_learning_policy_versions", policy);
     validatePolicyVersion(policy);
   }
-  validateExperimentRevision(db, revision);
+  validateExperimentRevision(db, revision, "stored_replay");
   validateConfirmatoryAttempt(db, attempt, { exactReplay: true });
 
   const pairs = scopedLearningTableRows(
@@ -6488,7 +6504,7 @@ const liteLearningMeasurementAuthority = createLiteLearningMeasurementAuthority(
 });
 const validateEffectMeasurement = liteLearningMeasurementAuthority.validateEffectMeasurement;
 export const buildLiteMeasurementEffectEventRow = liteLearningMeasurementAuthority.buildEffectEventRow;
-export type LiteLearningEpisodeLedgerAccess = {
+export type LiteLearningEpisodeLedgerAccess = LiteLearningExternalAuthorityAccess & {
   transactionRunner(): SqliteTransactionRunner;
   resolveFeedbackSource(args: { tenantId: string; scope: string; guideTraceId: string }): Promise<ReturnType<typeof resolveLiteLearningFeedbackSource>>;
   resolveMeasurementEpisodePair(args: {
@@ -6648,8 +6664,10 @@ export function createLiteLearningEpisodeLedgerAccess(
 ): LiteLearningEpisodeLedgerAccess {
   const { db, readDb, transaction } = database;
   assertLiteLearningEpisodeLedgerIntegrity(db, new Date().toISOString(), options);
+  const externalAuthority = createLiteLearningExternalAuthorityAccess({ db, transaction });
 
   return {
+    ...externalAuthority,
     transactionRunner() {
       return transaction;
     },
@@ -6703,7 +6721,7 @@ export function createLiteLearningEpisodeLedgerAccess(
               candidate_authority_actions: [],
             };
           }
-          validateExperimentRevision(authorityDb, revision);
+          validateExperimentRevision(authorityDb, revision, "stored_replay");
           const revisionConfig = canonicalJson(revision.config_json, "config_json");
           if (!revisionConfig || typeof revisionConfig !== "object" || Array.isArray(revisionConfig)) {
             throw new Error("experiment revision config must be a canonical object");
@@ -6763,7 +6781,7 @@ export function createLiteLearningEpisodeLedgerAccess(
             if (!leaseAttempt || !leaseRevision || !pair) {
               throw new Error("active namespace lease authority chain is incomplete");
             }
-            validateExperimentRevision(authorityDb, leaseRevision);
+            validateExperimentRevision(authorityDb, leaseRevision, "stored_replay");
             validateConfirmatoryAttempt(authorityDb, leaseAttempt, { exactReplay: true });
             assertExactRowShape("lite_learning_randomization_pairs", pair);
             if (pair.pair_record_sha256 !== learningRandomizationPairRecordDigest(pair)) {
@@ -7013,7 +7031,10 @@ export function createLiteLearningEpisodeLedgerAccess(
 
     async insertExperimentRevision(row) {
       assertStoreTransaction(transaction);
-      validateExperimentRevision(db, row);
+      const existingRevision = selectExactRow(db, "lite_learning_experiment_revisions", [
+        "tenant_id", "experiment_id", "experiment_revision",
+      ], row);
+      validateExperimentRevision(db, row, existingRevision === null ? "fresh_write" : "stored_replay");
       if (row.evidence_intent === "confirmatory") {
         throw new Error("confirmatory revisions must use atomic provisionConfirmatorySet");
       }
@@ -7024,7 +7045,14 @@ export function createLiteLearningEpisodeLedgerAccess(
 
     async provisionConfirmatorySet(args) {
       assertStoreTransaction(transaction);
-      validateExperimentRevision(db, args.revision);
+      const existingRevision = selectExactRow(db, "lite_learning_experiment_revisions", [
+        "tenant_id", "experiment_id", "experiment_revision",
+      ], args.revision);
+      validateExperimentRevision(
+        db,
+        args.revision,
+        existingRevision === null ? "fresh_write" : "stored_replay",
+      );
       if (args.revision.evidence_intent !== "confirmatory") {
         throw new Error("atomic confirmatory provisioning requires evidence_intent=confirmatory");
       }
@@ -7037,9 +7065,6 @@ export function createLiteLearningEpisodeLedgerAccess(
           throw new Error("confirmatory activation-schedule digest mismatch");
         }
       }
-      const existingRevision = selectExactRow(db, "lite_learning_experiment_revisions", [
-        "tenant_id", "experiment_id", "experiment_revision",
-      ], args.revision);
       const revisionResult = insertExactImmutableRow(db, "lite_learning_experiment_revisions", args.revision, [
         "tenant_id", "experiment_id", "experiment_revision",
       ]);
@@ -7471,7 +7496,7 @@ export function createLiteLearningEpisodeLedgerAccess(
         throw new Error("Runtime-integrity artifacts and look reservations require atomic reserveGateLook");
       }
       if (TASK_8_PROTECTED_EXTERNAL_FACT_TABLES.has(table)) {
-        throw new Error("signed external facts require the protected Task 8 external receipt verifier");
+        throw new Error("external authority facts require the protected Task 8 lifecycle workflow");
       }
       if (table === "lite_learning_gate_artifact_memberships"
         || (table === "lite_learning_gate_decisions" && row.decision_kind === "evidence_evaluation")) {

@@ -931,12 +931,15 @@ test("external execution policy requires immutable global attestor and exact rol
   const attestorPublicKey = Buffer.alloc(32, 1);
   const launcherPublicKey = Buffer.alloc(32, 2);
   const launcherPublicKeySha256 = createHash("sha256").update(launcherPublicKey).digest("hex");
+  const brokerPublicKey = Buffer.alloc(32, 3);
+  const brokerPublicKeySha256 = createHash("sha256").update(brokerPublicKey).digest("hex");
   const role = {
     runner_principal_sha256: D.a,
     credential_session_class: "eligible_host_adapter" as const,
     broker_policy_sha256: D.b,
     broker_binary_sha256: D.c,
-    broker_public_key_sha256: D.d,
+    broker_public_key_base64: brokerPublicKey.toString("base64"),
+    broker_public_key_sha256: brokerPublicKeySha256,
     broker_key_id: "broker-key",
     service_launcher_policy_sha256: D.d,
     service_launcher_binary_sha256: D.e,
@@ -993,6 +996,38 @@ test("external execution policy requires immutable global attestor and exact rol
       tool_e2e: { ...policy.roles.tool_e2e, service_launcher_binary_sha256: D.f },
     },
   }));
+  assert.throws(() => ExternalExecutionPolicyV1Schema.parse({
+    ...policy,
+    roles: {
+      ...policy.roles,
+      tool_e2e: { ...policy.roles.tool_e2e, broker_public_key_sha256: D.f },
+    },
+  }), /does not bind the supplied raw Ed25519 public key/);
+  assert.throws(() => ExternalExecutionPolicyV1Schema.parse({
+    ...policy,
+    runtime_authority_attestor: {
+      ...policy.runtime_authority_attestor,
+      service_launcher_public_key_base64: policy.runtime_authority_attestor.attestor_public_key_base64,
+      service_launcher_public_key_sha256: policy.runtime_authority_attestor.attestor_public_key_sha256,
+    },
+    roles: Object.fromEntries(Object.entries(policy.roles).map(([name, value]) => [name, {
+      ...value,
+      service_launcher_public_key_sha256: policy.runtime_authority_attestor.attestor_public_key_sha256,
+    }])),
+  }), /attestor and service launcher must use distinct/);
+  for (const reusedKey of [attestorPublicKey, launcherPublicKey]) {
+    assert.throws(() => ExternalExecutionPolicyV1Schema.parse({
+      ...policy,
+      roles: {
+        ...policy.roles,
+        production_shadow: {
+          ...policy.roles.production_shadow,
+          broker_public_key_base64: reusedKey.toString("base64"),
+          broker_public_key_sha256: createHash("sha256").update(reusedKey).digest("hex"),
+        },
+      },
+    }), /broker must use a key distinct/);
+  }
   assert.doesNotThrow(() => RequiredExternalInputsV1Schema.parse({
     offline_paired: { immutable_input_manifest_sha256: D.a, retry_policy_sha256: D.b, planned_run_id: "offline-run" },
     production_shadow: { immutable_input_manifest_sha256: D.c, retry_policy_sha256: D.d, planned_run_id: "shadow-run" },

@@ -1860,6 +1860,36 @@ test("operation receipts cannot be inserted outside the shared Runtime transacti
   }
 });
 
+test("generic operation receipts cannot claim the protected external authority scope", async () => {
+  const directory = fs.mkdtempSync(path.join(os.tmpdir(), "aionis-operation-reserved-scope-"));
+  const dbPath = path.join(directory, "runtime.sqlite");
+  const writeStore = createLiteWriteStore(dbPath);
+  const operation = {
+    tenantId: "default",
+    scope: "learning_external_authority_v1",
+    operationKind: "forged_external_authority_v1",
+    operationId: "forged-external-authority-operation",
+    requestSha256: "a".repeat(64),
+    receiptJson: "{}",
+    commitId: null,
+  } as const;
+  try {
+    await assert.rejects(
+      writeStore.withTx(async () => await writeStore.insertWriteOperation(operation)),
+      /lite_write_operation_reserved_scope:learning_external_authority_v1/,
+    );
+    assert.equal(await writeStore.getWriteOperation({
+      tenantId: operation.tenantId,
+      scope: operation.scope,
+      operationKind: operation.operationKind,
+      operationId: operation.operationId,
+    }), null);
+  } finally {
+    await writeStore.close();
+    fs.rmSync(directory, { recursive: true, force: true });
+  }
+});
+
 test("a prepared projection is rejected when another write advances its commit base", async () => {
   const directory = fs.mkdtempSync(path.join(os.tmpdir(), "aionis-projection-stale-"));
   const dbPath = path.join(directory, "runtime.sqlite");
