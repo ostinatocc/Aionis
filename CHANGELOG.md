@@ -1,5 +1,30 @@
 # Changelog
 
+## v0.3.10 - Atomic Tool Feedback Development
+
+Development baseline: 2026-07-16
+
+This unreleased train gives post-v0.3.9 work a truthful version boundary. It
+includes Task 5.1 atomic tool-feedback attribution, SDK `0.3.18`, and Manifest
+`0.1.1`; it does not claim a v0.3.10 Runtime tag or Docker publication.
+
+### Changed
+
+- Tool-selection feedback now prepares external work before the transaction,
+  persists attribution facts and an exact operation receipt atomically, and
+  runs external effects only after commit.
+- Manifest is now an immutable release-train member and a non-skippable Runtime
+  integration whenever CI supplies its explicit checkout.
+- Ordinary and Docker CI resolve, verify, and build the exact Manifest source
+  ref recorded in `release-train.json`.
+- v0.3.9 release evidence is restored to its original SDK `0.3.17` coordinate;
+  SDK `0.3.18` belongs only to this development train.
+
+### Deferred
+
+- Task 6.1 measurement episode binding and later calibrated evidence/promotion
+  phases remain future work. Global candidate serving remains off.
+
 ## v0.3.9 - Durable Learning Control Candidate
 
 Release date: 2026-07-15

@@ -1716,6 +1716,12 @@ git add src/product/product-services.ts src/product/tool-feedback-service.ts \
 git commit -m "refactor(feedback): make tool learning one atomic unit"
 ```
 
+**Completion note (2026-07-16):** Implemented on Runtime main. Tool feedback
+uses early replay, external prepare, transaction-bound persist with an inside-
+transaction replay recheck, exact final-response receipt storage, episode
+attribution, and after-commit finalize. Task 6.1 has not started in this
+checkpoint.
+
 ## Phase 6: Measurement episode binding
 
 ### Task 6.1: Bind verified measurements to episode pairs

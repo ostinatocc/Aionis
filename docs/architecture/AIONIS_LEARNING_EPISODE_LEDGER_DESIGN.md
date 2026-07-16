@@ -1,6 +1,6 @@
 # Aionis Learning Episode Ledger and Evidence-Gated Learning Design
 
-Status: implemented through Task 4.1 Step 4; later evidence and promotion phases remain proposed
+Status: implemented through Task 5.1; Task 6 and later evidence and promotion phases remain proposed
 
 Date: 2026-07-13
 

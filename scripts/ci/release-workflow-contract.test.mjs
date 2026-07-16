@@ -14,6 +14,7 @@ test("Docker release verifies all frozen package repositories before publication
     ["cli", "ostinatocc/aionis-cli", "external/aionis-cli", "CLI"],
     ["create", "ostinatocc/aionis-create", "external/aionis-create", "CREATE"],
     ["sdk", "ostinatocc/aionis-sdk", "external/aionis-sdk", "SDK"],
+    ["manifest", "ostinatocc/AionisManifest", "external/AionisManifest", "MANIFEST"],
     ["mcp", "ostinatocc/aionis-mcp", "external/aionis-mcp", "MCP"],
     ["aifs", "ostinatocc/aionis-aifs", "external/aionis-aifs", "AIFS"],
     ["claude_code", "ostinatocc/aionis-claude-code", "external/aionis-claude-code", "CLAUDE_CODE"],
@@ -25,10 +26,27 @@ test("Docker release verifies all frozen package repositories before publication
     workflow,
     /^      AIONIS_SDK_REPO: \$\{\{ github\.workspace \}\}\/external\/aionis-sdk$/m,
   );
+  assert.match(
+    workflow,
+    /^      AIONIS_MANIFEST_REPO: \$\{\{ github\.workspace \}\}\/external\/AionisManifest$/m,
+  );
   assert.equal(
     (workflow.match(/^\s+AIONIS_SDK_REPO:/gm) ?? []).length,
     1,
     "the complete verify job must receive the exact SDK repository variable",
+  );
+  assert.equal(
+    (workflow.match(/^\s+AIONIS_MANIFEST_REPO:/gm) ?? []).length,
+    1,
+    "the complete verify job must receive the exact Manifest repository variable",
+  );
+  assert.match(
+    workflow,
+    /for \(const key of \["cli", "create", "sdk", "manifest", "mcp", "aifs", "claude_code", "substrate"\]\)/,
+  );
+  assert.match(
+    workflow,
+    /name: Verify standalone Manifest\s*\n\s*working-directory: external\/AionisManifest[\s\S]*?npm run -s verify/,
   );
   for (const [key, repository, checkoutPath, envKey] of frozenPackages) {
     assert.ok(workflow.includes(`repository: ${repository}`), `missing ${key} repository checkout`);
@@ -201,9 +219,17 @@ test("release smoke rejects mutable image tags before invoking Docker", () => {
   assert.match(result.stderr, /requires an immutable image digest/);
 });
 
-test("default CI verifies release metadata, SDK ownership, complexity, smoke, and minimum Node", () => {
+test("default CI verifies release metadata, SDK and Manifest ownership, complexity, smoke, and minimum Node", () => {
   const workflow = read(".github/workflows/ci.yml");
   assert.match(workflow, /release-artifact-gate\.mjs --check/);
+  assert.match(workflow, /id: manifest-ref/);
+  assert.match(workflow, /releaseTrain\.packages\.manifest\.source_ref/);
+  assert.match(workflow, /repository: ostinatocc\/AionisManifest/);
+  assert.match(workflow, /ref: \$\{\{ steps\.manifest-ref\.outputs\.ref \}\}/);
+  assert.match(workflow, /path: external\/AionisManifest/);
+  assert.match(workflow, /AIONIS_MANIFEST_REPO:.*external\/AionisManifest/);
+  assert.match(workflow, /AIONIS_RELEASE_MANIFEST_REPO:.*external\/AionisManifest/);
+  assert.match(workflow, /name: Verify standalone Manifest[\s\S]*npm run -s verify/);
   assert.match(workflow, /npm run -s sdk:check/);
   assert.match(workflow, /npm run -s complexity:check/);
   assert.match(workflow, /npm run -s lite:smoke/);
