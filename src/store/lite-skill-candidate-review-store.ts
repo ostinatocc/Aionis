@@ -1,4 +1,3 @@
-import { AionisEffectReportSchema } from "../memory/product-output-contract.js";
 import type {
   ProductMeasurementRecord,
   SkillCandidateReviewAccess,
@@ -6,7 +5,16 @@ import type {
   SkillCandidateReviewStatus,
   TraceDerivedSkillTrainingCandidate,
 } from "./memory-store.js";
-import { productMeasurementDigest, stableJsonDigest } from "./memory-store.js";
+import {
+  stableJsonDigest,
+} from "./memory-store.js";
+import {
+  PRODUCT_MEASURE_OPERATION_EVIDENCE_PREFIX,
+  assertProductMeasurementRecordIntegrity,
+  parseProductMeasureOperationEvidenceReference,
+  productMeasurementFromDbRecord,
+  type LiteProductMeasurementDbRecord,
+} from "./lite-product-measurement-record.js";
 import { createLiteRuntimeDatabase, type LiteRuntimeDatabase } from "./lite-runtime-database.js";
 import { ignoreSqliteDuplicateColumnError, type SqliteDatabase } from "./sqlite.js";
 
@@ -14,21 +22,6 @@ export type LiteSkillCandidateReviewStore = {
   createSkillCandidateReviewAccess(): SkillCandidateReviewAccess;
   close(): Promise<void>;
   healthSnapshot(): { path: string; mode: "sqlite_skill_candidate_review_v2" };
-};
-
-type ProductMeasurementDbRecord = {
-  measurement_id: string;
-  tenant_id: string;
-  scope: string;
-  source: ProductMeasurementRecord["source"];
-  measurement_digest: string;
-  effect_report_json: string;
-  eligible_for_skill_export: number;
-  evidence_status: ProductMeasurementRecord["evidence_status"];
-  runtime_evidence_ids_json: string;
-  eligibility_reasons_json: string;
-  created_by: string;
-  created_at: string;
 };
 
 type SkillCandidateReviewRecord = {
@@ -85,23 +78,6 @@ function parseJsonArray(raw: string): string[] {
 
 function parseCandidate(raw: string): TraceDerivedSkillTrainingCandidate {
   return JSON.parse(raw) as TraceDerivedSkillTrainingCandidate;
-}
-
-function measurementFromRecord(record: ProductMeasurementDbRecord): ProductMeasurementRecord {
-  return {
-    measurement_id: record.measurement_id,
-    tenant_id: record.tenant_id,
-    scope: record.scope,
-    source: record.source,
-    measurement_digest: record.measurement_digest,
-    effect_report: AionisEffectReportSchema.parse(JSON.parse(record.effect_report_json)),
-    eligible_for_skill_export: record.eligible_for_skill_export === 1,
-    evidence_status: record.evidence_status,
-    runtime_evidence_ids: parseJsonArray(record.runtime_evidence_ids_json),
-    eligibility_reasons: parseJsonArray(record.eligibility_reasons_json),
-    created_by: record.created_by,
-    created_at: record.created_at,
-  };
 }
 
 function candidateIdFor(args: {
@@ -385,24 +361,47 @@ function reviewAccessForDb(
   closeAccess?: () => Promise<void>,
 ): SkillCandidateReviewAccess {
   const { db, transaction } = database;
+  const measurementColumns = new Set(
+    (db.prepare("PRAGMA table_info('lite_product_measurements')").all() as Array<{ name: string }>)
+      .map((row) => row.name),
+  );
+  const hasLearningEpisodeLinks = V3_MEASUREMENT_LINK_COLUMNS.every((column) => measurementColumns.has(column));
 
   const getByIdStmt = db.prepare<SkillCandidateReviewRecord>(`
     SELECT * FROM lite_skill_candidate_reviews
     WHERE tenant_id = ? AND scope = ? AND candidate_id = ?
     LIMIT 1
   `);
-  const getMeasurementStmt = db.prepare<ProductMeasurementDbRecord>(`
+  const getMeasurementStmt = db.prepare<LiteProductMeasurementDbRecord>(`
     SELECT * FROM lite_product_measurements
     WHERE tenant_id = ? AND scope = ? AND measurement_id = ?
     LIMIT 1
   `);
-  const insertMeasurementStmt = db.prepare(`
-    INSERT INTO lite_product_measurements (
-      measurement_id, tenant_id, scope, source, measurement_digest,
-      effect_report_json, eligible_for_skill_export, evidence_status,
-      runtime_evidence_ids_json, eligibility_reasons_json, created_by, created_at
-    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+  const getMeasurementsWithOperationEvidenceStmt = db.prepare<LiteProductMeasurementDbRecord>(`
+    SELECT measurement.* FROM lite_product_measurements AS measurement
+    WHERE measurement.tenant_id = ? AND measurement.scope = ?
+      AND EXISTS (
+        SELECT 1 FROM json_each(measurement.runtime_evidence_ids_json) AS evidence
+        WHERE evidence.type = 'text' AND substr(evidence.value, 1, ?) = ?
+      )
+    ORDER BY measurement.created_at, measurement.measurement_id
   `);
+  const insertMeasurementStmt = db.prepare(hasLearningEpisodeLinks
+    ? `
+      INSERT INTO lite_product_measurements (
+        measurement_id, tenant_id, scope, source, measurement_digest,
+        effect_report_json, eligible_for_skill_export, evidence_status,
+        runtime_evidence_ids_json, eligibility_reasons_json, created_by, created_at,
+        baseline_episode_id, after_episode_id, record_sha256
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `
+    : `
+      INSERT INTO lite_product_measurements (
+        measurement_id, tenant_id, scope, source, measurement_digest,
+        effect_report_json, eligible_for_skill_export, evidence_status,
+        runtime_evidence_ids_json, eligibility_reasons_json, created_by, created_at
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `);
   const insertStmt = db.prepare(`
     INSERT OR IGNORE INTO lite_skill_candidate_reviews (
       candidate_id, tenant_id, scope, review_status, skill_name, label,
@@ -466,22 +465,32 @@ function reviewAccessForDb(
 
     async recordMeasurement(args) {
       return await transaction.run(async () => {
-        if (productMeasurementDigest(args.record) !== args.record.measurement_digest) {
-          throw new Error("measurement digest does not match the persisted measurement envelope");
+        assertProductMeasurementRecordIntegrity(args.record);
+        const hasBaselineEpisode = args.record.baseline_episode_id !== null;
+        const hasAfterEpisode = args.record.after_episode_id !== null;
+        if (hasBaselineEpisode !== hasAfterEpisode) {
+          throw new Error("measurement episode pair must be both null or both non-null");
+        }
+        if (!hasLearningEpisodeLinks
+          && (hasBaselineEpisode || hasAfterEpisode || args.record.record_sha256 !== null)) {
+          throw new Error("measurement episode linkage requires the Runtime v3 write schema");
         }
         const existing = getMeasurementStmt.get(
           args.record.tenant_id,
           args.record.scope,
           args.record.measurement_id,
-        ) as ProductMeasurementDbRecord | undefined;
+        ) as LiteProductMeasurementDbRecord | undefined;
         if (existing) {
-          const parsed = measurementFromRecord(existing);
+          const parsed = productMeasurementFromDbRecord(existing);
           if (parsed.measurement_digest !== args.record.measurement_digest) {
             throw new Error("measurement id already exists with a different digest");
           }
+          if (parsed.record_sha256 !== args.record.record_sha256) {
+            throw new Error("measurement id already exists with a different record digest");
+          }
           return parsed;
         }
-        insertMeasurementStmt.run(
+        const values: Array<string | number | null> = [
           args.record.measurement_id,
           args.record.tenant_id,
           args.record.scope,
@@ -494,14 +503,22 @@ function reviewAccessForDb(
           jsonColumnValue(args.record.eligibility_reasons),
           args.record.created_by,
           args.record.created_at,
-        );
+        ];
+        if (hasLearningEpisodeLinks) {
+          values.push(
+            args.record.baseline_episode_id,
+            args.record.after_episode_id,
+            args.record.record_sha256,
+          );
+        }
+        insertMeasurementStmt.run(...values);
         const inserted = getMeasurementStmt.get(
           args.record.tenant_id,
           args.record.scope,
           args.record.measurement_id,
-        ) as ProductMeasurementDbRecord | undefined;
+        ) as LiteProductMeasurementDbRecord | undefined;
         if (!inserted) throw new Error("measurement persistence failed");
-        return measurementFromRecord(inserted);
+        return productMeasurementFromDbRecord(inserted);
       });
     },
 
@@ -511,8 +528,32 @@ function reviewAccessForDb(
           args.tenantId,
           args.scope,
           args.measurementId,
-        ) as ProductMeasurementDbRecord | undefined;
-        return row ? measurementFromRecord(row) : null;
+        ) as LiteProductMeasurementDbRecord | undefined;
+        return row ? productMeasurementFromDbRecord(row) : null;
+      });
+    },
+
+    async getMeasurementByOperationId(args) {
+      return await transaction.read(() => {
+        const rows = getMeasurementsWithOperationEvidenceStmt.all(
+          args.tenantId,
+          args.scope,
+          PRODUCT_MEASURE_OPERATION_EVIDENCE_PREFIX.length,
+          PRODUCT_MEASURE_OPERATION_EVIDENCE_PREFIX,
+        ) as LiteProductMeasurementDbRecord[];
+        const matches = rows.flatMap((row) => {
+          const measurement = productMeasurementFromDbRecord(row);
+          return measurement.runtime_evidence_ids.flatMap((value) => {
+            const reference = parseProductMeasureOperationEvidenceReference(value);
+            return reference?.operationId === args.operationId
+              ? [{ measurement, requestSha256: reference.requestSha256 }]
+              : [];
+          });
+        });
+        if (matches.length > 1) {
+          throw new Error("product measure operation identity resolves to multiple measurements");
+        }
+        return matches[0] ?? null;
       });
     },
 
@@ -522,11 +563,11 @@ function reviewAccessForDb(
           args.tenantId,
           args.scope,
           args.measurementId,
-        ) as ProductMeasurementDbRecord | undefined;
+        ) as LiteProductMeasurementDbRecord | undefined;
         if (!measurementRecord || measurementRecord.measurement_digest !== args.measurementDigest) {
           throw new Error("measurement record is missing or does not match the supplied digest");
         }
-        const measurement = measurementFromRecord(measurementRecord);
+        const measurement = productMeasurementFromDbRecord(measurementRecord);
         const rows: SkillCandidateReviewRow[] = [];
         let inserted = 0;
         const at = args.now ?? nowIso();

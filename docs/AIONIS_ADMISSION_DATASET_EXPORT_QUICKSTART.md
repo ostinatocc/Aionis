@@ -99,7 +99,10 @@ if (agentResult.used_memory_ids.length > 0) {
   }));
 }
 
-const measure = await aionis.measure(measureInputFromGuideLoop({
+// Allocate once and persist this ID before the first logical measure attempt.
+const measureOperationId = "measure:task-001:run-001:attempt-1";
+const measureRequest = measureInputFromGuideLoop({
+  operation_id: measureOperationId,
   task: {
     task_id: "task-001",
     run_id: "run-001",
@@ -109,7 +112,11 @@ const measure = await aionis.measure(measureInputFromGuideLoop({
   before_guide: beforeGuide,
   after_guide: afterGuide,
   feedback_result: feedback,
-}));
+});
+const measure = await aionis.measure(measureRequest);
+
+// If the transport outcome is unknown, retry aionis.measure(measureRequest)
+// unchanged. A changed request must use a new operation_id.
 
 console.log(measure.evidence_assessment);
 
@@ -133,6 +140,9 @@ measurement is eligible for learning or skill export. Client-supplied
 `sufficient_evidence` and `evidence_ids` are ignored by the evidence gate. Only
 Runtime-verified receipts can make
 `measure.evidence_assessment.eligible_for_skill_export` true.
+The protected measurement authority also depends on the stable
+`operation_id`: allocate it before the first attempt and reuse it only for an
+exact retry of the same measure request.
 
 ## What A Row Contains
 

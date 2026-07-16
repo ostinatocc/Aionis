@@ -45,12 +45,13 @@ import {
   learningExternalTicketConsumptionDigest, learningRandomizationPairIdentityDigest,
   learningRandomizationPairManifestDigest, learningRandomizationPairRecordDigest,
   scanConfirmatoryPreTreatmentLineage, type LiteLearningAuthorityRow, type LiteLearningSqlValue,
-  type LiteLearningConfirmatoryPreTreatmentLineageMember, type LiteLearningConfirmatoryPreTreatmentLineageMemberSnapshot,
-  type LiteLearningConfirmatoryPreTreatmentLineageSnapshot,
+  type LiteLearningConfirmatoryPreTreatmentLineageMember, type LiteLearningConfirmatoryPreTreatmentLineageMemberSnapshot, type LiteLearningConfirmatoryPreTreatmentLineageSnapshot,
 } from "./lite-learning-confirmatory-authority.js";
 import { assertLiteTenantScopeEncodingAnchorSetIntegrity } from "./lite-tenant-scope-authority.js";
 import { assertLiteLearningExperimentCloseBundlesIntegrity } from "./lite-learning-experiment-close-integrity.js";
-import { assertLiteLearningFeedbackExposureProvenance, assertLiteLearningSafetyStopBundlesIntegrity } from "./lite-learning-safety-stop-integrity.js";
+import { assertLiteLearningFeedbackExposureProvenance, assertLiteLearningSafetyStopBundlesIntegrity,
+  resolveLiteLearningProtectedPositiveToolFeedbackAuthority,
+  type LiteLearningProtectedToolFeedbackAuthorityResolution } from "./lite-learning-safety-stop-integrity.js";
 import {
   UnusedExposureLearningControlPayloadSchema,
   assertLiteLearningControlJobOperationIntegrity,
@@ -58,6 +59,13 @@ import {
   buildUnusedExposureLearningControlJob,
 } from "./lite-learning-control-jobs.js";
 import { resolveLiteLearningFeedbackSource } from "./lite-learning-feedback-source.js";
+import {
+  learningFeedbackAttributionItemDigest,
+  learningFeedbackAttributionSetDigest,
+  learningHostUseReceiptItemSetDigest,
+} from "./lite-learning-feedback-digest.js";
+import { assertProductMeasureReceiptAuthoritySetIntegrity, createLiteLearningMeasurementAuthority, resolveLiteLearningMeasurementEpisodePair,
+  type LiteLearningMeasurementEffectAuthorityResolution, type LiteLearningMeasurementEpisodePairResolution } from "./lite-learning-measurement-authority.js";
 import { assertPromotionEligibleGuideExposureRoots } from "./lite-learning-guide-root-authority.js";
 import { normalizeSqliteSchemaSql } from "./sqlite-schema-sql.js";
 import type { AuthorityReceiptResolvedKeyring } from "../util/authority-receipt-keys.js";
@@ -67,10 +75,14 @@ export {
   learningExternalRunReservationDigest, learningExternalTicketConsumptionDigest,
   learningRandomizationPairIdentityDigest, learningRandomizationPairManifestDigest,
   learningRandomizationPairRecordDigest, type LiteLearningAuthorityRow, type LiteLearningSqlValue,
-  type LiteLearningConfirmatoryPreTreatmentLineageMember,
-  type LiteLearningConfirmatoryPreTreatmentLineageMemberSnapshot,
+  type LiteLearningConfirmatoryPreTreatmentLineageMember, type LiteLearningConfirmatoryPreTreatmentLineageMemberSnapshot,
   type LiteLearningConfirmatoryPreTreatmentLineageSnapshot,
 };
+export type { LiteLearningMeasurementEffectAuthorityResolution, LiteLearningMeasurementEpisodeExposure,
+  LiteLearningMeasurementEpisodePairAvailable, LiteLearningMeasurementEpisodePairResolution,
+  LiteLearningMeasurementEpisodePairUnavailableReason, LiteLearningMeasurementProvenanceReasonCode } from "./lite-learning-measurement-authority.js";
+export type { LiteLearningProtectedToolFeedbackAuthorityResolution } from "./lite-learning-safety-stop-integrity.js";
+export { learningFeedbackAttributionItemDigest, learningFeedbackAttributionSetDigest, learningHostUseReceiptItemSetDigest } from "./lite-learning-feedback-digest.js";
 
 const ARCHITECTURE_V3_DDL = String.raw`
 CREATE TABLE lite_runtime_authority_identity (
@@ -3213,6 +3225,11 @@ export function assertLiteLearningEpisodeLedgerIntegrity(
   }
 
   try {
+    assertProductMeasureReceiptAuthoritySetIntegrity(db);
+  } catch (error) {
+    throw new Error("lite_learning_integrity_failed:product_measure_receipt_authority", { cause: error });
+  }
+  try {
     return replayLiteLearningEpisodeLedger(db, checkedAt);
   } catch (error) {
     throw new Error("lite_learning_integrity_failed:semantic_replay", { cause: error });
@@ -4554,29 +4571,6 @@ function canonicalAuthorityRowWithoutDigest(
   );
 }
 
-export function learningFeedbackAttributionItemDigest(row: LiteLearningAuthorityRow): string {
-  return sha256Text(stableStringify(canonicalAuthorityRowWithoutDigest(row, "item_sha256")));
-}
-
-export function learningFeedbackAttributionSetDigest(
-  rows: readonly LiteLearningAuthorityRow[],
-): string {
-  const sorted = [...rows].sort((left, right) => {
-    const leftKey = `${String(left.subject_kind)}\u0000${String(left.subject_id)}`;
-    const rightKey = `${String(right.subject_kind)}\u0000${String(right.subject_id)}`;
-    return Buffer.compare(Buffer.from(leftKey, "utf8"), Buffer.from(rightKey, "utf8"));
-  });
-  return sha256Text(stableStringify(sorted.map((row) => (
-    Object.fromEntries(Object.entries(row).sort(([left], [right]) => left.localeCompare(right)))
-  ))));
-}
-
-export function learningHostUseReceiptItemSetDigest(
-  items: readonly Record<string, unknown>[],
-): string {
-  return sha256Text(stableStringify(items));
-}
-
 export function learningExperimentClosureRecordDigest(row: LiteLearningAuthorityRow): string {
   return sha256Text(stableStringify(canonicalAuthorityRowWithoutDigest(row, "close_sha256")));
 }
@@ -4744,31 +4738,6 @@ function validateFeedbackChildren(
       || attribution.runtime_signal_refs_sha256 !== runtimeSignalRefsSha256) {
       throw new Error(`host-use receipt attribution mismatch: ${item.memory_id}`);
     }
-  }
-}
-
-function validateEffectMeasurement(
-  db: SqliteDatabase,
-  event: EventWithoutDigest,
-  payload: EffectMeasuredV1,
-): void {
-  if (event.item_set_sha256 !== sha256Text(stableStringify([]))) {
-    throw new Error("effect measurement events require the canonical empty item set");
-  }
-  const measurement = db.prepare(
-    `SELECT tenant_id, scope, baseline_episode_id, after_episode_id,
-            record_sha256, evidence_status, eligible_for_skill_export
-     FROM lite_product_measurements WHERE measurement_id = ?`,
-  ).get(payload.measurement_id) as Record<string, unknown> | undefined;
-  if (!measurement
-    || measurement.tenant_id !== event.tenant_id
-    || measurement.scope !== event.scope
-    || measurement.baseline_episode_id !== payload.baseline_episode_id
-    || measurement.after_episode_id !== payload.after_episode_id
-    || measurement.record_sha256 !== payload.measurement_record_sha256
-    || measurement.evidence_status !== payload.evidence_status
-    || Number(measurement.eligible_for_skill_export) !== (payload.eligible_for_skill_export ? 1 : 0)) {
-    throw new Error("effect event does not match its immutable product measurement");
   }
 }
 
@@ -5952,7 +5921,7 @@ function validateStoredEpisodeRows(db: SqliteDatabase): {
       if (payload.operation_protection === "protected") protectedEventCount += 1;
       else legacyEventCount += 1;
     } else {
-      validateEffectMeasurement(db, event, payload);
+      validateEffectMeasurement(db, event, row, payload);
       const protection = episodeProtection.get(chainKey);
       if (!protection) throw new Error("learning effect has no exposure protection authority");
       if (protection === "protected") protectedEventCount += 1;
@@ -6233,9 +6202,32 @@ export function replayLiteLearningEpisodeLedger(
   };
 }
 
+const liteLearningMeasurementAuthority = createLiteLearningMeasurementAuthority({
+  eventColumns: LITE_LEARNING_LEDGER_REQUIRED_COLUMNS.lite_learning_episode_events,
+  assertEventRowShape: (row) => { assertExactRowShape("lite_learning_episode_events", row); },
+});
+const validateEffectMeasurement = liteLearningMeasurementAuthority.validateEffectMeasurement;
+export const buildLiteMeasurementEffectEventRow = liteLearningMeasurementAuthority.buildEffectEventRow;
 export type LiteLearningEpisodeLedgerAccess = {
   transactionRunner(): SqliteTransactionRunner;
   resolveFeedbackSource(args: { tenantId: string; scope: string; guideTraceId: string }): Promise<ReturnType<typeof resolveLiteLearningFeedbackSource>>;
+  resolveMeasurementEpisodePair(args: {
+    tenantId: string;
+    scope: string;
+    baselineGuideTraceId: string;
+    afterGuideTraceId: string;
+  }): Promise<LiteLearningMeasurementEpisodePairResolution>;
+  resolveMeasurementToolFeedbackAuthority(args: {
+    tenantId: string; scope: string; episodeId: string; guideTraceId: string;
+    runId: string; expectedDecisionId: string | null;
+    expectedEventId?: string | null; expectedEventSha256?: string | null; expectedOperationId?: string | null; expectedOperationReceiptSha256?: string | null;
+  }): Promise<LiteLearningProtectedToolFeedbackAuthorityResolution>;
+  resolveMeasurementEffectAuthority(args: {
+    tenantId: string; scope: string; measurementId: string; measurementDigest: string;
+  }): Promise<LiteLearningMeasurementEffectAuthorityResolution>;
+  assertMeasurementOperationReceiptAuthority(args: {
+    tenantId: string; scope: string; measurementId: string; operationId: string; operationReceiptSha256: string;
+  }): Promise<void>;
   databaseInstanceId(): Promise<string>;
   verifyIntegrity(): Promise<void>;
   scanConfirmatoryPreTreatmentLineage(args: {
@@ -6382,6 +6374,13 @@ export function createLiteLearningEpisodeLedgerAccess(
       return transaction;
     },
     async resolveFeedbackSource(args) { assertStoreTransaction(transaction); return resolveLiteLearningFeedbackSource(db, args); },
+    async resolveMeasurementEpisodePair(args) { assertStoreTransaction(transaction); return resolveLiteLearningMeasurementEpisodePair(db, args); },
+    async resolveMeasurementToolFeedbackAuthority(args) {
+      assertStoreTransaction(transaction);
+      return resolveLiteLearningProtectedPositiveToolFeedbackAuthority(db, args);
+    },
+    async resolveMeasurementEffectAuthority(args) { assertStoreTransaction(transaction); return liteLearningMeasurementAuthority.resolveMeasurementEffectAuthority(db, args); },
+    async assertMeasurementOperationReceiptAuthority(args) { assertStoreTransaction(transaction); liteLearningMeasurementAuthority.assertMeasurementOperationReceiptAuthority(db, args); },
 
     async databaseInstanceId() {
       return await transaction.read(() => assertLiteRuntimeAuthorityIdentity(db));
@@ -6936,7 +6935,7 @@ export function createLiteLearningEpisodeLedgerAccess(
         if (items.length > 0 || feedbackAttributions.length > 0 || hostUseReceipt !== null) {
           throw new Error("effect events cannot persist exposure or feedback child rows");
         }
-        validateEffectMeasurement(db, event, payload as EffectMeasuredV1);
+        validateEffectMeasurement(db, event, args.row, payload as EffectMeasuredV1);
       }
       const existingEvent = selectExactRow(db, "lite_learning_episode_events", [
         "tenant_id", "scope", "event_id",
@@ -6973,6 +6972,7 @@ export function createLiteLearningEpisodeLedgerAccess(
         }
         return { row: existingEvent, replayed: true };
       }
+      if (payload.contract_version === "aionis_learning_effect_v1" && payload.operation_receipt_sha256 === undefined) throw new Error("new measurement effect requires an explicit operation receipt binding");
       if (event.event_kind === "exposure_committed") {
         const exposurePayload = payload as ExposureCommittedV1;
         if (isLearningExposurePromotionEligible(exposurePayload)) {

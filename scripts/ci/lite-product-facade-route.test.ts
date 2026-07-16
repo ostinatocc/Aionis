@@ -14,6 +14,24 @@ import {
   type ExecutionTreeOperationV1,
   type ExecutionTreeV1,
 } from "../../src/execution/index.ts";
+import {
+  parseAdmissionCandidatePolicyProfileRules,
+  type AionisAdmissionCandidatePolicyProfileRule,
+} from "../../src/config.ts";
+import {
+  learningCollectionPrincipalSha256,
+  learningEpisodeEventDigest,
+  learningEpisodeId,
+  type EventWithoutDigest,
+} from "../../src/memory/learning-episode-ledger.ts";
+import {
+  LearningMemoryNamespaceManifestV1Schema,
+} from "../../src/memory/learning-experiment-provisioning.ts";
+import type {
+  LearningExperimentResolverRegistry,
+} from "../../src/memory/learning-experiment-resolver.ts";
+import { buildAionisEffectReport } from "../../src/memory/product-output/learning-effect.ts";
+import { evaluateAionisEffect } from "../../src/kernel/effect-evaluator.ts";
 import { applyMemoryWrite, prepareMemoryWrite } from "../../src/memory/write.ts";
 import { updateRuleState } from "../../src/memory/rules.ts";
 import { readToolRuleEvaluationProvenance } from "../../src/memory/tool-rule-evaluation-provenance.ts";
@@ -30,7 +48,10 @@ import { registerMemoryWriteRoutes } from "./support/register-memory-write-test-
 import { registerProductFacadeRoutes } from "../../src/routes/product-facade.ts";
 import { createRuntimeProductServices, registerRuntimeErrorHandler } from "../../src/server/http-server.ts";
 import { createLiteRecallStore } from "../../src/store/lite-recall-store.ts";
-import { createLiteSkillCandidateReviewStore } from "../../src/store/lite-skill-candidate-review-store.ts";
+import {
+  createLiteSkillCandidateReviewStore,
+  createLiteSkillCandidateReviewStoreFromDatabase,
+} from "../../src/store/lite-skill-candidate-review-store.ts";
 import {
   createLiteWriteStore,
   createLiteWriteStoreFromDatabase,
@@ -40,8 +61,29 @@ import {
   createLiteLearningEpisodeLedgerAccess,
   type LiteLearningEpisodeLedgerAccess,
 } from "../../src/store/lite-learning-episode-ledger.ts";
+import {
+  EFFECT_EXPECTED_V1_EVIDENCE_PREFIX,
+  assertProductMeasureReceiptAuthoritySetIntegrity,
+  effectExpectedV1EvidenceReference,
+} from "../../src/store/lite-learning-measurement-authority.ts";
+import {
+  productMeasurementDigest,
+  productMeasurementRecordDigest,
+  type ProductMeasurementRecord,
+  type SkillCandidateReviewAccess,
+} from "../../src/store/memory-store.ts";
 import { InflightGate } from "../../src/util/inflight_gate.ts";
 import type { AuthPrincipal } from "../../src/util/auth.ts";
+import {
+  CONFIRMATORY_TASK_FAMILY,
+  CONFIRMATORY_TENANT_ID,
+  createConfirmatoryNamespaceManifest,
+  createConfirmatoryPassedRegistry,
+  createConfirmatoryProfile,
+  createConfirmatoryProvisionInput,
+  provisionConfirmatoryFixture,
+  sha256,
+} from "./support/learning-experiment-confirmatory-fixture.ts";
 
 function tmpDbPath(name: string): string {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), "aionis-lite-product-facade-"));
@@ -451,6 +493,8 @@ function registerProductFacade(args: {
   skillCandidateReviewAccess?: ReturnType<ReturnType<typeof createLiteSkillCandidateReviewStore>["createSkillCandidateReviewAccess"]>;
   captureGuidePrincipal?: (principal: AuthPrincipal | null) => void;
   learningEpisodeLedgerAccess?: LiteLearningEpisodeLedgerAccess | null;
+  learningExperimentResolverRegistry?: LearningExperimentResolverRegistry;
+  admissionCandidatePolicyProfileRules?: readonly AionisAdmissionCandidatePolicyProfileRule[];
 }) {
   const liteWriteStore = args.liteWriteStore ?? createLiteWriteStore(tmpDbPath("product-facade-dependency"));
   if (!args.liteWriteStore) {
@@ -468,6 +512,8 @@ function registerProductFacade(args: {
     handoffRouteService: args.handoffRouteService ?? null,
     skillCandidateReviewAccess: args.skillCandidateReviewAccess,
     learningEpisodeLedgerAccess: args.learningEpisodeLedgerAccess ?? null,
+    learningExperimentResolverRegistry: args.learningExperimentResolverRegistry,
+    admissionCandidatePolicyProfileRules: args.admissionCandidatePolicyProfileRules,
   });
   if (args.captureGuidePrincipal) {
     const executeGuide = services.guide.execute.bind(services.guide);
@@ -1799,21 +1845,29 @@ async function seedProductFacadeMemory(args: {
   liteWriteStore: ReturnType<typeof createLiteWriteStore>;
   input_text: string;
   nodes: Record<string, unknown>[];
+  tenantId?: string;
+  scope?: string;
+  actor?: string;
+  defaultTenantId?: string;
 }) {
+  const tenantId = args.tenantId ?? "default";
+  const scope = args.scope ?? "default";
+  const actor = args.actor ?? "local-user";
+  const defaultTenantId = args.defaultTenantId ?? "default";
   const prepared = await prepareMemoryWrite({
-    tenant_id: "default",
-    scope: "default",
-    actor: "local-user",
+    tenant_id: tenantId,
+    scope,
+    actor,
     input_text: args.input_text,
     nodes: args.nodes,
     edges: [],
-  }, "default", "default", {
+  }, defaultTenantId, scope, {
     maxTextLen: 10000,
     piiRedaction: false,
     allowCrossScopeEdges: false,
   }, null);
 
-  await args.liteWriteStore.withTx(() => applyMemoryWrite(prepared, {
+  return await args.liteWriteStore.withTx(() => applyMemoryWrite(prepared, {
     maxTextLen: 10000,
     piiRedaction: false,
     allowCrossScopeEdges: false,
@@ -1821,11 +1875,29 @@ async function seedProductFacadeMemory(args: {
   }));
 }
 
-async function seedProductMeasureToolRule(liteWriteStore: ReturnType<typeof createLiteWriteStore>) {
+async function seedProductMeasureToolRule(
+  liteWriteStore: ReturnType<typeof createLiteWriteStore>,
+  options: {
+    tenantId?: string;
+    scope?: string;
+    actor?: string;
+    defaultTenantId?: string;
+    taskKind?: string;
+  } = {},
+) {
+  const tenantId = options.tenantId ?? "default";
+  const scope = options.scope ?? "default";
+  const actor = options.actor ?? "local-user";
+  const defaultTenantId = options.defaultTenantId ?? "default";
+  const taskKind = options.taskKind ?? "continuity_recovery";
   const clientId = `rule:product-measure:${randomUUID()}`;
-  await seedProductFacadeMemory({
+  const seeded = await seedProductFacadeMemory({
     liteWriteStore,
     input_text: "Seed a verified tool-selection rule for product measurement.",
+    tenantId,
+    scope,
+    actor,
+    defaultTenantId,
     nodes: [{
       client_id: clientId,
       type: "rule",
@@ -1833,31 +1905,23 @@ async function seedProductMeasureToolRule(liteWriteStore: ReturnType<typeof crea
       title: "Prefer read for verified continuity measurement",
       text_summary: "Use read first for continuity_recovery measurement runs.",
       slots: {
-        if: { task_kind: { $eq: "continuity_recovery" } },
+        if: { task_kind: { $eq: taskKind } },
         then: { tool: { prefer: ["read"] } },
         exceptions: [],
         rule_scope: "global",
       },
     }],
   });
-  const found = await liteWriteStore.findNodes({
-    scope: "default",
-    clientId,
-    consumerAgentId: "local-user",
-    consumerTeamId: null,
-    limit: 1,
-    offset: 0,
-  });
-  const ruleNodeId = found.rows[0]?.id;
+  const ruleNodeId = seeded.nodes[0]?.id;
   assert.ok(ruleNodeId);
   await liteWriteStore.withTx(() => updateRuleState({
-    tenant_id: "default",
-    scope: "default",
-    actor: "local-user",
+    tenant_id: tenantId,
+    scope,
+    actor,
     rule_node_id: ruleNodeId,
     state: "active",
     input_text: "Activate the product measurement tool rule.",
-  }, "default", "default", { liteWriteStore }));
+  }, defaultTenantId, scope, { liteWriteStore }));
 }
 
 async function createPersistedVerifiedMeasurement(args: {
@@ -2048,6 +2112,142 @@ async function createPersistedVerifiedMeasurement(args: {
   return body;
 }
 
+async function persistEligibleSkillCandidateMeasurement(args: {
+  access: SkillCandidateReviewAccess;
+  suffix: string;
+}): Promise<ProductMeasurementRecord> {
+  const tenantId = "default";
+  const scope = "default";
+  const baselineEpisodeId = learningEpisodeId({
+    tenantId,
+    scope,
+    guideTraceId: `internal-skill-before:${args.suffix}`,
+  });
+  const afterEpisodeId = learningEpisodeId({
+    tenantId,
+    scope,
+    guideTraceId: `internal-skill-after:${args.suffix}`,
+  });
+  const report = evaluateAionisEffect({
+    baseline: {
+      continuity: {
+        repeatedDiscoverySteps: 4,
+        continuityGuidanceCorrect: false,
+        recoveredStateFacts: 0,
+        expectedStateFacts: 4,
+        recoveredStateApplicable: true,
+        verifiedFactsCarried: 0,
+        verifiedFactsExpected: 4,
+        verifiedFactsApplicable: true,
+      },
+      learning: {
+        workflowReused: false,
+        stableWorkflowReused: false,
+        provisionalMemoriesWritten: 1,
+        trustedPromotions: 0,
+        weakEvidencePromoted: 0,
+        counterEvidenceDemotions: 0,
+      },
+      forgetting: {
+        contextItems: 4,
+        usefulContextItems: 1,
+        staleMemorySurfaced: 1,
+        staleMemorySuppressed: 0,
+        archivedMemoryRehydratedOnDemand: 0,
+        unnecessaryRehydrations: 1,
+        staleMemoryControlApplicable: true,
+        rehydrationApplicable: true,
+      },
+      learning_control: {
+        weakEvidenceBlocked: 0,
+        authorityRequiresEvidence: false,
+        blockedAuthorityVisible: false,
+        unverifiedAuthorityApplied: 1,
+      },
+    },
+    aionis: {
+      continuity: {
+        repeatedDiscoverySteps: 0,
+        continuityGuidanceCorrect: true,
+        recoveredStateFacts: 4,
+        expectedStateFacts: 4,
+        recoveredStateApplicable: true,
+        verifiedFactsCarried: 4,
+        verifiedFactsExpected: 4,
+        verifiedFactsApplicable: true,
+      },
+      learning: {
+        workflowReused: true,
+        stableWorkflowReused: true,
+        provisionalMemoriesWritten: 0,
+        trustedPromotions: 1,
+        weakEvidencePromoted: 0,
+        counterEvidenceDemotions: 1,
+      },
+      forgetting: {
+        contextItems: 4,
+        usefulContextItems: 4,
+        staleMemorySurfaced: 0,
+        staleMemorySuppressed: 1,
+        archivedMemoryRehydratedOnDemand: 1,
+        unnecessaryRehydrations: 0,
+        staleMemoryControlApplicable: true,
+        rehydrationApplicable: true,
+      },
+      learning_control: {
+        weakEvidenceBlocked: 1,
+        authorityRequiresEvidence: true,
+        blockedAuthorityVisible: true,
+        unverifiedAuthorityApplied: 0,
+      },
+    },
+  });
+  const effectReport = buildAionisEffectReport({
+    tenant_id: tenantId,
+    scope,
+    task: {
+      task_id: `task:internal-skill:${args.suffix}`,
+      run_id: `run:internal-skill:${args.suffix}`,
+      task_signature: `internal-skill:${args.suffix}`,
+      task_family: "continuity_recovery",
+      workflow_signature: `workflow:internal-skill:${args.suffix}`,
+    },
+    report,
+    comparison: { mode: "baseline_vs_aionis", sufficient_evidence: true },
+    evidence_ids: [
+      `learning_episode:${baselineEpisodeId}`,
+      `learning_episode:${afterEpisodeId}`,
+      `runtime_verification:internal-skill:${args.suffix}`,
+    ],
+  });
+  const recordWithoutDigests = {
+    measurement_id: `measurement:internal-skill:${args.suffix}`,
+    tenant_id: tenantId,
+    scope,
+    source: "product_trace" as const,
+    baseline_episode_id: baselineEpisodeId,
+    after_episode_id: afterEpisodeId,
+    effect_report: effectReport,
+    eligible_for_skill_export: true,
+    evidence_status: "sufficient" as const,
+    runtime_evidence_ids: effectReport.evidence.evidence_ids,
+    eligibility_reasons: ["internal persisted eligible measurement fixture"],
+    created_by: "test:internal-skill-candidate-fixture",
+    created_at: "2026-07-16T00:00:00.000Z",
+  };
+  const measurementDigest = productMeasurementDigest(recordWithoutDigests);
+  const recordWithoutFullDigest = {
+    ...recordWithoutDigests,
+    measurement_digest: measurementDigest,
+  };
+  return await args.access.recordMeasurement({
+    record: {
+      ...recordWithoutFullDigest,
+      record_sha256: productMeasurementRecordDigest(recordWithoutFullDigest),
+    },
+  });
+}
+
 async function seedProductPatternAnchor(liteWriteStore: ReturnType<typeof createLiteWriteStore>) {
   const anchorId = randomUUID();
   await seedProductFacadeMemory({
@@ -2171,6 +2371,9 @@ function registerFullProductMemoryApp(args: {
   liteRecallStore: ReturnType<typeof createLiteRecallStore>;
   embedder?: typeof DeterministicEmbeddingProvider | null;
   skillCandidateReviewAccess?: ReturnType<ReturnType<typeof createLiteSkillCandidateReviewStore>["createSkillCandidateReviewAccess"]>;
+  learningEpisodeLedgerAccess?: LiteLearningEpisodeLedgerAccess | null;
+  learningExperimentResolverRegistry?: LearningExperimentResolverRegistry;
+  admissionCandidatePolicyProfileRules?: readonly AionisAdmissionCandidatePolicyProfileRule[];
   decoratePlanningContextService?: (service: MemoryPlanningContextService) => MemoryPlanningContextService;
 }) {
   const routeEmbedder = args.embedder === undefined ? DeterministicEmbeddingProvider : args.embedder;
@@ -2306,6 +2509,127 @@ function registerFullProductMemoryApp(args: {
       executionStateStore: null,
     }),
   });
+}
+
+function openFormalMeasureEpisodeRouteFixture(name: string) {
+  const dbPath = tmpDbPath(name);
+  const runtimeDatabase = createLiteRuntimeDatabase(dbPath);
+  const liteWriteStore = createLiteWriteStoreFromDatabase(runtimeDatabase, {
+    annProjectionEnabled: false,
+    closeDatabaseOnClose: false,
+  });
+  const liteRecallStore = createLiteRecallStore(dbPath);
+  const reviewStore = createLiteSkillCandidateReviewStoreFromDatabase(runtimeDatabase, {
+    closeDatabaseOnClose: false,
+  });
+  const reviewAccess = reviewStore.createSkillCandidateReviewAccess();
+  const learningEpisodeLedgerAccess = createLiteLearningEpisodeLedgerAccess(runtimeDatabase);
+  const transactionRunner = liteWriteStore.transactionRunner();
+  assert.equal(learningEpisodeLedgerAccess.transactionRunner(), transactionRunner);
+  assert.equal(reviewAccess.transactionRunner(), transactionRunner);
+
+  const app = Fastify();
+  const env = liteEnv();
+  const guards = requestGuards(env, DeterministicEmbeddingProvider);
+  registerFullProductMemoryApp({
+    app,
+    env,
+    guards,
+    liteWriteStore,
+    liteRecallStore,
+    skillCandidateReviewAccess: reviewAccess,
+    learningEpisodeLedgerAccess,
+  });
+  return {
+    app,
+    runtimeDatabase,
+    liteWriteStore,
+    learningEpisodeLedgerAccess,
+    measureMutationCounts(operationId: string) {
+      const count = (sql: string, ...params: unknown[]): number => Number(
+        runtimeDatabase.readDb.prepare<{ count: number }>(sql).get(...params).count,
+      );
+      return {
+        measurements: count("SELECT COUNT(*) AS count FROM lite_product_measurements"),
+        effect_events: count(
+          "SELECT COUNT(*) AS count FROM lite_learning_episode_events WHERE event_kind = 'effect_measured'",
+        ),
+        operation_receipts: count(
+          `SELECT COUNT(*) AS count FROM lite_runtime_write_operations
+           WHERE operation_kind = 'product_measure_v1' AND operation_id = ?`,
+          operationId,
+        ),
+      };
+    },
+    async close() {
+      try {
+        await app.close();
+      } finally {
+        try {
+          await liteRecallStore.close();
+        } finally {
+          try {
+            await reviewStore.close();
+          } finally {
+            try {
+              await liteWriteStore.close();
+            } finally {
+              await runtimeDatabase.close();
+              fs.rmSync(path.dirname(dbPath), { recursive: true, force: true });
+            }
+          }
+        }
+      }
+    },
+  };
+}
+
+function activeConfirmatoryMeasurementManifest() {
+  const manifest = createConfirmatoryNamespaceManifest();
+  const windows = {
+    1: ["2026-07-15T00:00:00.000Z", "2097-01-01T00:00:00.000Z", "2097-01-02T00:00:00.000Z"],
+    2: ["2097-01-03T00:00:00.000Z", "2097-06-01T00:00:00.000Z", "2097-06-02T00:00:00.000Z"],
+    3: ["2097-06-03T00:00:00.000Z", "2097-12-01T00:00:00.000Z", "2097-12-02T00:00:00.000Z"],
+  } as const;
+  return LearningMemoryNamespaceManifestV1Schema.parse({
+    ...manifest,
+    pairs: manifest.pairs.map((pair) => {
+      const [activationStartsAt, indexWindowEndsAt, waveAnalysisAt] =
+        windows[pair.activation.activation_wave_index];
+      return {
+        ...pair,
+        activation: {
+          ...pair.activation,
+          activation_starts_at: activationStartsAt,
+          index_window_ends_at: indexWindowEndsAt,
+          wave_analysis_at: waveAnalysisAt,
+        },
+      };
+    }),
+  });
+}
+
+function confirmatoryMeasurementProfile(principal: AuthPrincipal) {
+  const base = createConfirmatoryProfile();
+  assert.ok(base.experiment);
+  const source = base.experiment.collection_sources[0];
+  assert.ok(source);
+  const [profile] = parseAdmissionCandidatePolicyProfileRules(stableStringify([{
+    ...base,
+    experiment: {
+      ...base.experiment,
+      collection_sources: [{
+        ...source,
+        principal_sha256: learningCollectionPrincipalSha256({
+          tenant_id: principal.tenant_id,
+          agent_id: principal.agent_id,
+          team_id: principal.team_id,
+        }),
+      }],
+    },
+  }]));
+  assert.ok(profile?.experiment);
+  return profile;
 }
 
 test("product memory admission route governs external backend candidates without writing Runtime memory", async () => {
@@ -3029,6 +3353,1153 @@ test("product memory admission route exposes Memory Firewall summary in firewall
   }
 });
 
+test("protected product measure binds a real unverified episode pair and rejects forged body attribution", async () => {
+  const fixture = openFormalMeasureEpisodeRouteFixture("measure-formal-episode-pair");
+  const runId = "run:measure-formal-episode-pair";
+  const taskSignature = "measure-formal-episode-pair";
+  const query = "Recover the verified scoped continuation before broad rediscovery";
+  const beforeGuideOperationId = "guide-measure-formal-before-1";
+  const afterGuideOperationId = "guide-measure-formal-after-1";
+  const measureOperationId = "measure-formal-episode-pair-1";
+  const tamperedMeasureOperationId = "measure-formal-tampered-attribution-1";
+  const context = {
+    agent_id: "local-user",
+    task_kind: "continuity_recovery",
+    task_signature: taskSignature,
+    goal: query,
+  };
+  const executionPacket = {
+    version: 1,
+    state_id: "state:measure-formal-episode-pair",
+    current_stage: "review",
+    active_role: "review",
+    task_brief: query,
+    target_files: [],
+    next_action: "Run the Runtime-owned focused verifier.",
+    hard_constraints: [],
+    accepted_facts: [],
+    rejected_paths: [],
+    pending_validations: ["node -e \"process.exit(0)\""],
+    unresolved_blockers: [],
+    rollback_notes: [],
+    service_lifecycle_constraints: [],
+    review_contract: null,
+    resume_anchor: null,
+    artifact_refs: [],
+    evidence_refs: ["focused-runtime-verifier"],
+  };
+  const guidePayload = {
+    tenant_id: "default",
+    scope: "default",
+    run_id: runId,
+    query_text: query,
+    consumer_agent_id: "local-user",
+    context,
+    execution_packet_v1: executionPacket,
+    tool_candidates: ["read", "edit", "test"],
+    limit: 8,
+    include_packets: true,
+  };
+
+  try {
+    await seedProductMeasureToolRule(fixture.liteWriteStore);
+    const beforeGuide = await fixture.app.inject({
+      method: "POST",
+      url: "/v1/guide",
+      payload: {
+        ...guidePayload,
+        operation_id: beforeGuideOperationId,
+      },
+    });
+    assert.equal(beforeGuide.statusCode, 200, beforeGuide.body);
+    const beforeGuideBody = beforeGuide.json();
+    assert.equal(beforeGuideBody.operation_id, beforeGuideOperationId);
+    assert.equal(beforeGuideBody.feedback_attribution_v1.status, "available");
+
+    const observed = await fixture.app.inject({
+      method: "POST",
+      url: "/v1/observe",
+      payload: {
+        tenant_id: "default",
+        scope: "default",
+        auto_embed: true,
+        memory_lane: "private",
+        execution: {
+          run_id: runId,
+          task_id: "task:measure-formal-episode-pair",
+          task_family: "continuity_recovery",
+          task_signature: taskSignature,
+          workflow_signature: "workflow:measure-formal-episode-pair",
+          title: query,
+          summary: `${query} recovered verified state and completed the focused check.`,
+          outcome: "succeeded",
+          workflow_steps: [
+            "Recover the persisted guide state.",
+            "Continue the scoped workflow.",
+            "Run the focused verifier.",
+          ],
+          acceptance_checks: ["focused verifier passed"],
+          continuation_hint: "Continue from the verified guide state.",
+          confidence: 0.95,
+          evidence: [{ ref: `${runId}#verifier`, summary: "Focused verifier passed." }],
+        },
+      },
+    });
+    assert.equal(observed.statusCode, 200, observed.body);
+    await new Promise((resolve) => setTimeout(resolve, 5));
+
+    const afterGuide = await fixture.app.inject({
+      method: "POST",
+      url: "/v1/guide",
+      payload: {
+        ...guidePayload,
+        operation_id: afterGuideOperationId,
+        runtime_verification: {
+          version: 1,
+          mode: "execute",
+          agent_lifecycle_state: "agent_exited",
+          include_pending_validations: true,
+          validation_boundary: "runtime_orchestrator",
+          timeout_ms: 5_000,
+          max_requests: 4,
+          cwd: null,
+          agent_claimed_success: true,
+        },
+      },
+    });
+    assert.equal(afterGuide.statusCode, 200, afterGuide.body);
+    const afterGuideBody = afterGuide.json();
+    assert.equal(afterGuideBody.operation_id, afterGuideOperationId);
+    assert.equal(afterGuideBody.feedback_attribution_v1.status, "available");
+    assert.notEqual(afterGuideBody.guide_trace_id, beforeGuideBody.guide_trace_id);
+    assert.equal(afterGuideBody.agent_context.actionable_history_used, true);
+    await new Promise((resolve) => setTimeout(resolve, 5));
+
+    const feedback = await fixture.app.inject({
+      method: "POST",
+      url: "/v1/feedback",
+      payload: {
+        feedback_kind: "tool_selection",
+        tenant_id: "default",
+        scope: "default",
+        guide_trace_id: afterGuideBody.guide_trace_id,
+        decision_id: afterGuideBody.tool_selection.decision_id,
+        run_id: afterGuideBody.tool_selection.run_id,
+        selected_tool: afterGuideBody.tool_selection.selected_tool,
+        candidates: afterGuideBody.tool_selection.candidates,
+        outcome: "positive",
+        context,
+        input_text: "The selected tool completed the verified continuation.",
+      },
+    });
+    assert.equal(feedback.statusCode, 200, feedback.body);
+
+    const task = {
+      task_id: "task:measure-formal-episode-pair",
+      run_id: runId,
+      task_signature: taskSignature,
+      task_family: "continuity_recovery",
+    };
+    const measurePayload = {
+      operation_id: measureOperationId,
+      tenant_id: "default",
+      scope: "default",
+      task,
+      product_trace: {
+        before_guide: beforeGuideBody,
+        after_guide: afterGuideBody,
+        sufficient_evidence: true,
+        evidence_ids: ["caller:must-not-select-episode-provenance"],
+      },
+    };
+    const measure = await fixture.app.inject({
+      method: "POST",
+      url: "/v1/measure",
+      payload: measurePayload,
+    });
+    assert.equal(measure.statusCode, 200, measure.body);
+    const measureBody = measure.json();
+    assert.equal(measureBody.operation_id, measureOperationId);
+    assert.equal(measureBody.measurement_persisted, true);
+    assert.equal(measureBody.evidence_assessment.status, "sufficient");
+    assert.equal(measureBody.evidence_assessment.provenance, "runtime_verified");
+    assert.equal(measureBody.evidence_assessment.eligible_for_skill_export, false);
+    assert.equal(
+      measureBody.evidence_assessment.runtime_evidence_ids.filter(
+        (value: string) => value.startsWith(EFFECT_EXPECTED_V1_EVIDENCE_PREFIX),
+      ).length,
+      1,
+    );
+    assert.ok(measureBody.evidence_assessment.reasons.includes("measurement_episode_pair_not_promotion_eligible"));
+    assert.ok(
+      measureBody.evidence_assessment.reasons.includes(
+        "measurement_tool_feedback_authority:feedback_operation_unprotected",
+      ),
+    );
+    assert.deepEqual(measureBody.effect_report.task, {
+      task_id: null,
+      run_id: runId,
+      task_signature: null,
+      task_family: null,
+    });
+    const unverifiedEnqueue = await fixture.app.inject({
+      method: "POST",
+      url: "/v1/skills/candidates",
+      payload: { measurement_id: measureBody.measurement_id },
+    });
+    assert.equal(unverifiedEnqueue.statusCode, 409, unverifiedEnqueue.body);
+    assert.equal(unverifiedEnqueue.json().error, "measurement_not_skill_export_eligible");
+    const afterFirstMeasure = fixture.measureMutationCounts(measureOperationId);
+    assert.deepEqual(afterFirstMeasure, {
+      measurements: 1,
+      effect_events: 1,
+      operation_receipts: 1,
+    });
+
+    const replay = await fixture.app.inject({
+      method: "POST",
+      url: "/v1/measure",
+      payload: measurePayload,
+    });
+    assert.equal(replay.statusCode, 200, replay.body);
+    assert.equal(replay.body, measure.body);
+    assert.deepEqual(
+      fixture.measureMutationCounts(measureOperationId),
+      afterFirstMeasure,
+      "an exact protected measure retry must not duplicate any durable mutation",
+    );
+
+    const storedMeasureOperation = fixture.runtimeDatabase.db.prepare<{
+      receipt_json: string;
+    }>(
+      `SELECT receipt_json FROM lite_runtime_write_operations
+       WHERE tenant_id = ? AND scope = ? AND operation_kind = 'product_measure_v1'
+         AND operation_id = ?`,
+    ).get("default", "default", measureOperationId);
+    assert.ok(storedMeasureOperation);
+    const tamperedMeasureReceipt = JSON.parse(storedMeasureOperation.receipt_json) as {
+      body: { source_map: { internal_surfaces_used: string[] } };
+    };
+    tamperedMeasureReceipt.body.source_map.internal_surfaces_used.push("tampered_surface");
+    fixture.runtimeDatabase.db.prepare(
+      `UPDATE lite_runtime_write_operations SET receipt_json = ?
+       WHERE tenant_id = ? AND scope = ? AND operation_kind = 'product_measure_v1'
+         AND operation_id = ?`,
+    ).run(
+      stableStringify(tamperedMeasureReceipt),
+      "default",
+      "default",
+      measureOperationId,
+    );
+    const tamperedReplay = await fixture.app.inject({
+      method: "POST",
+      url: "/v1/measure",
+      payload: measurePayload,
+    });
+    assert.equal(tamperedReplay.statusCode, 500, tamperedReplay.body);
+    assert.equal(tamperedReplay.json().error, "protected_measure_receipt_invalid");
+    await assert.rejects(
+      fixture.learningEpisodeLedgerAccess.verifyIntegrity(),
+      /lite_learning_integrity_failed:product_measure_receipt_authority/,
+    );
+    fixture.runtimeDatabase.db.prepare(
+      `UPDATE lite_runtime_write_operations SET receipt_json = ?
+       WHERE tenant_id = ? AND scope = ? AND operation_kind = 'product_measure_v1'
+         AND operation_id = ?`,
+    ).run(
+      storedMeasureOperation.receipt_json,
+      "default",
+      "default",
+      measureOperationId,
+    );
+    await fixture.learningEpisodeLedgerAccess.verifyIntegrity();
+
+    const conflict = await fixture.app.inject({
+      method: "POST",
+      url: "/v1/measure",
+      payload: {
+        ...measurePayload,
+        task: {
+          ...task,
+          task_signature: "measure-formal-episode-pair-changed",
+        },
+      },
+    });
+    assert.equal(conflict.statusCode, 409, conflict.body);
+    assert.equal(conflict.json().error, "measure_operation_id_conflict");
+    assert.deepEqual(
+      fixture.measureMutationCounts(measureOperationId),
+      afterFirstMeasure,
+      "a changed request under one operation_id must fail before durable mutation",
+    );
+
+    const concurrentOperationId = "measure-formal-episode-pair-concurrent-1";
+    const concurrentPayload = {
+      ...measurePayload,
+      operation_id: concurrentOperationId,
+    };
+    const beforeConcurrent = fixture.measureMutationCounts(concurrentOperationId);
+    const [concurrentLeft, concurrentRight] = await Promise.all([
+      fixture.app.inject({ method: "POST", url: "/v1/measure", payload: concurrentPayload }),
+      fixture.app.inject({ method: "POST", url: "/v1/measure", payload: concurrentPayload }),
+    ]);
+    assert.equal(concurrentLeft.statusCode, 200, concurrentLeft.body);
+    assert.equal(concurrentRight.statusCode, 200, concurrentRight.body);
+    assert.equal(concurrentLeft.body, concurrentRight.body);
+    assert.deepEqual(fixture.measureMutationCounts(concurrentOperationId), {
+      measurements: beforeConcurrent.measurements + 1,
+      effect_events: beforeConcurrent.effect_events + 1,
+      operation_receipts: 1,
+    });
+
+    const faultOperationId = "measure-formal-episode-pair-receipt-fault-1";
+    const beforeReceiptFault = fixture.measureMutationCounts(faultOperationId);
+    fixture.runtimeDatabase.db.exec(`
+      CREATE TRIGGER reject_product_measure_operation_receipt
+      BEFORE INSERT ON lite_runtime_write_operations
+      WHEN NEW.operation_kind = 'product_measure_v1'
+       AND NEW.operation_id = '${faultOperationId}'
+      BEGIN
+        SELECT RAISE(ABORT, 'injected product measure receipt failure');
+      END;
+    `);
+    const receiptFault = await fixture.app.inject({
+      method: "POST",
+      url: "/v1/measure",
+      payload: {
+        ...measurePayload,
+        operation_id: faultOperationId,
+      },
+    });
+    assert.equal(receiptFault.statusCode, 500, receiptFault.body);
+    assert.deepEqual(
+      fixture.measureMutationCounts(faultOperationId),
+      beforeReceiptFault,
+      "a final receipt failure must roll back the measurement and effect event",
+    );
+    fixture.runtimeDatabase.db.exec("DROP TRIGGER reject_product_measure_operation_receipt");
+
+    const pair = await fixture.runtimeDatabase.transaction.run(async () =>
+      await fixture.learningEpisodeLedgerAccess.resolveMeasurementEpisodePair({
+        tenantId: "default",
+        scope: "default",
+        baselineGuideTraceId: beforeGuideBody.guide_trace_id,
+        afterGuideTraceId: afterGuideBody.guide_trace_id,
+      })
+    );
+    assert.equal(pair.status, "available");
+    if (pair.status !== "available") throw new Error("formal measurement episode pair must resolve");
+    const expectedBaselineEpisodeId = learningEpisodeId({
+      tenantId: "default",
+      scope: "default",
+      guideTraceId: beforeGuideBody.guide_trace_id,
+    });
+    const expectedAfterEpisodeId = learningEpisodeId({
+      tenantId: "default",
+      scope: "default",
+      guideTraceId: afterGuideBody.guide_trace_id,
+    });
+    assert.equal(pair.baseline.episodeId, expectedBaselineEpisodeId);
+    assert.equal(pair.after.episodeId, expectedAfterEpisodeId);
+    assert.notEqual(pair.baseline.episodeId, pair.after.episodeId);
+    assert.equal(pair.baseline.runId, runId);
+    assert.equal(pair.after.runId, runId);
+    assert.equal(pair.provenance.collectionClass, "unverified");
+    assert.equal(pair.provenance.promotionEligible, false);
+    assert.ok(pair.provenance.reasonCodes.includes("baseline_not_eligible_host"));
+    assert.ok(pair.provenance.reasonCodes.includes("after_not_eligible_host"));
+    assert.equal(beforeGuideBody.feedback_attribution_v1.episode_id, expectedBaselineEpisodeId);
+    assert.equal(afterGuideBody.feedback_attribution_v1.episode_id, expectedAfterEpisodeId);
+    assert.ok(measureBody.evidence_assessment.runtime_evidence_ids.includes(
+      effectExpectedV1EvidenceReference({
+        tenantId: "default",
+        scope: "default",
+        measurementId: measureBody.measurement_id,
+        baselineEpisodeId: expectedBaselineEpisodeId,
+        afterEpisodeId: expectedAfterEpisodeId,
+      }),
+    ));
+
+    const exposureRows = fixture.runtimeDatabase.readDb.prepare<{
+      source_id: string;
+      episode_id: string;
+      operation_id: string;
+      collection_class: string;
+      promotion_eligible: number;
+    }>(
+      `SELECT source_id, episode_id, operation_id, collection_class, promotion_eligible
+       FROM lite_learning_episode_events
+       WHERE tenant_id = ? AND scope = ? AND event_kind = 'exposure_committed'
+         AND source_id IN (?, ?)
+       ORDER BY source_id`,
+    ).all(
+      "default",
+      "default",
+      beforeGuideBody.guide_trace_id,
+      afterGuideBody.guide_trace_id,
+    );
+    assert.equal(exposureRows.length, 2);
+    const exposureByTrace = new Map(exposureRows.map((row) => [row.source_id, row]));
+    assert.deepEqual({ ...exposureByTrace.get(beforeGuideBody.guide_trace_id) }, {
+      source_id: beforeGuideBody.guide_trace_id,
+      episode_id: expectedBaselineEpisodeId,
+      operation_id: beforeGuideOperationId,
+      collection_class: "unverified",
+      promotion_eligible: 0,
+    });
+    assert.deepEqual({ ...exposureByTrace.get(afterGuideBody.guide_trace_id) }, {
+      source_id: afterGuideBody.guide_trace_id,
+      episode_id: expectedAfterEpisodeId,
+      operation_id: afterGuideOperationId,
+      collection_class: "unverified",
+      promotion_eligible: 0,
+    });
+
+    const measurementRow = fixture.runtimeDatabase.readDb.prepare<{
+      measurement_id: string;
+      tenant_id: string;
+      scope: string;
+      source: "product_trace";
+      measurement_digest: string;
+      baseline_episode_id: string | null;
+      after_episode_id: string | null;
+      record_sha256: string | null;
+      evidence_status: string;
+      eligible_for_skill_export: number;
+      created_by: string;
+      created_at: string;
+    }>(
+      `SELECT measurement_id, tenant_id, scope, source, measurement_digest,
+              baseline_episode_id, after_episode_id, record_sha256,
+              evidence_status, eligible_for_skill_export, created_by, created_at
+       FROM lite_product_measurements WHERE measurement_id = ?`,
+    ).get(measureBody.measurement_id);
+    assert.ok(measurementRow);
+    assert.equal(measurementRow.measurement_digest, measureBody.measurement_digest);
+    assert.equal(measurementRow.baseline_episode_id, expectedBaselineEpisodeId);
+    assert.equal(measurementRow.after_episode_id, expectedAfterEpisodeId);
+    assert.match(measurementRow.record_sha256 ?? "", /^[0-9a-f]{64}$/u);
+    assert.equal(measurementRow.record_sha256, productMeasurementRecordDigest(measurementRow));
+    assert.equal(measurementRow.evidence_status, "sufficient");
+    assert.equal(measurementRow.eligible_for_skill_export, 0);
+
+    const effectEvent = fixture.runtimeDatabase.readDb.prepare<{
+      event_kind: string;
+      source_kind: string;
+      source_id: string;
+      source_sha256: string;
+      episode_id: string;
+      operation_id: string;
+      run_id: string;
+      collection_class: string;
+      promotion_eligible: number;
+      payload_json: string;
+    }>(
+      `SELECT event_kind, source_kind, source_id, source_sha256, episode_id,
+              operation_id, run_id, collection_class, promotion_eligible, payload_json
+       FROM lite_learning_episode_events
+       WHERE tenant_id = ? AND scope = ? AND event_kind = 'effect_measured'
+         AND source_id = ?`,
+    ).get("default", "default", measureBody.measurement_id);
+    assert.ok(effectEvent);
+    assert.equal(effectEvent.event_kind, "effect_measured");
+    assert.equal(effectEvent.source_kind, "product_measurement");
+    assert.equal(effectEvent.source_sha256, measurementRow.record_sha256);
+    assert.equal(effectEvent.episode_id, expectedAfterEpisodeId);
+    assert.equal(effectEvent.operation_id, measureOperationId);
+    assert.equal(effectEvent.run_id, runId);
+    assert.equal(effectEvent.collection_class, "unverified");
+    assert.equal(effectEvent.promotion_eligible, 0);
+    const measureOperationReceipt = fixture.runtimeDatabase.readDb.prepare<{
+      receipt_json: string;
+    }>(
+      `SELECT receipt_json FROM lite_runtime_write_operations
+       WHERE tenant_id = ? AND scope = ? AND operation_kind = 'product_measure_v1'
+         AND operation_id = ?`,
+    ).get("default", "default", measureOperationId);
+    assert.ok(measureOperationReceipt);
+    assert.deepEqual(JSON.parse(effectEvent.payload_json), {
+      contract_version: "aionis_learning_effect_v1",
+      measurement_id: measureBody.measurement_id,
+      measurement_record_sha256: measurementRow.record_sha256,
+      operation_receipt_sha256: sha256(measureOperationReceipt.receipt_json),
+      baseline_episode_id: expectedBaselineEpisodeId,
+      after_episode_id: expectedAfterEpisodeId,
+      evidence_status: "sufficient",
+      eligible_for_skill_export: false,
+    });
+
+    const { task: _callerTask, ...tasklessMeasurePayload } = measurePayload;
+    const tasklessOperationId = "measure-formal-episode-pair-taskless-1";
+    const tasklessMeasure = await fixture.app.inject({
+      method: "POST",
+      url: "/v1/measure",
+      payload: { ...tasklessMeasurePayload, operation_id: tasklessOperationId },
+    });
+    assert.equal(tasklessMeasure.statusCode, 200, tasklessMeasure.body);
+    assert.equal(tasklessMeasure.json().evidence_assessment.status, "sufficient");
+    assert.equal(
+      fixture.runtimeDatabase.readDb.prepare<{ run_id: string }>(
+        `SELECT run_id FROM lite_learning_episode_events
+         WHERE event_kind = 'effect_measured' AND operation_id = ?`,
+      ).get(tasklessOperationId).run_id,
+      runId,
+      "effect identity must use the authoritative episode run when caller task is omitted",
+    );
+
+    const receiptColumnMismatchOperationId =
+      "measure-formal-episode-pair-receipt-column-mismatch-1";
+    fixture.runtimeDatabase.db.prepare(
+      `UPDATE lite_product_guide_receipts SET run_id = ?
+       WHERE tenant_id = ? AND scope = ? AND guide_trace_id = ?`,
+    ).run(
+      "run:receipt-column-tampered",
+      "default",
+      "default",
+      afterGuideBody.guide_trace_id,
+    );
+    try {
+      const receiptColumnMismatch = await fixture.app.inject({
+        method: "POST",
+        url: "/v1/measure",
+        payload: {
+          ...tasklessMeasurePayload,
+          operation_id: receiptColumnMismatchOperationId,
+        },
+      });
+      assert.equal(receiptColumnMismatch.statusCode, 200, receiptColumnMismatch.body);
+      const mismatchBody = receiptColumnMismatch.json();
+      assert.equal(mismatchBody.evidence_assessment.status, "insufficient");
+      assert.ok(
+        mismatchBody.evidence_assessment.reasons.includes(
+          "after_guide_receipt_not_verified",
+        ),
+      );
+      assert.equal(
+        fixture.runtimeDatabase.readDb.prepare<{ count: number }>(
+          `SELECT COUNT(*) AS count FROM lite_learning_episode_events
+           WHERE event_kind = 'effect_measured' AND operation_id = ?`,
+        ).get(receiptColumnMismatchOperationId).count,
+        0,
+      );
+    } finally {
+      fixture.runtimeDatabase.db.prepare(
+        `UPDATE lite_product_guide_receipts SET run_id = ?
+         WHERE tenant_id = ? AND scope = ? AND guide_trace_id = ?`,
+      ).run(runId, "default", "default", afterGuideBody.guide_trace_id);
+    }
+
+    type ExposureRunRow = Omit<EventWithoutDigest, "contract_version"> & {
+      event_sha256: string;
+    };
+    const exposureRunRows = fixture.runtimeDatabase.db.prepare<ExposureRunRow>(
+      `SELECT tenant_id, scope, event_id, episode_id, episode_sequence, event_kind,
+              source_kind, source_id, source_sha256, previous_event_sha256,
+              event_sha256, payload_sha256, item_set_sha256, source_commit_id,
+              supersedes_event_id, operation_id, run_id, collection_class, recorded_at
+       FROM lite_learning_episode_events
+       WHERE tenant_id = ? AND scope = ? AND event_kind = 'exposure_committed'
+         AND source_id IN (?, ?)
+       ORDER BY source_id`,
+    ).all(
+      "default",
+      "default",
+      beforeGuideBody.guide_trace_id,
+      afterGuideBody.guide_trace_id,
+    );
+    assert.equal(exposureRunRows.length, 2);
+    const eventUpdateTrigger = fixture.runtimeDatabase.db.prepare<{ sql: string }>(
+      `SELECT sql FROM sqlite_master
+       WHERE type = 'trigger' AND name = 'trg_lite_learning_episode_events_update'`,
+    ).get();
+    assert.ok(eventUpdateTrigger?.sql);
+    const rewriteExposureRuns = (replacementRunId: string | null): void => {
+      fixture.runtimeDatabase.db.exec("BEGIN IMMEDIATE");
+      try {
+        fixture.runtimeDatabase.db.exec("DROP TRIGGER trg_lite_learning_episode_events_update");
+        for (const row of exposureRunRows) {
+          const nextRunId = replacementRunId ?? row.run_id;
+          const nextEventSha256 = replacementRunId === null
+            ? row.event_sha256
+            : learningEpisodeEventDigest({
+                contract_version: "aionis_learning_episode_event_v1",
+                tenant_id: row.tenant_id,
+                scope: row.scope,
+                event_id: row.event_id,
+                episode_id: row.episode_id,
+                episode_sequence: row.episode_sequence,
+                event_kind: row.event_kind,
+                source_kind: row.source_kind,
+                source_id: row.source_id,
+                source_sha256: row.source_sha256,
+                previous_event_sha256: row.previous_event_sha256,
+                payload_sha256: row.payload_sha256,
+                item_set_sha256: row.item_set_sha256,
+                source_commit_id: row.source_commit_id,
+                supersedes_event_id: row.supersedes_event_id,
+                operation_id: row.operation_id,
+                run_id: nextRunId,
+                collection_class: row.collection_class,
+                recorded_at: row.recorded_at,
+              });
+          fixture.runtimeDatabase.db.prepare(
+            `UPDATE lite_learning_episode_events SET run_id = ?, event_sha256 = ?
+             WHERE tenant_id = ? AND scope = ? AND event_id = ?`,
+          ).run(nextRunId, nextEventSha256, row.tenant_id, row.scope, row.event_id);
+        }
+        fixture.runtimeDatabase.db.exec(eventUpdateTrigger.sql);
+        fixture.runtimeDatabase.db.exec("COMMIT");
+      } catch (error) {
+        fixture.runtimeDatabase.db.exec("ROLLBACK");
+        throw error;
+      }
+    };
+    const crossRunOperationId = "measure-formal-episode-pair-cross-run-taskless-1";
+    rewriteExposureRuns("run:episode-authority-tampered");
+    try {
+      const crossRunMeasure = await fixture.app.inject({
+        method: "POST",
+        url: "/v1/measure",
+        payload: { ...tasklessMeasurePayload, operation_id: crossRunOperationId },
+      });
+      assert.equal(crossRunMeasure.statusCode, 200, crossRunMeasure.body);
+      const crossRunBody = crossRunMeasure.json();
+      assert.equal(crossRunBody.evidence_assessment.status, "insufficient");
+      assert.equal(crossRunBody.evidence_assessment.eligible_for_skill_export, false);
+      assert.ok(
+        crossRunBody.evidence_assessment.reasons.includes(
+          "measurement_episode_receipt_run_mismatch",
+        ),
+      );
+      assert.equal(
+        crossRunBody.evidence_assessment.runtime_evidence_ids.some(
+          (value: string) => value.startsWith(EFFECT_EXPECTED_V1_EVIDENCE_PREFIX),
+        ),
+        false,
+      );
+      assert.equal(
+        fixture.runtimeDatabase.readDb.prepare<{ count: number }>(
+          `SELECT COUNT(*) AS count FROM lite_learning_episode_events
+           WHERE event_kind = 'effect_measured' AND operation_id = ?`,
+        ).get(crossRunOperationId).count,
+        0,
+      );
+    } finally {
+      rewriteExposureRuns(null);
+    }
+
+    const forgedBaselineEpisodeId = `lep_${"b".repeat(64)}`;
+    const forgedAfterEpisodeId = `lep_${"c".repeat(64)}`;
+    const tamperedBeforeGuide = {
+      ...beforeGuideBody,
+      feedback_attribution_v1: {
+        ...beforeGuideBody.feedback_attribution_v1,
+        episode_id: forgedBaselineEpisodeId,
+      },
+    };
+    const tamperedAfterGuide = {
+      ...afterGuideBody,
+      feedback_attribution_v1: {
+        ...afterGuideBody.feedback_attribution_v1,
+        episode_id: forgedAfterEpisodeId,
+      },
+    };
+    const tamperedMeasure = await fixture.app.inject({
+      method: "POST",
+      url: "/v1/measure",
+      payload: {
+        operation_id: tamperedMeasureOperationId,
+        tenant_id: "default",
+        scope: "default",
+        task,
+        product_trace: {
+          before_guide: tamperedBeforeGuide,
+          after_guide: tamperedAfterGuide,
+          sufficient_evidence: true,
+          evidence_ids: ["caller:forged-episode-attribution"],
+        },
+      },
+    });
+    assert.equal(tamperedMeasure.statusCode, 200, tamperedMeasure.body);
+    const tamperedBody = tamperedMeasure.json();
+    assert.equal(tamperedBody.operation_id, tamperedMeasureOperationId);
+    assert.equal(tamperedBody.evidence_assessment.status, "insufficient");
+    assert.equal(tamperedBody.evidence_assessment.provenance, "unverified_product_trace");
+    assert.equal(tamperedBody.evidence_assessment.eligible_for_skill_export, false);
+    assert.ok(tamperedBody.evidence_assessment.reasons.includes("before_guide_episode_attribution_mismatch"));
+    assert.ok(tamperedBody.evidence_assessment.reasons.includes("after_guide_episode_attribution_mismatch"));
+
+    const tamperedMeasurementRow = fixture.runtimeDatabase.readDb.prepare<{
+      baseline_episode_id: string | null;
+      after_episode_id: string | null;
+      record_sha256: string | null;
+      evidence_status: string;
+      eligible_for_skill_export: number;
+    }>(
+      `SELECT baseline_episode_id, after_episode_id, record_sha256,
+              evidence_status, eligible_for_skill_export
+       FROM lite_product_measurements WHERE measurement_id = ?`,
+    ).get(tamperedBody.measurement_id);
+    assert.ok(tamperedMeasurementRow);
+    assert.equal(tamperedMeasurementRow.baseline_episode_id, null);
+    assert.equal(tamperedMeasurementRow.after_episode_id, null);
+    assert.match(tamperedMeasurementRow.record_sha256 ?? "", /^[0-9a-f]{64}$/u);
+    assert.equal(tamperedMeasurementRow.evidence_status, "insufficient");
+    assert.equal(tamperedMeasurementRow.eligible_for_skill_export, 0);
+    assert.equal(
+      fixture.runtimeDatabase.readDb.prepare<{ count: number }>(
+        `SELECT COUNT(*) AS count FROM lite_learning_episode_events
+         WHERE event_kind = 'effect_measured' AND source_id = ?`,
+      ).get(tamperedBody.measurement_id).count,
+      0,
+    );
+
+    const { operation_id: _operationId, ...unprotectedPayload } = measurePayload;
+    const beforeUnprotected = fixture.measureMutationCounts("measure-unprotected-no-receipt");
+    const unprotectedMeasure = await fixture.app.inject({
+      method: "POST",
+      url: "/v1/measure",
+      payload: unprotectedPayload,
+    });
+    assert.equal(unprotectedMeasure.statusCode, 200, unprotectedMeasure.body);
+    const unprotectedBody = unprotectedMeasure.json();
+    assert.equal(unprotectedBody.evidence_assessment.status, "sufficient");
+    assert.equal(unprotectedBody.evidence_assessment.eligible_for_skill_export, false);
+    assert.ok(unprotectedBody.evidence_assessment.runtime_evidence_ids.includes(
+      effectExpectedV1EvidenceReference({
+        tenantId: "default",
+        scope: "default",
+        measurementId: unprotectedBody.measurement_id,
+        baselineEpisodeId: expectedBaselineEpisodeId,
+        afterEpisodeId: expectedAfterEpisodeId,
+      }),
+    ));
+    assert.ok(
+      unprotectedBody.evidence_assessment.reasons.includes(
+        "measurement_operation_identity_unprotected",
+      ),
+    );
+    assert.deepEqual(fixture.measureMutationCounts("measure-unprotected-no-receipt"), {
+      measurements: beforeUnprotected.measurements + 1,
+      effect_events: beforeUnprotected.effect_events + 1,
+      operation_receipts: 0,
+    });
+
+    await fixture.learningEpisodeLedgerAccess.verifyIntegrity();
+    const eventDeleteTrigger = fixture.runtimeDatabase.db.prepare<{ sql: string }>(
+      `SELECT sql FROM sqlite_master
+       WHERE type = 'trigger' AND name = 'trg_lite_learning_episode_events_delete'`,
+    ).get();
+    assert.ok(eventDeleteTrigger?.sql);
+    const deletedEffect = fixture.runtimeDatabase.db.prepare<Record<string, unknown>>(
+      `SELECT * FROM lite_learning_episode_events
+       WHERE event_kind = 'effect_measured' AND source_kind = 'product_measurement'
+         AND source_id = ?`,
+    ).get(unprotectedBody.measurement_id);
+    assert.ok(deletedEffect);
+    fixture.runtimeDatabase.db.exec("DROP TRIGGER trg_lite_learning_episode_events_delete");
+    try {
+      fixture.runtimeDatabase.db.prepare(
+        `DELETE FROM lite_learning_episode_events
+         WHERE event_kind = 'effect_measured' AND source_kind = 'product_measurement'
+           AND source_id = ?`,
+      ).run(unprotectedBody.measurement_id);
+    } finally {
+      fixture.runtimeDatabase.db.exec(eventDeleteTrigger.sql);
+    }
+    try {
+      assert.throws(
+        () => assertProductMeasureReceiptAuthoritySetIntegrity(fixture.runtimeDatabase.db),
+        /product measurement effect expectation cardinality is invalid/,
+      );
+      await assert.rejects(
+        fixture.learningEpisodeLedgerAccess.verifyIntegrity(),
+        /lite_learning_integrity_failed:product_measure_receipt_authority/,
+      );
+      const reopenedDatabase = createLiteRuntimeDatabase(fixture.runtimeDatabase.path);
+      try {
+        assert.throws(
+          () => createLiteLearningEpisodeLedgerAccess(reopenedDatabase),
+          /lite_learning_integrity_failed:product_measure_receipt_authority/,
+        );
+      } finally {
+        await reopenedDatabase.close();
+      }
+    } finally {
+      const columns = Object.keys(deletedEffect);
+      fixture.runtimeDatabase.db.prepare(
+        `INSERT INTO lite_learning_episode_events (${columns.join(", ")})
+         VALUES (${columns.map(() => "?").join(", ")})`,
+      ).run(...columns.map((column) => deletedEffect[column]));
+    }
+    await fixture.learningEpisodeLedgerAccess.verifyIntegrity();
+  } finally {
+    await fixture.close();
+  }
+});
+
+test("real confirmatory measurement stays fail-control until external prerequisite roots exist", async () => {
+  const dbPath = tmpDbPath("measure-confirmatory-external-root-fail-control");
+  const runtimeDatabase = createLiteRuntimeDatabase(dbPath);
+  const liteWriteStore = createLiteWriteStoreFromDatabase(runtimeDatabase, {
+    annProjectionEnabled: false,
+    closeDatabaseOnClose: false,
+  });
+  let liteRecallStore: ReturnType<typeof createLiteRecallStore> | null = null;
+  let reviewStore: ReturnType<typeof createLiteSkillCandidateReviewStoreFromDatabase> | null = null;
+  let app: ReturnType<typeof Fastify> | null = null;
+  try {
+    const manifest = activeConfirmatoryMeasurementManifest();
+    const publicScope = manifest.pairs[0]!.members[0]!.public_scope;
+    const workerPrincipal: AuthPrincipal = {
+      tenant_id: CONFIRMATORY_TENANT_ID,
+      agent_id: "confirmatory-measure-worker",
+      team_id: null,
+      role: "worker",
+      default_scope: publicScope,
+      allowed_scopes: [publicScope],
+      source: "api_key",
+    };
+    const profile = confirmatoryMeasurementProfile(workerPrincipal);
+    const provisioned = await provisionConfirmatoryFixture({
+      database: runtimeDatabase,
+      writeStore: liteWriteStore,
+      close: async () => {},
+    }, {
+      input: createConfirmatoryProvisionInput({
+        profileRule: profile,
+        memoryNamespaceManifest: manifest,
+      }),
+    });
+    assert.equal(provisioned.provisionResult.replayed, false);
+
+    liteRecallStore = createLiteRecallStore(dbPath);
+    reviewStore = createLiteSkillCandidateReviewStoreFromDatabase(runtimeDatabase, {
+      closeDatabaseOnClose: false,
+    });
+    const reviewAccess = reviewStore.createSkillCandidateReviewAccess();
+    const learningEpisodeLedgerAccess = createLiteLearningEpisodeLedgerAccess(runtimeDatabase);
+    const workerKey = "confirmatory-measure-worker-key";
+    const developerKey = "confirmatory-measure-developer-key";
+    const env = {
+      ...liteEnv(),
+      AIONIS_EDITION: "server",
+      AIONIS_MODE: "service",
+      MEMORY_AUTH_MODE: "api_key",
+      MEMORY_SCOPE: publicScope,
+      LITE_LOCAL_ACTOR_ID: workerPrincipal.agent_id,
+      MEMORY_API_KEYS_JSON: JSON.stringify({
+        [workerKey]: {
+          tenant_id: CONFIRMATORY_TENANT_ID,
+          agent_id: workerPrincipal.agent_id,
+          role: "worker",
+          default_scope: publicScope,
+          allowed_scopes: [publicScope],
+        },
+        [developerKey]: {
+          tenant_id: CONFIRMATORY_TENANT_ID,
+          agent_id: "confirmatory-measure-developer",
+          role: "developer",
+          default_scope: publicScope,
+          allowed_scopes: [publicScope],
+        },
+      }),
+      AIONIS_SERVER_ALLOW_AUTH_OFF_FOR_DEV: false,
+    } as any;
+    const guards = requestGuards(env, DeterministicEmbeddingProvider);
+    app = Fastify();
+    registerFullProductMemoryApp({
+      app,
+      env,
+      guards,
+      liteWriteStore,
+      liteRecallStore,
+      skillCandidateReviewAccess: reviewAccess,
+      learningEpisodeLedgerAccess,
+      learningExperimentResolverRegistry: createConfirmatoryPassedRegistry(),
+      admissionCandidatePolicyProfileRules: [profile],
+    });
+
+    await seedProductMeasureToolRule(liteWriteStore, {
+      tenantId: CONFIRMATORY_TENANT_ID,
+      scope: publicScope,
+      actor: workerPrincipal.agent_id,
+      taskKind: CONFIRMATORY_TASK_FAMILY,
+    });
+    const headers = { "x-api-key": workerKey };
+    const runId = "run:confirmatory-measure-external-root-fail-control";
+    const hostTaskId = "host-task:confirmatory-measure-external-root-fail-control";
+    const taskSignature = "confirmatory-measure-external-root-fail-control";
+    const repositorySignature = "aionis-runtime-focused";
+    const query = "Recover the scoped workflow and run its focused verifier.";
+    const context = {
+      agent_id: workerPrincipal.agent_id,
+      task_kind: CONFIRMATORY_TASK_FAMILY,
+      task_family: CONFIRMATORY_TASK_FAMILY,
+      task_signature: taskSignature,
+      repository_signature: repositorySignature,
+      goal: query,
+    };
+    const executionPacket = {
+      version: 1,
+      state_id: "state:confirmatory-measure-external-root-fail-control",
+      current_stage: "review",
+      active_role: "review",
+      task_brief: query,
+      target_files: [],
+      next_action: "Run the Runtime-owned focused verifier.",
+      hard_constraints: [],
+      accepted_facts: [],
+      rejected_paths: [],
+      pending_validations: ["node -e \"process.exit(0)\""],
+      unresolved_blockers: [],
+      rollback_notes: [],
+      service_lifecycle_constraints: [],
+      review_contract: null,
+      resume_anchor: null,
+      artifact_refs: [],
+      evidence_refs: ["confirmatory-focused-verifier"],
+    };
+    const collectionSource = profile.experiment!.collection_sources[0]!;
+    const hostEnvelope = (occurrence: "before" | "after") => ({
+      contract_version: "host_task_envelope_v1" as const,
+      host_task_id: hostTaskId,
+      collector_id: collectionSource.collector_id,
+      collector_version: collectionSource.collector_version,
+      task_family: CONFIRMATORY_TASK_FAMILY,
+      task_signature: taskSignature,
+      repository_signature: repositorySignature,
+      source_task_sha256: sha256("confirmatory-measure-source-task"),
+      source_event_sha256: sha256(`confirmatory-measure-source-event:${occurrence}`),
+      created_at: occurrence === "before"
+        ? "2026-07-16T01:00:00.000Z"
+        : "2026-07-16T01:01:00.000Z",
+    });
+    const guidePayload = {
+      tenant_id: CONFIRMATORY_TENANT_ID,
+      scope: publicScope,
+      run_id: runId,
+      query_text: query,
+      consumer_agent_id: workerPrincipal.agent_id,
+      context,
+      execution_packet_v1: executionPacket,
+      tool_candidates: ["read", "edit", "test"],
+      limit: 8,
+      include_packets: true,
+    };
+    const beforeGuide = await app.inject({
+      method: "POST",
+      url: "/v1/guide",
+      headers,
+      payload: {
+        ...guidePayload,
+        operation_id: "guide:confirmatory-measure:before",
+        host_task_envelope_v1: hostEnvelope("before"),
+      },
+    });
+    assert.equal(beforeGuide.statusCode, 200, beforeGuide.body);
+    const beforeGuideBody = beforeGuide.json();
+    const beforePolicy = beforeGuideBody.source_map.admission_candidate_policy;
+    assert.equal(beforePolicy.collection_class, "eligible_host");
+    assert.equal(beforePolicy.enrollment_state, "enrolled");
+    assert.equal(beforePolicy.promotion_eligible, false);
+    assert.ok(beforePolicy.reason_codes.includes("external_prerequisite_roots_unavailable"));
+    assert.equal(beforeGuideBody.feedback_attribution_v1.status, "available");
+    assert.equal(beforeGuideBody.feedback_attribution_v1.projection_complete, true);
+
+    const observed = await app.inject({
+      method: "POST",
+      url: "/v1/observe",
+      headers,
+      payload: {
+        tenant_id: CONFIRMATORY_TENANT_ID,
+        scope: publicScope,
+        auto_embed: true,
+        memory_lane: "private",
+        execution: {
+          run_id: runId,
+          task_id: hostTaskId,
+          task_family: CONFIRMATORY_TASK_FAMILY,
+          task_signature: taskSignature,
+          workflow_signature: "workflow:confirmatory-measure-external-root-fail-control",
+          title: query,
+          summary: `${query} recovered verified state and completed the focused check.`,
+          outcome: "succeeded",
+          workflow_steps: [
+            "Recover the persisted guide state.",
+            "Continue the scoped workflow.",
+            "Run the focused verifier.",
+          ],
+          acceptance_checks: ["focused verifier passed"],
+          continuation_hint: "Continue from the verified guide state.",
+          confidence: 0.95,
+          evidence: [{ ref: `${runId}#verifier`, summary: "Focused verifier passed." }],
+        },
+      },
+    });
+    assert.equal(observed.statusCode, 200, observed.body);
+    await new Promise((resolve) => setTimeout(resolve, 5));
+
+    const afterGuide = await app.inject({
+      method: "POST",
+      url: "/v1/guide",
+      headers,
+      payload: {
+        ...guidePayload,
+        operation_id: "guide:confirmatory-measure:after",
+        host_task_envelope_v1: hostEnvelope("after"),
+        runtime_verification: {
+          version: 1,
+          mode: "execute",
+          agent_lifecycle_state: "agent_exited",
+          include_pending_validations: true,
+          validation_boundary: "runtime_orchestrator",
+          timeout_ms: 5_000,
+          max_requests: 4,
+          cwd: null,
+          agent_claimed_success: true,
+        },
+      },
+    });
+    assert.equal(afterGuide.statusCode, 200, afterGuide.body);
+    const afterGuideBody = afterGuide.json();
+    assert.notEqual(afterGuideBody.guide_trace_id, beforeGuideBody.guide_trace_id);
+    assert.equal(afterGuideBody.agent_context.actionable_history_used, true);
+    assert.equal(afterGuideBody.source_map.admission_candidate_policy.promotion_eligible, false);
+    assert.ok(
+      afterGuideBody.source_map.admission_candidate_policy.reason_codes
+        .includes("external_prerequisite_roots_unavailable"),
+    );
+    assert.ok(afterGuideBody.tool_selection?.decision_id);
+    await new Promise((resolve) => setTimeout(resolve, 5));
+
+    const feedbackOperationId = "feedback:confirmatory-measure:positive";
+    const feedback = await app.inject({
+      method: "POST",
+      url: "/v1/feedback",
+      headers,
+      payload: {
+        feedback_kind: "tool_selection",
+        operation_id: feedbackOperationId,
+        tenant_id: CONFIRMATORY_TENANT_ID,
+        scope: publicScope,
+        guide_trace_id: afterGuideBody.guide_trace_id,
+        decision_id: afterGuideBody.tool_selection.decision_id,
+        run_id: afterGuideBody.tool_selection.run_id,
+        selected_tool: afterGuideBody.tool_selection.selected_tool,
+        candidates: afterGuideBody.tool_selection.candidates,
+        outcome: "positive",
+        context,
+        input_text: "The selected tool completed the verified continuation.",
+      },
+    });
+    assert.equal(feedback.statusCode, 200, feedback.body);
+    assert.equal(feedback.json().operation_id, feedbackOperationId);
+
+    const measureOperationId = "measure:confirmatory-external-root-fail-control";
+    const measure = await app.inject({
+      method: "POST",
+      url: "/v1/measure",
+      headers,
+      payload: {
+        operation_id: measureOperationId,
+        tenant_id: CONFIRMATORY_TENANT_ID,
+        scope: publicScope,
+        task: {
+          task_id: hostTaskId,
+          run_id: runId,
+          task_signature: taskSignature,
+          task_family: CONFIRMATORY_TASK_FAMILY,
+        },
+        product_trace: {
+          before_guide: beforeGuideBody,
+          after_guide: afterGuideBody,
+          sufficient_evidence: true,
+          evidence_ids: ["caller:cannot-upgrade-external-root-authority"],
+        },
+      },
+    });
+    assert.equal(measure.statusCode, 200, measure.body);
+    const measureBody = measure.json();
+    assert.equal(measureBody.operation_id, measureOperationId);
+    assert.equal(measureBody.measurement_persisted, true);
+    assert.equal(measureBody.evidence_assessment.status, "sufficient");
+    assert.equal(measureBody.evidence_assessment.provenance, "runtime_verified");
+    assert.equal(measureBody.evidence_assessment.eligible_for_skill_export, false);
+    assert.ok(
+      measureBody.evidence_assessment.reasons
+        .includes("measurement_episode_pair_not_promotion_eligible"),
+    );
+    assert.ok(
+      measureBody.evidence_assessment.runtime_evidence_ids
+        .some((id: string) => id.startsWith("tool_feedback_event:")),
+    );
+    assert.ok(
+      measureBody.evidence_assessment.runtime_evidence_ids
+        .some((id: string) => id.startsWith("tool_feedback_receipt:")),
+    );
+    assert.deepEqual(measureBody.effect_report.task, {
+      task_id: hostTaskId,
+      run_id: runId,
+      task_signature: taskSignature,
+      task_family: CONFIRMATORY_TASK_FAMILY,
+    });
+
+    const exposureRows = runtimeDatabase.readDb.prepare<{
+      collection_class: string;
+      promotion_eligible: number;
+    }>(
+      `SELECT collection_class, promotion_eligible
+       FROM lite_learning_episode_events
+       WHERE tenant_id = ? AND scope = ? AND event_kind = 'exposure_committed'
+         AND source_id IN (?, ?)
+       ORDER BY source_id`,
+    ).all(
+      CONFIRMATORY_TENANT_ID,
+      publicScope,
+      beforeGuideBody.guide_trace_id,
+      afterGuideBody.guide_trace_id,
+    );
+    assert.equal(exposureRows.length, 2);
+    assert.ok(exposureRows.every((row) =>
+      row.collection_class === "eligible_host" && row.promotion_eligible === 0
+    ));
+
+    const effectAuthority = await runtimeDatabase.transaction.run(async () =>
+      await learningEpisodeLedgerAccess.resolveMeasurementEffectAuthority({
+        tenantId: CONFIRMATORY_TENANT_ID,
+        scope: publicScope,
+        measurementId: measureBody.measurement_id,
+        measurementDigest: measureBody.measurement_digest,
+      })
+    );
+    assert.deepEqual(effectAuthority, {
+      status: "unavailable",
+      reasonCode: "measurement_not_export_eligible",
+    });
+
+    const enqueue = await app.inject({
+      method: "POST",
+      url: "/v1/skills/candidates",
+      headers,
+      payload: {
+        tenant_id: CONFIRMATORY_TENANT_ID,
+        scope: publicScope,
+        measurement_id: measureBody.measurement_id,
+      },
+    });
+    assert.equal(enqueue.statusCode, 409, enqueue.body);
+    assert.equal(enqueue.json().error, "measurement_not_skill_export_eligible");
+  } finally {
+    await app?.close();
+    await liteRecallStore?.close();
+    await reviewStore?.close();
+    await liteWriteStore.close();
+    await runtimeDatabase.close();
+    fs.rmSync(path.dirname(dbPath), { recursive: true, force: true });
+  }
+});
+
 test("product measure facade returns a product effect report without external eval runners", async () => {
   const app = Fastify();
   const env = liteEnv();
@@ -3391,14 +4862,22 @@ test("product measure and skill export fail closed for missing, manual, and forg
   }
 });
 
-test("product skills candidates routes queue and review trace-derived skill candidates", async () => {
+test("synthetic eligible measurement cannot enqueue without a Runtime effect authority", async () => {
   const app = Fastify();
   const env = liteEnv();
   const guards = requestGuards(env, DeterministicEmbeddingProvider);
-  const dbPath = tmpDbPath("skill-candidates");
-  const liteWriteStore = createLiteWriteStore(dbPath);
+  const dbPath = tmpDbPath("skill-candidate-effect-authority");
+  const runtimeDatabase = createLiteRuntimeDatabase(dbPath);
+  const liteWriteStore = createLiteWriteStoreFromDatabase(runtimeDatabase, {
+    annProjectionEnabled: false,
+    closeDatabaseOnClose: false,
+  });
   const liteRecallStore = createLiteRecallStore(dbPath);
-  const reviewStore = createLiteSkillCandidateReviewStore(dbPath);
+  const reviewStore = createLiteSkillCandidateReviewStoreFromDatabase(runtimeDatabase, {
+    closeDatabaseOnClose: false,
+  });
+  const reviewAccess = reviewStore.createSkillCandidateReviewAccess();
+  const learningEpisodeLedgerAccess = createLiteLearningEpisodeLedgerAccess(runtimeDatabase);
   try {
     registerFullProductMemoryApp({
       app,
@@ -3406,173 +4885,51 @@ test("product skills candidates routes queue and review trace-derived skill cand
       guards,
       liteWriteStore,
       liteRecallStore,
-      skillCandidateReviewAccess: reviewStore.createSkillCandidateReviewAccess(),
+      skillCandidateReviewAccess: reviewAccess,
+      learningEpisodeLedgerAccess,
     });
 
-    const measureBody = await createPersistedVerifiedMeasurement({
-      app,
-      liteWriteStore,
-      suffix: "skill-candidate-route",
+    const measurement = await persistEligibleSkillCandidateMeasurement({
+      access: reviewAccess,
+      suffix: "missing-effect-authority",
     });
-    assert.ok(measureBody.effect_report.training_candidates.some((candidate: any) =>
+    assert.ok(measurement.effect_report.training_candidates.some((candidate: any) =>
       candidate.candidate_type === "trace_derived_skill"
     ));
 
-    const queued = await app.inject({
+    const rejected = await app.inject({
       method: "POST",
       url: "/v1/skills/candidates",
       payload: {
-        measure_result: measureBody,
+        measurement_id: measurement.measurement_id,
       },
     });
-    assert.equal(queued.statusCode, 200);
-    const queuedBody = queued.json();
-    assert.equal(queuedBody.contract_version, "aionis_trace_derived_skill_review_result_v1");
-    assert.equal(queuedBody.safety.agent_prompt_included, false);
-    assert.equal(queuedBody.safety.memory_runtime_mutation, false);
-    assert.equal(queuedBody.inserted_count, 2);
-    assert.equal(queuedBody.candidate_count, 2);
-    const materializableCandidate = queuedBody.candidates.find((candidate: Record<string, unknown>) =>
-      candidate.label === "positive"
-      && candidate.export_ready === true
-      && candidate.promotion_status === "promotion_ready"
-    );
-    assert.ok(materializableCandidate);
-    const firstId = materializableCandidate.candidate_id;
-    const secondId = queuedBody.candidates.find((candidate: Record<string, unknown>) => candidate.candidate_id !== firstId).candidate_id;
-    assert.ok(firstId);
-    assert.ok(secondId);
-
-    const listed = await app.inject({
-      method: "GET",
-      url: "/v1/skills/candidates?status=pending_review&limit=10",
+    assert.equal(rejected.statusCode, 409, rejected.body);
+    assert.equal(rejected.json().error, "measurement_not_skill_export_eligible");
+    assert.equal(rejected.json().details.authority_reason, "effect_missing");
+    const listed = await reviewAccess.listTraceDerivedSkillCandidates({
+      tenantId: "default",
+      scope: "default",
+      reviewStatus: "all",
+      limit: 10,
     });
-    assert.equal(listed.statusCode, 200);
-    assert.equal(listed.json().candidate_count, 2);
-
-    const pendingMaterialize = await app.inject({
-      method: "POST",
-      url: `/v1/skills/candidates/${firstId}/materialize`,
-      headers: { "x-admin-token": "test-admin-token" },
-      payload: {},
-    });
-    assert.equal(pendingMaterialize.statusCode, 409);
-    assert.equal(pendingMaterialize.json().error, "skill_candidate_not_promoted");
-
-    const promoted = await app.inject({
-      method: "POST",
-      url: `/v1/skills/candidates/${firstId}/promote`,
-      headers: { "x-admin-token": "test-admin-token" },
-      payload: {
-        reason: "Strong continuity evidence.",
-      },
-    });
-    assert.equal(promoted.statusCode, 200);
-    assert.equal(promoted.json().candidates[0].review_status, "promoted");
-    assert.equal(promoted.json().candidates[0].reviewer_id, "lite-admin-token");
-    assert.equal(promoted.json().candidates[0].candidate.trace_derived_skill.authority_state, "candidate");
-    assert.equal(promoted.json().safety.memory_runtime_mutation, false);
-
-    const repeatedPromote = await app.inject({
-      method: "POST",
-      url: `/v1/skills/candidates/${firstId}/promote`,
-      headers: { "x-admin-token": "test-admin-token" },
-      payload: { reason: "A terminal review decision cannot be replayed." },
-    });
-    assert.equal(repeatedPromote.statusCode, 409);
-    assert.equal(repeatedPromote.json().error, "skill_candidate_state_conflict");
-
-    const materialized = await app.inject({
-      method: "POST",
-      url: `/v1/skills/candidates/${firstId}/materialize`,
-      headers: { "x-admin-token": "test-admin-token" },
-      payload: {},
-    });
-    assert.equal(materialized.statusCode, 200);
-    const materializedBody = materialized.json();
-    assert.equal(materializedBody.contract_version, "aionis_skill_candidate_materialize_result_v1");
-    assert.equal(materializedBody.draft.contract_version, "aionis_procedure_memory_draft_v1");
-    assert.equal(materializedBody.draft.source_candidate_id, firstId);
-    assert.equal(materializedBody.draft.write_policy.requires_observe_commit, true);
-    assert.equal(materializedBody.safety.memory_runtime_mutation, false);
-    assert.equal(materializedBody.recommended_observe_payload.auto_embed, true);
-    assert.equal(materializedBody.recommended_observe_payload.memory_kind, "execution_workflow");
-    assert.deepEqual(
-      materializedBody.recommended_observe_payload.execution.workflow_steps,
-      materializedBody.draft.procedure_steps,
-    );
-
-    const rejected = await app.inject({
-      method: "POST",
-      url: `/v1/skills/candidates/${secondId}/reject`,
-      headers: { "x-admin-token": "test-admin-token" },
-      payload: {
-        reason: "Needs more repeated evidence.",
-      },
-    });
-    assert.equal(rejected.statusCode, 200);
-    assert.equal(rejected.json().candidates[0].review_status, "rejected");
-
-    const promoteAfterReject = await app.inject({
-      method: "POST",
-      url: `/v1/skills/candidates/${secondId}/promote`,
-      headers: { "x-admin-token": "test-admin-token" },
-      payload: { reason: "Rejected candidates cannot be promoted by a stale transition." },
-    });
-    assert.equal(promoteAfterReject.statusCode, 409);
-    assert.equal(promoteAfterReject.json().error, "skill_candidate_state_conflict");
-
-    const rejectedMaterialize = await app.inject({
-      method: "POST",
-      url: `/v1/skills/candidates/${secondId}/materialize`,
-      headers: { "x-admin-token": "test-admin-token" },
-      payload: {},
-    });
-    assert.equal(rejectedMaterialize.statusCode, 409);
-    assert.equal(rejectedMaterialize.json().error, "skill_candidate_not_promoted");
+    assert.equal(listed.rows.length, 0);
   } finally {
     await reviewStore.close();
     await liteRecallStore.close();
     await liteWriteStore.close();
+    await runtimeDatabase.close();
     await app.close();
   }
 });
 
 test("ordinary principals cannot review or materialize Runtime skill candidates", async () => {
-  const seedApp = Fastify();
-  const lite = liteEnv();
-  const liteGuards = requestGuards(lite, DeterministicEmbeddingProvider);
   const dbPath = tmpDbPath("skill-candidate-role-gate");
   const liteWriteStore = createLiteWriteStore(dbPath);
-  const liteRecallStore = createLiteRecallStore(dbPath);
   const reviewStore = createLiteSkillCandidateReviewStore(dbPath);
   const reviewAccess = reviewStore.createSkillCandidateReviewAccess();
   const serverApp = Fastify();
   try {
-    registerFullProductMemoryApp({
-      app: seedApp,
-      env: lite,
-      guards: liteGuards,
-      liteWriteStore,
-      liteRecallStore,
-      skillCandidateReviewAccess: reviewAccess,
-    });
-    const measurement = await createPersistedVerifiedMeasurement({
-      app: seedApp,
-      liteWriteStore,
-      suffix: "ordinary-role-gate",
-    });
-    const queued = await seedApp.inject({
-      method: "POST",
-      url: "/v1/skills/candidates",
-      payload: { measure_result: measurement },
-    });
-    assert.equal(queued.statusCode, 200, queued.body);
-    const candidate = queued.json().candidates.find((entry: Record<string, unknown>) =>
-      entry.label === "positive" && entry.export_ready === true
-    );
-    assert.ok(candidate?.candidate_id);
-
     const serverEnv = {
       ...liteEnv(),
       AIONIS_EDITION: "server",
@@ -3583,13 +4940,6 @@ test("ordinary principals cannot review or materialize Runtime skill candidates"
           tenant_id: "default",
           agent_id: "developer-agent",
           role: "developer",
-          default_scope: "default",
-          allowed_scopes: ["default"],
-        },
-        "operator-key": {
-          tenant_id: "default",
-          agent_id: "operator-agent",
-          role: "operator",
           default_scope: "default",
           allowed_scopes: ["default"],
         },
@@ -3608,7 +4958,7 @@ test("ordinary principals cannot review or materialize Runtime skill candidates"
 
     const developerPromote = await serverApp.inject({
       method: "POST",
-      url: `/v1/skills/candidates/${candidate.candidate_id}/promote`,
+      url: "/v1/skills/candidates/candidate-does-not-exist/promote",
       headers: { "x-api-key": "developer-key" },
       payload: { reason: "A developer must not cross the review authority boundary." },
     });
@@ -3617,162 +4967,17 @@ test("ordinary principals cannot review or materialize Runtime skill candidates"
 
     const developerMaterialize = await serverApp.inject({
       method: "POST",
-      url: `/v1/skills/candidates/${candidate.candidate_id}/materialize`,
+      url: "/v1/skills/candidates/candidate-does-not-exist/materialize",
       headers: { "x-api-key": "developer-key" },
       payload: {},
     });
     assert.equal(developerMaterialize.statusCode, 403);
     assert.equal(developerMaterialize.json().error, "skill_operator_forbidden");
 
-    const operatorPromote = await serverApp.inject({
-      method: "POST",
-      url: `/v1/skills/candidates/${candidate.candidate_id}/promote`,
-      headers: { "x-api-key": "operator-key" },
-      payload: {
-        reviewer_id: "caller-spoofed-reviewer",
-        reason: "Runtime verifier and server evidence gates passed.",
-      },
-    });
-    assert.equal(operatorPromote.statusCode, 200, operatorPromote.body);
-    assert.equal(operatorPromote.json().candidates[0].reviewer_id, "operator-agent");
-
-    const operatorMaterialize = await serverApp.inject({
-      method: "POST",
-      url: `/v1/skills/candidates/${candidate.candidate_id}/materialize`,
-      headers: { "x-api-key": "operator-key" },
-      payload: {},
-    });
-    assert.equal(operatorMaterialize.statusCode, 200, operatorMaterialize.body);
   } finally {
     await serverApp.close();
-    await seedApp.close();
     await reviewStore.close();
-    await liteRecallStore.close();
     await liteWriteStore.close();
-  }
-});
-
-test("trace-derived skill materialize requires explicit observe before guide can use it", async () => {
-  const app = Fastify();
-  const env = liteEnv();
-  const guards = requestGuards(env, DeterministicEmbeddingProvider);
-  const dbPath = tmpDbPath("skill-candidate-materialize-loop");
-  const liteWriteStore = createLiteWriteStore(dbPath);
-  const liteRecallStore = createLiteRecallStore(dbPath);
-  const reviewStore = createLiteSkillCandidateReviewStore(dbPath);
-  try {
-    registerFullProductMemoryApp({
-      app,
-      env,
-      guards,
-      liteWriteStore,
-      liteRecallStore,
-      skillCandidateReviewAccess: reviewStore.createSkillCandidateReviewAccess(),
-    });
-
-    const measureBody = await createPersistedVerifiedMeasurement({
-      app,
-      liteWriteStore,
-      suffix: "skill-candidate-materialize-loop",
-    });
-    const queued = await app.inject({
-      method: "POST",
-      url: "/v1/skills/candidates",
-      payload: {
-        measure_result: measureBody,
-      },
-    });
-    assert.equal(queued.statusCode, 200, queued.body);
-    const candidate = queued.json().candidates.find((entry: Record<string, unknown>) =>
-      entry.label === "positive"
-      && entry.export_ready === true
-      && entry.promotion_status === "promotion_ready"
-    );
-    assert.ok(candidate);
-    const candidateId = candidate.candidate_id;
-
-    const promoted = await app.inject({
-      method: "POST",
-      url: `/v1/skills/candidates/${candidateId}/promote`,
-      headers: { "x-admin-token": "test-admin-token" },
-      payload: {
-        reason: "Runtime verifier receipt and effect gate passed.",
-      },
-    });
-    assert.equal(promoted.statusCode, 200, promoted.body);
-
-    const executionRowsBefore = await liteWriteStore.findExecutionNativeNodes({
-      scope: "default",
-      consumerAgentId: "local-user",
-      consumerTeamId: null,
-      limit: 200,
-      offset: 0,
-    });
-
-    const materialized = await app.inject({
-      method: "POST",
-      url: `/v1/skills/candidates/${candidateId}/materialize`,
-      headers: { "x-admin-token": "test-admin-token" },
-      payload: {},
-    });
-    assert.equal(materialized.statusCode, 200, materialized.body);
-    const materializedBody = materialized.json();
-    assert.equal(materializedBody.safety.memory_runtime_mutation, false);
-    assert.equal(materializedBody.draft.write_policy.requires_observe_commit, true);
-    const executionRowsAfterMaterialize = await liteWriteStore.findExecutionNativeNodes({
-      scope: "default",
-      consumerAgentId: "local-user",
-      consumerTeamId: null,
-      limit: 200,
-      offset: 0,
-    });
-    assert.equal(executionRowsAfterMaterialize.rows.length, executionRowsBefore.rows.length);
-
-    const observe = await app.inject({
-      method: "POST",
-      url: "/v1/observe",
-      payload: materializedBody.recommended_observe_payload,
-    });
-    assert.equal(observe.statusCode, 200);
-    assert.equal(observe.json().observed.execution_memory_count, 1);
-    assert.equal(observe.json().structured_memory.structured_nodes[0].source, "execution");
-
-    const executionRowsAfterObserve = await liteWriteStore.findExecutionNativeNodes({
-      scope: "default",
-      consumerAgentId: "local-user",
-      consumerTeamId: null,
-      limit: 200,
-      offset: 0,
-    });
-    assert.equal(executionRowsAfterObserve.rows.length, executionRowsBefore.rows.length + 1);
-
-    const afterObserveGuide = await app.inject({
-      method: "POST",
-      url: "/v1/guide",
-      payload: {
-        tenant_id: "default",
-        scope: "default",
-        query_text: materializedBody.draft.skill_name,
-        consumer_agent_id: "local-user",
-        tool_candidates: ["read", "edit", "test"],
-        limit: 8,
-        include_packets: true,
-      },
-    });
-    assert.equal(afterObserveGuide.statusCode, 200);
-    const afterObserveBody = afterObserveGuide.json();
-    assert.equal(afterObserveBody.agent_context.history_used, true);
-    assert.equal(afterObserveBody.agent_context.actionable_history_used, true);
-    assert.ok(
-      afterObserveBody.guide_packet.guidance.workflow_candidates.some((entry: Record<string, unknown>) =>
-        String(entry.title).includes(materializedBody.draft.skill_name),
-      ),
-    );
-  } finally {
-    await reviewStore.close();
-    await liteRecallStore.close();
-    await liteWriteStore.close();
-    await app.close();
   }
 });
 

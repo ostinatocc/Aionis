@@ -4298,6 +4298,41 @@ test("protected tool feedback preserves full guide provenance while attributing 
   }
 });
 
+test("legacy tool feedback is visible but cannot become protected measurement authority", async () => {
+  const fixture = setupLearningProductApp({ name: "legacy-product-tool-feedback-authority" });
+  try {
+    await seedToolFeedbackRule(fixture.liteWriteStore);
+    const guide = await guideForToolSelection({
+      app: fixture.app,
+      runId: "run:legacy-product-tool-feedback-authority",
+      operationId: "guide:legacy-product-tool-feedback-authority",
+    });
+    const feedback = await fixture.app.inject({
+      method: "POST",
+      url: "/v1/feedback",
+      payload: toolFeedbackPayload(guide),
+    });
+    assert.equal(feedback.statusCode, 200, feedback.body);
+    const body = feedback.json();
+    const authority = await fixture.runtimeDatabase.transaction.run(() =>
+      fixture.learningEpisodeLedgerAccess.resolveMeasurementToolFeedbackAuthority({
+        tenantId: guide.tenant_id,
+        scope: guide.scope,
+        episodeId: body.learning_episode_id,
+        guideTraceId: guide.guide_trace_id,
+        runId: guide.tool_selection.run_id,
+        expectedDecisionId: guide.tool_selection.decision_id,
+      })
+    );
+    assert.deepEqual(authority, {
+      status: "unavailable",
+      reasonCode: "feedback_operation_unprotected",
+    });
+  } finally {
+    await fixture.close();
+  }
+});
+
 test("protected tool feedback atomically binds the guide episode, decision attribution, and exact replay receipt", async () => {
   const fixture = setupLearningProductApp({ name: "protected-product-tool-feedback" });
   try {
@@ -4309,6 +4344,25 @@ test("protected tool feedback atomically binds the guide episode, decision attri
     });
     const operationId = "feedback:protected-product-tool-feedback";
     const payload = toolFeedbackPayload(guide, operationId);
+    const exposureBeforeFeedback = fixture.runtimeDatabase.db.prepare(
+      `SELECT episode_id FROM lite_learning_episode_events
+       WHERE event_kind = 'exposure_committed' AND source_id = ?`,
+    ).get(guide.guide_trace_id) as { episode_id: string } | undefined;
+    assert.ok(exposureBeforeFeedback);
+    const missingAuthority = await fixture.runtimeDatabase.transaction.run(() =>
+      fixture.learningEpisodeLedgerAccess.resolveMeasurementToolFeedbackAuthority({
+        tenantId: guide.tenant_id,
+        scope: guide.scope,
+        episodeId: exposureBeforeFeedback.episode_id,
+        guideTraceId: guide.guide_trace_id,
+        runId: guide.tool_selection.run_id,
+        expectedDecisionId: guide.tool_selection.decision_id,
+      })
+    );
+    assert.deepEqual(missingAuthority, {
+      status: "unavailable",
+      reasonCode: "feedback_missing",
+    });
     const feedback = await fixture.app.inject({
       method: "POST",
       url: "/v1/feedback",
@@ -4375,6 +4429,86 @@ test("protected tool feedback atomically binds the guide episode, decision attri
       body: firstBody,
     });
     assert.equal(stableStringify(JSON.parse(String(operation.receipt_json))), operation.receipt_json);
+
+    await assert.rejects(
+      fixture.learningEpisodeLedgerAccess.resolveMeasurementToolFeedbackAuthority({
+        tenantId: guide.tenant_id,
+        scope: guide.scope,
+        episodeId: firstBody.learning_episode_id,
+        guideTraceId: guide.guide_trace_id,
+        runId: guide.tool_selection.run_id,
+        expectedDecisionId: guide.tool_selection.decision_id,
+      }),
+      /shared Runtime transaction/,
+    );
+    const wrongDecisionAuthority = await fixture.runtimeDatabase.transaction.run(() =>
+      fixture.learningEpisodeLedgerAccess.resolveMeasurementToolFeedbackAuthority({
+        tenantId: guide.tenant_id,
+        scope: guide.scope,
+        episodeId: firstBody.learning_episode_id,
+        guideTraceId: guide.guide_trace_id,
+        runId: guide.tool_selection.run_id,
+        expectedDecisionId: "decision:unrelated",
+      })
+    );
+    assert.deepEqual(wrongDecisionAuthority, {
+      status: "unavailable",
+      reasonCode: "feedback_binding_mismatch",
+    });
+    const feedbackAuthority = await fixture.runtimeDatabase.transaction.run(() =>
+      fixture.learningEpisodeLedgerAccess.resolveMeasurementToolFeedbackAuthority({
+        tenantId: guide.tenant_id,
+        scope: guide.scope,
+        episodeId: firstBody.learning_episode_id,
+        guideTraceId: guide.guide_trace_id,
+        runId: guide.tool_selection.run_id,
+        expectedDecisionId: guide.tool_selection.decision_id,
+      })
+    );
+    assert.equal(feedbackAuthority.status, "available");
+    if (feedbackAuthority.status !== "available") throw new Error("protected feedback authority missing");
+    assert.equal(feedbackAuthority.eventId, firstBody.learning_feedback_event_id);
+    assert.equal(feedbackAuthority.eventSha256, event.event_sha256);
+    assert.equal(feedbackAuthority.episodeId, firstBody.learning_episode_id);
+    assert.equal(feedbackAuthority.guideTraceId, guide.guide_trace_id);
+    assert.equal(feedbackAuthority.runId, guide.tool_selection.run_id);
+    assert.equal(feedbackAuthority.decisionId, guide.tool_selection.decision_id);
+    assert.equal(feedbackAuthority.operationId, operationId);
+    assert.equal(feedbackAuthority.outcome, "positive");
+    assert.equal(feedbackAuthority.operationProtection, "protected");
+    const exactFeedbackAuthority = await fixture.runtimeDatabase.transaction.run(() =>
+      fixture.learningEpisodeLedgerAccess.resolveMeasurementToolFeedbackAuthority({
+        tenantId: guide.tenant_id,
+        scope: guide.scope,
+        episodeId: firstBody.learning_episode_id,
+        guideTraceId: guide.guide_trace_id,
+        runId: guide.tool_selection.run_id,
+        expectedDecisionId: guide.tool_selection.decision_id,
+        expectedEventId: firstBody.learning_feedback_event_id,
+        expectedEventSha256: String(event.event_sha256),
+        expectedOperationId: operationId,
+        expectedOperationReceiptSha256: sha256(String(operation.receipt_json)),
+      })
+    );
+    assert.deepEqual(exactFeedbackAuthority, feedbackAuthority);
+    const replacedEvidenceAuthority = await fixture.runtimeDatabase.transaction.run(() =>
+      fixture.learningEpisodeLedgerAccess.resolveMeasurementToolFeedbackAuthority({
+        tenantId: guide.tenant_id,
+        scope: guide.scope,
+        episodeId: firstBody.learning_episode_id,
+        guideTraceId: guide.guide_trace_id,
+        runId: guide.tool_selection.run_id,
+        expectedDecisionId: guide.tool_selection.decision_id,
+        expectedEventId: firstBody.learning_feedback_event_id,
+        expectedEventSha256: "0".repeat(64),
+        expectedOperationId: operationId,
+        expectedOperationReceiptSha256: sha256(String(operation.receipt_json)),
+      })
+    );
+    assert.deepEqual(replacedEvidenceAuthority, {
+      status: "unavailable",
+      reasonCode: "feedback_binding_mismatch",
+    });
 
     const replay = await fixture.app.inject({
       method: "POST",

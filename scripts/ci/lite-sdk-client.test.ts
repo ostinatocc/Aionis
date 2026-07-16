@@ -5,6 +5,7 @@ import {
   AionisClient,
   AionisClientError,
   AionisGuideFeedbackError,
+  type AionisMeasureResult,
   activeRouteTargetsFromGuide,
   agentContextFromGuide,
   agentPromptFromGuide,
@@ -998,6 +999,7 @@ test("SDK guide feedback helpers fail closed on every non-exact attribution path
 });
 
 test("SDK product-loop helpers assemble measure and snapshot inputs without leaking prompt internals", () => {
+  const operationId = "measure-product-loop-operation";
   const beforeGuide = {
     guide_trace_id: "guide-before",
     agent_context: {
@@ -1028,6 +1030,7 @@ test("SDK product-loop helpers assemble measure and snapshot inputs without leak
     },
   };
   const measureInput = measureInputFromGuideLoop({
+    operation_id: operationId,
     task: {
       task_id: "task-product-loop",
       run_id: "run-product-loop",
@@ -1042,6 +1045,7 @@ test("SDK product-loop helpers assemble measure and snapshot inputs without leak
   });
 
   assert.equal((measureInput.task as Record<string, unknown>).run_id, "run-product-loop");
+  assert.equal(measureInput.operation_id, operationId);
   const productTrace = measureInput.product_trace as Record<string, unknown>;
   assert.equal(productTrace.before_guide, beforeGuide);
   assert.equal(productTrace.after_guide, afterGuide);
@@ -1076,6 +1080,38 @@ test("SDK product-loop helpers assemble measure and snapshot inputs without leak
   assert.equal(snapshotInput.effect_report, measureResult.effect_report);
   assert.equal(snapshotInput.guide_trace_id, "guide-after");
   assert.equal("memory_packet" in snapshotInput, false);
+});
+
+test("SDK execution measureRun preserves protected measure operation identity", async () => {
+  const calls: Array<{ url: string; body: Record<string, unknown> }> = [];
+  const fakeFetch: typeof fetch = async (input, init) => {
+    const body = JSON.parse(String(init?.body ?? "{}")) as Record<string, unknown>;
+    calls.push({ url: String(input), body });
+    return new Response(JSON.stringify({
+      contract_version: "aionis_measure_result_v1",
+      operation_id: body.operation_id,
+    }), {
+      status: 200,
+      headers: { "content-type": "application/json" },
+    });
+  };
+  const client = createAionisClient({
+    baseUrl: "http://127.0.0.1:3001",
+    fetchImpl: fakeFetch,
+  });
+  const operationId = "measure-run-protected-operation";
+
+  const result: AionisMeasureResult = await client.execution.measureRun({
+    operation_id: operationId,
+    run_id: "run-measure-protected",
+    task_signature: "measure-protected",
+    after_guide: { guide_trace_id: "guide-after-protected" },
+  });
+
+  assert.equal(result.operation_id, operationId);
+  assert.deepEqual(calls.map((call) => call.url), ["http://127.0.0.1:3001/v1/measure"]);
+  assert.equal(calls[0]?.body.operation_id, operationId);
+  assert.equal((calls[0]?.body.task as Record<string, unknown>).run_id, "run-measure-protected");
 });
 
 test("AionisClient health and structured error handling", async () => {

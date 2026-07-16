@@ -275,7 +275,10 @@ const feedback = agentResult.used_memory_ids.length === 0
       tool_status: "succeeded",
     }));
 
-const measure = await aionis.measure(measureInputFromGuideLoop({
+// Allocate once before the first attempt and persist this ID with the host job.
+const measureOperationId = "measure:task-001:run-001:attempt-1";
+const measureRequest = measureInputFromGuideLoop({
+  operation_id: measureOperationId,
   task: {
     task_id: "task-001",
     run_id: "run-001",
@@ -284,7 +287,11 @@ const measure = await aionis.measure(measureInputFromGuideLoop({
   },
   after_guide: guide,
   feedback_result: feedback,
-}));
+});
+const measure = await aionis.measure(measureRequest);
+
+// After an unknown transport outcome, retry the exact same measureRequest.
+// Never reuse measureOperationId with changed content.
 
 // This short example has no Runtime-verified before/after verifier chain, so it
 // is diagnostic only and cannot export learning or skill candidates.
@@ -318,6 +325,9 @@ rejects context-only, unknown, mixed-surface, and rehydrate-only attribution,
 and derives the served surface. `measureInputFromGuideLoop()` and
 `snapshotInputFromGuideLoop()` hide the internal `product_trace` and operator
 snapshot wiring from normal app code.
+Allocate and persist one stable measure `operation_id` before the first attempt.
+If the response is lost, retry the same measure request and ID; any content
+change is a new logical write and requires a new ID.
 The measure helper still accepts legacy client evidence claims, but the Runtime
 does not use them to open the evidence gate.
 

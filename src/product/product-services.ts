@@ -622,6 +622,7 @@ export const ProductFlightRecorderRequest = z.object({
 });
 
 export const ProductMeasureRequest = z.object({
+  operation_id: z.string().trim().min(1).max(256).optional(),
   ...ProductWriteIdentityShape,
   tenant_id: z.string().trim().min(1).optional(),
   scope: z.string().trim().min(1).optional(),

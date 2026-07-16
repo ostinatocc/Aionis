@@ -14,11 +14,13 @@ import { resolveNodeFeedbackAttributionStrength } from "../memory/node-feedback-
 import { sha256Hex } from "../util/crypto.js";
 import {
   LITE_LEARNING_LEDGER_REQUIRED_COLUMNS,
+  type LiteLearningEpisodeLedgerAccess,
+} from "./lite-learning-episode-ledger.js";
+import {
   learningFeedbackAttributionItemDigest,
   learningFeedbackAttributionSetDigest,
   learningHostUseReceiptItemSetDigest,
-  type LiteLearningEpisodeLedgerAccess,
-} from "./lite-learning-episode-ledger.js";
+} from "./lite-learning-feedback-digest.js";
 import type {
   LiteLearningAuthorityRow,
   LiteLearningSqlValue,

@@ -74,7 +74,7 @@ export type ClaimLedgerAccess = {
   close(): Promise<void>;
 };
 
-export const SKILL_CANDIDATE_REVIEW_ACCESS_CAPABILITY_VERSION = 2;
+export const SKILL_CANDIDATE_REVIEW_ACCESS_CAPABILITY_VERSION = 3;
 
 export type SkillCandidateReviewStatus = "pending_review" | "promoted" | "rejected";
 
@@ -84,6 +84,9 @@ export type ProductMeasurementRecord = {
   scope: string;
   source: "manual_observations" | "product_trace";
   measurement_digest: string;
+  baseline_episode_id: string | null;
+  after_episode_id: string | null;
+  record_sha256: string | null;
   effect_report: AionisEffectReport;
   eligible_for_skill_export: boolean;
   evidence_status: "sufficient" | "insufficient";
@@ -122,6 +125,31 @@ export function productMeasurementDigest(args: Pick<
     evidence_status: args.evidence_status,
     runtime_evidence_ids: args.runtime_evidence_ids,
     eligibility_reasons: args.eligibility_reasons,
+  });
+}
+
+export function productMeasurementRecordDigest(args: Pick<
+  ProductMeasurementRecord,
+  | "measurement_id"
+  | "tenant_id"
+  | "scope"
+  | "source"
+  | "baseline_episode_id"
+  | "after_episode_id"
+  | "measurement_digest"
+  | "created_by"
+  | "created_at"
+>): string {
+  return stableJsonDigest({
+    measurement_id: args.measurement_id,
+    tenant_id: args.tenant_id,
+    scope: args.scope,
+    source: args.source,
+    baseline_episode_id: args.baseline_episode_id,
+    after_episode_id: args.after_episode_id,
+    measurement_digest: args.measurement_digest,
+    created_by: args.created_by,
+    created_at: args.created_at,
   });
 }
 
@@ -177,6 +205,14 @@ export type SkillCandidateReviewAccess = {
     scope: string;
     measurementId: string;
   }): Promise<ProductMeasurementRecord | null>;
+  getMeasurementByOperationId(args: {
+    tenantId: string;
+    scope: string;
+    operationId: string;
+  }): Promise<Readonly<{
+    measurement: ProductMeasurementRecord;
+    requestSha256: string;
+  }> | null>;
   enqueueTraceDerivedSkillCandidates(args: {
     tenantId: string;
     scope: string;

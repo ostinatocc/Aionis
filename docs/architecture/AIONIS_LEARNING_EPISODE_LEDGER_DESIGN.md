@@ -4168,12 +4168,22 @@ type EffectMeasuredV1 = {
   contract_version: "aionis_learning_effect_v1";
   measurement_id: string;
   measurement_record_sha256: string;
+  // Optional only so a persisted historical v1 row can be replayed.
+  operation_receipt_sha256?: string | null;
   baseline_episode_id: string;
   after_episode_id: string;
   evidence_status: "sufficient" | "insufficient";
   eligible_for_skill_export: boolean;
 };
 ```
+
+Every fresh effect builder requires `operation_receipt_sha256` to be present.
+It is the SHA-256 of the canonical `product_measure_v1` response receipt for a
+protected measure and `null` for a fresh unprotected effect. Omission is a
+read-compatibility exception for an already persisted historical v1 event only:
+the row remains observable and exact-replayable, but authority resolution
+returns `effect_receipt_authority_missing`, so it cannot authorize candidate
+export or promotion. New missing-field effects are rejected.
 
 Manual measurements remain persistable but do not create an authoritative
 effect event or promotion evidence.
@@ -4327,13 +4337,77 @@ the main database and transaction runner. The shared transaction writes:
 
 ```text
 product measurement with full record digest
-effect_measured episode event
-operation receipt
+primary product_measure_v1 operation receipt, for a protected request
+sibling product_measure_receipt_authority_v1 root, for a protected request
+effect_measured episode event, exactly when the derived predicate expects one
 ```
 
 `lite_product_measurements` adds nullable `baseline_episode_id`,
-`after_episode_id`, and `record_sha256`. The full record digest binds ID, tenant,
-scope, source, both episode IDs, and the existing `measurement_digest`.
+`after_episode_id`, and `record_sha256`. `measurement_digest` binds the effect
+report, export decision, evidence status, Runtime evidence IDs, and eligibility
+reasons. The full `record_sha256` additionally binds measurement ID, tenant,
+scope, source, both episode IDs, `measurement_digest`, `created_by`, and the
+canonical UTC-millisecond `created_at`.
+
+A protected measurement carries exactly one immutable evidence marker in its
+`runtime_evidence_ids`:
+
+```text
+product_measure_operation:<operation_id>:<product_measure_request_sha256>
+```
+
+The marker is inside `measurement_digest`, so the measurement independently
+retains the operation/request identity. Global integrity requires a one-to-one
+set across marker-bearing measurement, primary `product_measure_v1` row, and
+sibling authority row for the same tenant, scope, and operation ID. An exact
+request replay also revalidates this set before returning the stored response.
+
+The primary receipt stores the canonical product response. The sibling root is
+separate canonical JSON that binds tenant, scope, operation ID, primary request
+digest, full primary-receipt digest, measurement ID, `measurement_digest`, and
+`record_sha256`. Its own request digest is the SHA-256 of that root JSON. Both
+rows commit with the measurement and any effect event in one transaction.
+Consequently, one protected `/v1/measure` is one logical write but contributes
+two physical rows to `lite_runtime_write_operations`; raw operation-row counts
+must not be reported as logical measure counts.
+
+Every fresh measurement for which the Runtime will write an effect also carries
+exactly one digest marker:
+
+```text
+effect_expected_v1:<sha256(canonical tenant/scope/measurement/episode-pair body)>
+```
+
+The Runtime adds it only after resolving a complete episode pair and deriving
+`source=product_trace` plus `evidence_status=sufficient`; callers cannot opt in.
+It is included before `measurement_digest` and `record_sha256` are computed.
+Global integrity recomputes the exact marker and requires exactly one matching
+`effect_measured` event for protected and unprotected fresh measurements alike.
+The low-level fresh-effect append path requires the same marker, so an internal
+caller cannot bypass this rule by writing directly to the episode ledger.
+Unmarked historical v1 measurements remain readable, while duplicate effect
+authority is always an integrity error. Protected measurements that do not meet
+the derived effect predicate require zero events. A modern protected effect also
+binds the full primary receipt through non-null `operation_receipt_sha256` and
+re-resolves the sibling root before candidate enqueue, promotion, or
+materialization.
+
+Guide receipt verification binds the canonical ledger JSON to every duplicated
+receipt-table identity column, including `run_id`, consumer agent, and consumer
+team. The resulting verified receipt run is then required to equal both the
+baseline and after episode runs. If a caller omits `task.run_id`, Runtime may
+derive it from that closed authority chain; a receipt/episode run disagreement
+instead clears the episode pair, marks the measurement insufficient, and writes
+no effect marker or event.
+
+This is a corruption-detection boundary, not a signature from an external
+trust root. It detects missing rows, one-row changes, unsynchronized primary/
+root/measurement edits, paired receipt deletion while the measurement marker
+remains, and missing or duplicate expected effects. It does not claim to defeat
+an actor with unrestricted database-write access who can coherently rewrite the
+measurement, marker, both receipts, all digests, and the linked effect event.
+That actor is outside this integrity model and must be controlled by file/DB
+authorization, process isolation, and protected backup or external attestation.
 
 ### 10.5 Evidence and authority decisions
 
@@ -5118,6 +5192,12 @@ source_kind = legacy_backfill
 It never guesses historical policy from current env or feedback from mutable
 node counters. Old feedback and measurements remain unlinked unless an original
 authoritative source link exists.
+
+Historical `effect_measured` v1 payloads that predate
+`operation_receipt_sha256` remain readable and exact-replayable so a Runtime can
+reopen an existing ledger. They are observational only: authority resolution
+reports `effect_receipt_authority_missing`, they cannot become export or
+promotion evidence, and fresh writes may not omit the field.
 
 ### 14.3 Verification and backup
 

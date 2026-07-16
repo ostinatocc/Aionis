@@ -11,7 +11,13 @@ import {
   learningControlDeadLetterTriggerSha256,
   learningSafetyEvidenceScopeSetDigest,
 } from "../memory/learning-safety-stop.js";
-import { FeedbackAttributedV1Schema, type FeedbackAttributedV1 } from "../memory/learning-episode-ledger.js";
+import {
+  FeedbackAttributedV1Schema,
+  LearningEpisodeEventWithoutDigestSchema,
+  assertFeedbackOperationBinding,
+  learningEpisodeEventDigest,
+  type FeedbackAttributedV1,
+} from "../memory/learning-episode-ledger.js";
 import {
   resolveNodeFeedbackAttributionStrength,
   type NodeFeedbackAttributionStrength,
@@ -28,9 +34,40 @@ import { buildToolsRunLifecycleSummary } from "../memory/tools-lifecycle-summary
 import { buildAionisUri } from "../memory/uri.js";
 import { sha256Hex } from "../util/crypto.js";
 import { stableUuid } from "../util/uuid.js";
+import {
+  learningFeedbackAttributionItemDigest,
+  learningFeedbackAttributionSetDigest,
+} from "./lite-learning-feedback-digest.js";
+import type { LiteLearningAuthorityRow } from "./lite-learning-confirmatory-authority.js";
 import type { SqliteDatabase } from "./sqlite.js";
 
 type Row = Record<string, unknown>;
+
+export type LiteLearningProtectedToolFeedbackAuthorityResolution =
+  | Readonly<{
+      status: "available";
+      eventId: string;
+      eventSha256: string;
+      episodeId: string;
+      guideTraceId: string;
+      runId: string;
+      operationId: string;
+      operationReceiptSha256: string;
+      decisionId: string;
+      outcome: "positive";
+      operationProtection: "protected";
+      sourceCommitId: string;
+      recordedAt: string;
+    }>
+  | Readonly<{
+      status: "unavailable";
+      reasonCode:
+        | "feedback_missing"
+        | "feedback_ambiguous"
+        | "feedback_binding_mismatch"
+        | "feedback_not_positive"
+        | "feedback_operation_unprotected";
+    }>;
 
 const FEEDBACK_INHERITED_FIELDS = [
   "collection_class", "collection_principal_sha256", "collector_id", "collector_version",
@@ -1009,6 +1046,163 @@ function assertProtectedToolFeedbackOperationReceipt(args: {
   if (stableStringify(runLifecycle.lifecycle_summary) !== stableStringify(expectedLifecycleSummary)) {
     throw new Error("lite_learning_integrity_failed:tool_feedback_operation_receipt_run_summary");
   }
+}
+
+export function resolveLiteLearningProtectedPositiveToolFeedbackAuthority(
+  db: SqliteDatabase,
+  args: Readonly<{
+    tenantId: string;
+    scope: string;
+    episodeId: string;
+    guideTraceId: string;
+    runId: string;
+    expectedDecisionId: string | null;
+    expectedEventId?: string | null;
+    expectedEventSha256?: string | null;
+    expectedOperationId?: string | null;
+    expectedOperationReceiptSha256?: string | null;
+  }>,
+): LiteLearningProtectedToolFeedbackAuthorityResolution {
+  const rows = db.prepare(
+    `SELECT feedback.*
+     FROM lite_learning_episode_events AS feedback
+     WHERE feedback.tenant_id = ? AND feedback.scope = ? AND feedback.episode_id = ?
+       AND feedback.event_kind = 'feedback_attributed'
+       AND json_extract(feedback.payload_json, '$.feedback_kind') = 'tool_selection'
+       AND NOT EXISTS (
+         SELECT 1 FROM lite_learning_episode_events AS replacement
+         WHERE replacement.tenant_id = feedback.tenant_id
+           AND replacement.scope = feedback.scope
+           AND replacement.supersedes_event_id = feedback.event_id
+       )
+     ORDER BY feedback.episode_sequence, feedback.event_id`,
+  ).all(args.tenantId, args.scope, args.episodeId) as Row[];
+  if (rows.length === 0) return { status: "unavailable", reasonCode: "feedback_missing" };
+
+  const candidates = rows.map((event) => {
+    const canonicalEvent = LearningEpisodeEventWithoutDigestSchema.parse({
+      contract_version: "aionis_learning_episode_event_v1",
+      tenant_id: event.tenant_id,
+      scope: event.scope,
+      event_id: event.event_id,
+      episode_id: event.episode_id,
+      episode_sequence: event.episode_sequence,
+      event_kind: event.event_kind,
+      source_kind: event.source_kind,
+      source_id: event.source_id,
+      source_sha256: event.source_sha256,
+      previous_event_sha256: event.previous_event_sha256,
+      payload_sha256: event.payload_sha256,
+      item_set_sha256: event.item_set_sha256,
+      source_commit_id: event.source_commit_id,
+      supersedes_event_id: event.supersedes_event_id,
+      operation_id: event.operation_id,
+      run_id: event.run_id,
+      collection_class: event.collection_class,
+      recorded_at: event.recorded_at,
+    });
+    const payload = FeedbackAttributedV1Schema.parse(parseCanonical(
+      requiredString(event, "payload_json"),
+      "measurement_tool_feedback_payload",
+    ));
+    if (event.event_sha256 !== learningEpisodeEventDigest(canonicalEvent)
+      || canonicalEvent.payload_sha256 !== sha256Hex(requiredString(event, "payload_json"))) {
+      throw new Error("lite_learning_integrity_failed:measurement_tool_feedback_event_digest");
+    }
+    assertFeedbackOperationBinding(canonicalEvent, payload);
+    const predecessor = canonicalEvent.episode_sequence > 1
+      ? db.prepare(
+        `SELECT event_sha256 FROM lite_learning_episode_events
+         WHERE tenant_id = ? AND scope = ? AND episode_id = ? AND episode_sequence = ?`,
+      ).get(
+        canonicalEvent.tenant_id,
+        canonicalEvent.scope,
+        canonicalEvent.episode_id,
+        canonicalEvent.episode_sequence - 1,
+      ) as Row | undefined
+      : undefined;
+    if (canonicalEvent.episode_sequence <= 1
+      || !predecessor
+      || predecessor.event_sha256 !== canonicalEvent.previous_event_sha256) {
+      throw new Error("lite_learning_integrity_failed:measurement_tool_feedback_chain");
+    }
+    const attributions = db.prepare(
+      `SELECT * FROM lite_learning_feedback_attributions
+       WHERE tenant_id = ? AND scope = ? AND event_id = ?
+       ORDER BY subject_kind, subject_id`,
+    ).all(canonicalEvent.tenant_id, canonicalEvent.scope, canonicalEvent.event_id) as
+      LiteLearningAuthorityRow[];
+    if (attributions.length !== 1) {
+      throw new Error("lite_learning_integrity_failed:measurement_tool_feedback_attribution_count");
+    }
+    for (const attribution of attributions) {
+      if (attribution.tenant_id !== canonicalEvent.tenant_id
+        || attribution.scope !== canonicalEvent.scope
+        || attribution.event_id !== canonicalEvent.event_id
+        || attribution.episode_id !== canonicalEvent.episode_id
+        || attribution.item_sha256 !== learningFeedbackAttributionItemDigest(attribution)) {
+        throw new Error("lite_learning_integrity_failed:measurement_tool_feedback_attribution_digest");
+      }
+    }
+    if (canonicalEvent.item_set_sha256 !== learningFeedbackAttributionSetDigest(attributions)) {
+      throw new Error("lite_learning_integrity_failed:measurement_tool_feedback_item_set_digest");
+    }
+    const { toolRoot } = assertLiteLearningFeedbackExposureProvenance(
+      db,
+      event,
+      payload,
+      attributions,
+      null,
+    );
+    if (toolRoot === null) {
+      throw new Error("lite_learning_integrity_failed:measurement_tool_feedback_root_missing");
+    }
+    return { event, payload, root: toolRoot };
+  }).filter(({ payload, root }) =>
+    payload.guide_trace_id === args.guideTraceId
+    && payload.run_id === args.runId
+    && (args.expectedDecisionId === null || root.attribution.subject_id === args.expectedDecisionId)
+  ).filter(({ event, payload }) =>
+    (args.expectedEventId == null || event.event_id === args.expectedEventId)
+    && (args.expectedEventSha256 == null || event.event_sha256 === args.expectedEventSha256)
+    && (args.expectedOperationId == null || event.operation_id === args.expectedOperationId)
+    && (args.expectedOperationReceiptSha256 == null
+      || payload.operation_receipt_sha256 === args.expectedOperationReceiptSha256)
+  );
+  if (candidates.length === 0) {
+    return { status: "unavailable", reasonCode: "feedback_binding_mismatch" };
+  }
+  if (candidates.length !== 1) {
+    return { status: "unavailable", reasonCode: "feedback_ambiguous" };
+  }
+  const candidate = candidates[0]!;
+  if (candidate.root.attribution.outcome !== "positive") {
+    return { status: "unavailable", reasonCode: "feedback_not_positive" };
+  }
+  if (candidate.payload.operation_protection !== "protected") {
+    return { status: "unavailable", reasonCode: "feedback_operation_unprotected" };
+  }
+  assertProtectedToolFeedbackOperationReceipt({
+    db,
+    event: candidate.event,
+    payload: candidate.payload,
+    root: candidate.root,
+  });
+  return {
+    status: "available",
+    eventId: requiredString(candidate.event, "event_id"),
+    eventSha256: requiredString(candidate.event, "event_sha256"),
+    episodeId: args.episodeId,
+    guideTraceId: args.guideTraceId,
+    runId: args.runId,
+    operationId: requiredString(candidate.event, "operation_id"),
+    operationReceiptSha256: requiredString(candidate.payload, "operation_receipt_sha256"),
+    decisionId: requiredString(candidate.root.attribution, "subject_id"),
+    outcome: "positive",
+    operationProtection: "protected",
+    sourceCommitId: requiredString(candidate.event, "source_commit_id"),
+    recordedAt: requiredString(candidate.event, "recorded_at"),
+  };
 }
 
 function assertFeedbackAuthorityProvenance(db: SqliteDatabase): void {

@@ -538,6 +538,8 @@ const EffectMeasuredV1ObjectSchema = z.object({
   contract_version: z.literal("aionis_learning_effect_v1"),
   measurement_id: BoundedIdSchema,
   measurement_record_sha256: DigestSha256Schema,
+  // Omission is accepted only to replay historical v1 effects; new builders require it.
+  operation_receipt_sha256: NullableDigestSchema.optional(),
   baseline_episode_id: EpisodeIdSchema,
   after_episode_id: EpisodeIdSchema,
   evidence_status: z.enum(["sufficient", "insufficient"]),
@@ -569,6 +571,9 @@ export const EffectMeasuredV1Schema = EffectMeasuredV1ObjectSchema.superRefine(
 );
 
 export type EffectMeasuredV1 = z.infer<typeof EffectMeasuredV1Schema>;
+export type FreshEffectMeasuredV1 = EffectMeasuredV1 & Readonly<{
+  operation_receipt_sha256: string | null;
+}>;
 
 export const LearningEpisodePayloadV1Schema = z.discriminatedUnion("contract_version", [
   ExposureCommittedV1ObjectSchema,

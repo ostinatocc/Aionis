@@ -1719,8 +1719,8 @@ git commit -m "refactor(feedback): make tool learning one atomic unit"
 **Completion note (2026-07-16):** Implemented on Runtime main. Tool feedback
 uses early replay, external prepare, transaction-bound persist with an inside-
 transaction replay recheck, exact final-response receipt storage, episode
-attribution, and after-commit finalize. Task 6.1 has not started in this
-checkpoint.
+attribution, and after-commit finalize. Task 6.1 had not started at that earlier
+checkpoint; its current completion record is below.
 
 ## Phase 6: Measurement episode binding
 
@@ -1742,9 +1742,13 @@ Test:
 
 - verified before/after guide receipts resolve to deterministic episode IDs;
 - measurement full-envelope digest binds ID, tenant, scope, source, both
-  episodes, and existing measurement digest;
+  episodes, existing measurement digest, creator, and canonical creation time;
 - manual measurement creates no effect event;
-- `before_commit` fault rolls back measurement and effect event together;
+- every protected response has a one-to-one
+  `product_measure_receipt_authority_v1` sibling root, including manual and
+  insufficient/no-pair measurements;
+- `before_commit` or receipt-root insertion fault rolls back measurement,
+  primary receipt, authority root, and effect event together;
 - protected retry returns the exact stored product response without repeating
   preflight work; changed request under the same operation returns 409;
 - early replay plus inside-transaction race recheck produces one measurement,
@@ -1768,8 +1772,10 @@ operation kind `product_measure_v1`.
 
 Check the operation receipt before measurement preparation and recheck it under
 the shared transaction. Construct the exact final response before commit and
-write its `product_measure_v1` operation receipt together with the measurement
-and effect event; fault injection after any insert rolls all three back.
+write its `product_measure_v1` operation receipt and canonical
+`product_measure_receipt_authority_v1` sibling root together with the
+measurement and effect event; fault injection after any insert rolls the whole
+unit back.
 
 Only `runtime_verified` sufficient product traces create `effect_measured`.
 The event references the measurement record digest; it does not duplicate the
@@ -1789,6 +1795,53 @@ git add src/product/product-services.ts src/product/measure-service.ts \
   scripts/ci/lite-product-facade-route.test.ts scripts/ci/lite-atomic-write-uow.test.ts
 git commit -m "feat(measure): bind verified effects to learning episodes"
 ```
+
+**Completion note (2026-07-16):** Implemented without schema DDL. Protected
+measure requests now replay one canonical `product_measure_v1` response and
+persist the measurement, full-record digest, effect event, and operation receipt
+inside the shared Runtime transaction. The episode pair and stable host-task
+identity come from ledger authority; caller-supplied task or episode attribution
+cannot upgrade them. Restart verification replays both measurement digests and
+the effect's episode, operation-receipt, and protected positive tool-feedback
+bindings. Each protected effect payload binds the SHA-256 of the complete
+canonical measure receipt; retry re-loads the immutable measurement, recomputes
+the kernel result, and revalidates that receipt through the same effect authority.
+Export authority also resolves the exact feedback event/event digest and feedback
+operation/receipt digest named by the measurement, with causal order fixed as
+feedback at or before measurement at or before effect.
+
+The full-record digest also fixes `created_by` and canonical-millisecond
+`created_at`. Every protected operation has exactly one independently checked
+receipt-authority sibling, so manual and insufficient/no-pair retries cannot
+self-authenticate from their current response bytes. Startup/backup replay
+rejects missing, orphaned, duplicated, or mismatched roots. Historical v1
+effect payloads that predate `operation_receipt_sha256` remain readable across
+restart, but resolve only to `effect_receipt_authority_missing`; the production
+builder rejects creating another such row and they can never authorize export.
+
+Every fresh sufficient episode-linked product measurement also carries an exact
+`effect_expected_v1` digest marker before its measurement and record digests are
+computed. Startup/backup integrity therefore requires one and only one effect
+for both protected and unprotected fresh measurements, while unmarked historical
+v1 measurements remain compatible. The low-level fresh-effect append path also
+requires this marker. Protected no-effect measurements require zero effects. The
+operation evidence marker separately makes a protected
+measurement the durable third member of the measurement/primary-receipt/sibling-
+root one-to-one set, so paired receipt deletion cannot silently create a second
+measurement on retry.
+
+Task identity is authority-derived even when the caller omits `task.run_id`:
+the guide ledger JSON must match its receipt-table run and consumer columns, and
+that verified run must equal both episode runs. Any cross-run disagreement makes
+the measurement insufficient and produces no effect.
+
+Legacy or unprotected feedback and measure calls remain observable: they may
+produce a sufficient effect when the Runtime evidence itself is sufficient, but
+they are promotion-ineligible. Candidate enqueue, promote, and materialize each
+re-resolve the exact measurement effect authority in the same Runtime
+transaction. The current confirmatory resolver still intentionally fail-controls
+eligible-host traffic while external prerequisite roots are unavailable, so this
+checkpoint does not claim that a live autonomous promotion loop is enabled.
 
 ## Phase 7: Experiment assignment and A/A safety
 

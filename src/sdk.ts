@@ -1110,6 +1110,7 @@ export type AionisEffectReport = AionisJsonObject & {
 
 export type AionisMeasureResult = AionisJsonObject & {
   contract_version: "aionis_measure_result_v1";
+  operation_id?: string;
   tenant_id: string;
   scope: string;
   measurement_id: string;
@@ -1155,6 +1156,7 @@ export type AionisFeedbackFromGuideInput = {
 };
 
 export type AionisMeasureFromGuideLoopInput = {
+  operation_id?: string;
   task: AionisProductTask;
   after_guide: unknown;
   before_guide?: unknown;
@@ -1329,6 +1331,7 @@ export type AionisExecutionOutcomeInput = AionisExecutionStepInput & {
 };
 
 export type AionisExecutionMeasureRunInput = AionisExecutionRunRef & {
+  operation_id?: string;
   tenant_id?: string;
   scope?: string;
   before_guide?: unknown;
@@ -2876,6 +2879,7 @@ export class AionisExecutionClient {
 
   async measureRun<T = AionisMeasureResult>(input: AionisExecutionMeasureRunInput, options?: AionisRequestOptions): Promise<T> {
     return this.client.measure<T>(measureInputFromGuideLoop({
+      operation_id: input.operation_id,
       task: {
         task_id: input.task_id ?? input.run_id,
         run_id: input.run_id,
@@ -4273,6 +4277,7 @@ export function feedbackFromGuide(input: AionisFeedbackFromGuideInput): AionisFe
 
 export function measureInputFromGuideLoop(input: AionisMeasureFromGuideLoopInput): AionisJsonObject {
   return stripUndefined({
+    operation_id: input.operation_id,
     tenant_id: input.tenant_id,
     scope: input.scope,
     task: stripUndefined({
