@@ -86,6 +86,7 @@ import {
   learningConfirmatoryNamespaceLeaseMembershipDigest,
   type LearningExperimentConfirmatoryCohortPairV1,
 } from "../../src/memory/learning-experiment-provisioning.js";
+import { assertMeasurementToolFeedbackAuthorityBinding } from "../../src/store/lite-learning-measurement-authority.js";
 
 const D = {
   a: "a".repeat(64),
@@ -486,11 +487,79 @@ test("exposure, feedback, and effect payloads are strict, bounded, and legacy is
     contract_version: "aionis_learning_effect_v1",
     measurement_id: "measurement-42",
     measurement_record_sha256: D.a,
+    operation_receipt_sha256: D.d,
     baseline_episode_id: "lep_" + D.b,
     after_episode_id: "lep_" + D.c,
     evidence_status: "sufficient",
     eligible_for_skill_export: true,
   }));
+  const historicalEffect = EffectMeasuredV1Schema.parse({
+    contract_version: "aionis_learning_effect_v1",
+    measurement_id: "measurement-historical-v1",
+    measurement_record_sha256: D.a,
+    baseline_episode_id: "lep_" + D.b,
+    after_episode_id: "lep_" + D.c,
+    evidence_status: "sufficient",
+    eligible_for_skill_export: true,
+  });
+  assert.equal(historicalEffect.operation_receipt_sha256, undefined);
+});
+
+test("measurement effect binds the exact feedback event, receipt, and causal time order", () => {
+  const authority = {
+    status: "available",
+    eventId: "feedback:event:42",
+    eventSha256: D.a,
+    episodeId: `lep_${D.b}`,
+    guideTraceId: "guide-42",
+    runId: "run-42",
+    operationId: "feedback:operation:42",
+    operationReceiptSha256: D.c,
+    decisionId: "decision-42",
+    outcome: "positive",
+    operationProtection: "protected",
+    sourceCommitId: "commit-feedback-42",
+    recordedAt: "2026-07-14T07:59:58.000Z",
+  } as const;
+  const runtimeEvidenceIds = [
+    `tool_feedback_event:${authority.eventId}:${authority.eventSha256}`,
+    `tool_feedback_receipt:${authority.operationId}:${authority.operationReceiptSha256}`,
+  ];
+  const binding = {
+    runtimeEvidenceIds,
+    measurementCreatedAt: "2026-07-14T07:59:59.000Z",
+    effectRecordedAt: NOW,
+    authority,
+  } as const;
+  assert.doesNotThrow(() => assertMeasurementToolFeedbackAuthorityBinding(binding));
+  assert.throws(
+    () => assertMeasurementToolFeedbackAuthorityBinding({
+      ...binding,
+      authority: { ...authority, eventSha256: D.d },
+    }),
+    /evidence was replaced/,
+  );
+  assert.throws(
+    () => assertMeasurementToolFeedbackAuthorityBinding({
+      ...binding,
+      runtimeEvidenceIds: [...runtimeEvidenceIds, `tool_feedback_event:duplicate:${D.e}`],
+    }),
+    /lacks exact tool feedback evidence refs/,
+  );
+  assert.throws(
+    () => assertMeasurementToolFeedbackAuthorityBinding({
+      ...binding,
+      authority: { ...authority, recordedAt: "2026-07-14T08:00:01.000Z" },
+    }),
+    /time order is invalid/,
+  );
+  assert.throws(
+    () => assertMeasurementToolFeedbackAuthorityBinding({
+      ...binding,
+      effectRecordedAt: "2026-07-14T07:59:58.500Z",
+    }),
+    /time order is invalid/,
+  );
 });
 
 test("one frozen-prior resolver owns explore/exploit and exact reason precedence", () => {

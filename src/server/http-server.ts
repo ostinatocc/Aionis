@@ -27,6 +27,7 @@ import {
 import type { ProductServices } from "../product/product-services.js";
 import { registerOperatorSnapshotRoutes } from "../routes/operator-snapshot.js";
 import { buildRuntimeBoundaryInventoryResponse } from "../memory/runtime-boundary-inventory.js";
+import type { LearningExperimentResolverRegistry } from "../memory/learning-experiment-resolver.js";
 import type { ExecutionStateStore } from "../execution/state-store.js";
 import type { ExecutionTreeStore } from "../execution/tree-store.js";
 import type { ClaimLedgerAccess, SkillCandidateReviewAccess } from "../store/memory-store.js";
@@ -654,6 +655,7 @@ export function createRuntimeProductServices(args: {
   executionTreeStore?: ExecutionTreeStore | null;
   claimLedgerAccess?: ClaimLedgerAccess | null;
   learningEpisodeLedgerAccess?: LiteLearningEpisodeLedgerAccess | null;
+  learningExperimentResolverRegistry?: LearningExperimentResolverRegistry;
   learningControlJobAccess?: LiteLearningControlJobAccess | null;
   admissionCandidatePolicyProfileRules?: RuntimeGovernanceConfig["admissionCandidatePolicyProfileRules"];
   skillCandidateReviewAccess?: SkillCandidateReviewAccess | null;
@@ -682,6 +684,7 @@ export function createRuntimeProductServices(args: {
       executionTreeStore: args.executionTreeStore ?? null,
       claimLedgerAccess: args.claimLedgerAccess ?? null,
       learningEpisodeLedgerAccess: args.learningEpisodeLedgerAccess ?? null,
+      learningExperimentResolverRegistry: args.learningExperimentResolverRegistry,
       admissionCandidatePolicyProfileRules: args.admissionCandidatePolicyProfileRules,
       memoryWrite: args.memoryWriteService,
     }),
@@ -702,6 +705,7 @@ export function createRuntimeProductServices(args: {
       defaultScope: args.env.MEMORY_SCOPE,
       skillCandidateReviewAccess: args.skillCandidateReviewAccess ?? null,
       runtimeEvidenceStore: args.liteWriteStore,
+      learningEpisodeLedgerAccess: args.learningEpisodeLedgerAccess ?? null,
     }),
   };
 }

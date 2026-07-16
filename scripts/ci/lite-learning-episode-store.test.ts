@@ -13,6 +13,7 @@ import {
   assertLiteLearningEpisodeLedgerSchemaIntegrity,
   assertLiteLearningEpisodeLedgerIntegrity,
   assertLearningLookProposalAgainstDatabase,
+  buildLiteMeasurementEffectEventRow,
   buildLearningOutcomeRedactedAuthorityProjection,
   createLiteLearningEpisodeLedgerAccess,
   deriveLiteLearningLookAuthorityContext,
@@ -60,6 +61,7 @@ import {
   hostUseReceiptDigest,
   type EventWithoutDigest,
   type ExposureCommittedV1,
+  type HostTaskEnvelopeV1,
   type HostUseReceiptV1Body,
   type LearningLedgerItem,
 } from "../../src/memory/learning-episode-ledger.ts";
@@ -73,6 +75,8 @@ import {
   learningExperimentCloseApprovalMac,
 } from "../../src/memory/learning-experiment-closing.ts";
 import { AionisAgentContextSchema } from "../../src/memory/product-output-contract.ts";
+import { buildAionisEffectReport } from "../../src/memory/product-output/learning-effect.ts";
+import { evaluateAionisEffect } from "../../src/kernel/effect-evaluator.ts";
 import {
   AIONIS_ADMISSION_CANDIDATE_POLICY_ID,
   AIONIS_ADMISSION_CANDIDATE_POLICY_VERSION,
@@ -101,6 +105,17 @@ import {
   createLiteWriteStore,
   createLiteWriteStoreFromDatabase,
 } from "../../src/store/lite-write-store.ts";
+import {
+  productMeasurementDigest,
+  productMeasurementRecordDigest,
+  type ProductMeasurementRecord,
+} from "../../src/store/memory-store.ts";
+import {
+  buildProductMeasureReceiptAuthority,
+  productMeasureOperationEvidenceReference,
+} from "../../src/store/lite-product-measurement-record.ts";
+import { effectExpectedV1EvidenceReference } from
+  "../../src/store/lite-learning-measurement-authority.ts";
 
 const MIGRATION_CRASH_CHILD = fileURLToPath(
   new URL("./support/lite-learning-v3-migration-crash-child.ts", import.meta.url),
@@ -211,6 +226,84 @@ function sha256(value: string): string {
 function canonicalJson(value: unknown): { json: string; sha256: string } {
   const json = stableStringify(value);
   return { json, sha256: sha256(json) };
+}
+
+function productMeasurementFixture(args: Readonly<{
+  measurementId: string;
+  tenantId: string;
+  scope: string;
+  baselineEpisodeId: string;
+  afterEpisodeId: string;
+  createdAt: string;
+  eligibleForSkillExport?: boolean;
+  runtimeEvidenceIds?: string[];
+}>): ProductMeasurementRecord {
+  const effectReport = buildAionisEffectReport({
+    tenant_id: args.tenantId,
+    scope: args.scope,
+    task: {
+      task_id: `task:${args.measurementId}`,
+      run_id: `run:${args.measurementId}`,
+      task_signature: `task-signature:${args.measurementId}`,
+      task_family: "continuity_recovery",
+    },
+    report: evaluateAionisEffect({ baseline: {}, aionis: {} }),
+    comparison: { mode: "observe_only_vs_active", sufficient_evidence: true },
+    evidence_ids: [
+      `learning_episode:${args.baselineEpisodeId}`,
+      `learning_episode:${args.afterEpisodeId}`,
+    ],
+  });
+  const record: ProductMeasurementRecord = {
+    measurement_id: args.measurementId,
+    tenant_id: args.tenantId,
+    scope: args.scope,
+    source: "product_trace",
+    measurement_digest: "",
+    baseline_episode_id: args.baselineEpisodeId,
+    after_episode_id: args.afterEpisodeId,
+    record_sha256: null,
+    effect_report: effectReport,
+    eligible_for_skill_export: args.eligibleForSkillExport === true,
+    evidence_status: "sufficient",
+    runtime_evidence_ids: args.runtimeEvidenceIds ?? [],
+    eligibility_reasons: [],
+    created_by: "test-measurement",
+    created_at: args.createdAt,
+  };
+  record.measurement_digest = productMeasurementDigest(record);
+  record.record_sha256 = productMeasurementRecordDigest(record);
+  return record;
+}
+
+function insertProductMeasurementFixture(
+  db: SqliteDatabase,
+  record: ProductMeasurementRecord,
+): void {
+  db.prepare(
+    `INSERT INTO lite_product_measurements
+      (measurement_id, tenant_id, scope, source, measurement_digest,
+       effect_report_json, eligible_for_skill_export, evidence_status,
+       runtime_evidence_ids_json, eligibility_reasons_json, created_by,
+       created_at, baseline_episode_id, after_episode_id, record_sha256)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+  ).run(
+    record.measurement_id,
+    record.tenant_id,
+    record.scope,
+    record.source,
+    record.measurement_digest,
+    JSON.stringify(record.effect_report),
+    record.eligible_for_skill_export ? 1 : 0,
+    record.evidence_status,
+    JSON.stringify(record.runtime_evidence_ids),
+    JSON.stringify(record.eligibility_reasons),
+    record.created_by,
+    record.created_at,
+    record.baseline_episode_id,
+    record.after_episode_id,
+    record.record_sha256,
+  );
 }
 
 function mutateAppendOnlyTable(
@@ -817,20 +910,26 @@ function legacyExposureFixture() {
 
 function legacyExposureProbe(args: {
   suffix: string;
+  scope?: string;
+  runId?: string | null;
+  recordedAt?: string;
   memoryNamespaceSha256?: string | null;
   sourceCommitId?: string;
   memoryId?: string;
   collectionClass?: ExposureCommittedV1["collection_class"];
   evidenceIntent?: ExposureCommittedV1["evidence_intent"];
   operationProtection?: ExposureCommittedV1["operation_protection"];
+  hostTaskEnvelope?: HostTaskEnvelopeV1 | null;
   rowOverrides?: Record<string, string | number | Uint8Array | null>;
 }) {
   const base = legacyExposureFixture();
   const guideTraceId = `guide-probe-${args.suffix}`;
+  const scope = args.scope ?? `scope-probe-${args.suffix}`;
   const sourceCommitId = args.sourceCommitId ?? `commit-probe-${args.suffix}`;
   const memoryId = args.memoryId ?? `memory-probe-${args.suffix}`;
   const memoryNamespaceSha256 = args.memoryNamespaceSha256 ?? null;
   const collectionClass = args.collectionClass ?? "unverified";
+  const hostTaskEnvelope = args.hostTaskEnvelope ?? null;
   const payload: ExposureCommittedV1 = {
     ...base.payload,
     guide_trace_id: guideTraceId,
@@ -839,6 +938,13 @@ function legacyExposureProbe(args: {
     request_sha256: sha256(`request-probe:${args.suffix}`),
     operation_protection: args.operationProtection ?? "legacy_unprotected",
     collection_class: collectionClass,
+    collector_id: hostTaskEnvelope?.collector_id ?? null,
+    collector_version: hostTaskEnvelope?.collector_version ?? null,
+    host_task_id: hostTaskEnvelope?.host_task_id ?? null,
+    host_task_envelope: hostTaskEnvelope,
+    host_task_envelope_sha256: hostTaskEnvelope === null
+      ? null
+      : hostTaskEnvelopeDigest(hostTaskEnvelope),
     evidence_intent: args.evidenceIntent ?? null,
     memory_namespace_sha256: memoryNamespaceSha256,
     relevant_memory_ids: [memoryId],
@@ -850,11 +956,11 @@ function legacyExposureProbe(args: {
   const encoded = canonicalJson(payload);
   const event: EventWithoutDigest = {
     ...base.event,
-    scope: `scope-probe-${args.suffix}`,
+    scope,
     event_id: `event-probe-${args.suffix}`,
     episode_id: learningEpisodeId({
       tenantId: "tenant-a",
-      scope: `scope-probe-${args.suffix}`,
+      scope,
       guideTraceId,
     }),
     source_id: guideTraceId,
@@ -865,9 +971,25 @@ function legacyExposureProbe(args: {
     operation_id: payload.operation_protection === "protected"
       ? `operation-probe-${args.suffix}`
       : null,
+    run_id: args.runId ?? null,
     collection_class: collectionClass,
+    recorded_at: args.recordedAt ?? base.event.recorded_at,
   };
   const row = episodeEventRow(event, payload, {
+    collector_id: payload.collector_id,
+    collector_version: payload.collector_version,
+    host_task_id: payload.host_task_id,
+    host_source_task_sha256: hostTaskEnvelope?.source_task_sha256 ?? null,
+    host_source_event_sha256: hostTaskEnvelope?.source_event_sha256 ?? null,
+    host_task_envelope_created_at: hostTaskEnvelope?.created_at ?? null,
+    host_task_envelope_sha256: payload.host_task_envelope_sha256,
+    task_family: hostTaskEnvelope?.task_family ?? null,
+    task_signature_sha256: hostTaskEnvelope === null
+      ? null
+      : sha256(hostTaskEnvelope.task_signature),
+    repo_signature_sha256: hostTaskEnvelope === null
+      ? null
+      : sha256(hostTaskEnvelope.repository_signature),
     memory_namespace_sha256: memoryNamespaceSha256,
     assignment_unit_sha256: memoryNamespaceSha256 === null
       ? null
@@ -2955,6 +3077,365 @@ test("confirmatory provisioning freezes its cohort while protected close authori
       });
     });
     assert.equal(insertedExposure.replayed, false);
+    await assert.rejects(
+      ledger.resolveMeasurementEpisodePair({
+        tenantId: exposureEvent.tenant_id,
+        scope: exposureEvent.scope,
+        baselineGuideTraceId: exposurePayload.guide_trace_id,
+        afterGuideTraceId: "guide-confirmatory-measure-after",
+      }),
+      /shared Runtime transaction/,
+    );
+    await assert.rejects(
+      ledger.resolveMeasurementEffectAuthority({
+        tenantId: exposureEvent.tenant_id,
+        scope: exposureEvent.scope,
+        measurementId: "measurement-pair-builder",
+        measurementDigest: "a".repeat(64),
+      }),
+      /shared Runtime transaction/,
+    );
+    await assert.rejects(
+      database.transaction.run(async () => {
+        const afterGuideTraceId = "guide-confirmatory-measure-after";
+        const afterRecordedAt = new Date(new Date(recordedAt).getTime() + 1_000).toISOString();
+        const afterEnvelope = {
+          ...hostEnvelope,
+          source_event_sha256: sha256("source-event-confirmatory-measure-after"),
+        };
+        const afterGuideRoot = promotionEligibleGuideRootMaterial({
+          tenantId: exposureEvent.tenant_id,
+          scope: exposureEvent.scope,
+          guideTraceId: afterGuideTraceId,
+          runId: exposureRunId,
+          item: exposureItem,
+        });
+        const afterPayload: ExposureCommittedV1 = {
+          ...exposurePayload,
+          guide_trace_id: afterGuideTraceId,
+          guide_receipt_sha256: afterGuideRoot.ledgerSha256,
+          guide_commit_id: "commit-confirmatory-measure-after",
+          request_sha256: sha256("guide-request-confirmatory-measure-after"),
+          host_task_envelope: afterEnvelope,
+          host_task_envelope_sha256: hostTaskEnvelopeDigest(afterEnvelope),
+        };
+        const afterPayloadEncoded = canonicalJson(afterPayload);
+        const afterEvent: EventWithoutDigest = {
+          ...exposureEvent,
+          event_id: "event-confirmatory-measure-after",
+          episode_id: learningEpisodeId({
+            tenantId: exposureEvent.tenant_id,
+            scope: exposureEvent.scope,
+            guideTraceId: afterGuideTraceId,
+          }),
+          source_id: afterGuideTraceId,
+          source_sha256: afterPayload.guide_receipt_sha256,
+          payload_sha256: afterPayloadEncoded.sha256,
+          source_commit_id: afterPayload.guide_commit_id,
+          operation_id: "operation-guide-confirmatory-measure-after",
+          recorded_at: afterRecordedAt,
+        };
+        const afterRow = episodeEventRow(afterEvent, afterPayload, {
+          ...exposureRowBindings,
+          host_source_event_sha256: afterEnvelope.source_event_sha256,
+          host_task_envelope_sha256: afterPayload.host_task_envelope_sha256,
+        });
+        insertPromotionEligibleGuideRoots(database.db, {
+          event: afterEvent,
+          payload: afterPayload,
+          row: afterRow,
+          item: exposureItem,
+          commitScope: activeStoreScope,
+        });
+        await ledger.appendEpisodeEvent({
+          row: afterRow,
+          event: afterEvent,
+          payload: afterPayload,
+          exposureItems: [exposureItem],
+        });
+
+        const pair = await ledger.resolveMeasurementEpisodePair({
+          tenantId: exposureEvent.tenant_id,
+          scope: exposureEvent.scope,
+          baselineGuideTraceId: exposurePayload.guide_trace_id,
+          afterGuideTraceId,
+        });
+        assert.equal(pair.status, "available");
+        if (pair.status !== "available") throw new Error("measurement pair should be available");
+        assert.equal(pair.baseline.episodeId, exposureEvent.episode_id);
+        assert.equal(pair.after.episodeId, afterEvent.episode_id);
+        assert.equal(pair.baseline.runId, exposureRunId);
+        assert.equal(pair.after.runId, exposureRunId);
+        assert.deepEqual(pair.after.hostTaskEnvelope, {
+          host_task_id: hostEnvelope.host_task_id,
+          task_signature: hostEnvelope.task_signature,
+          task_family: hostEnvelope.task_family,
+          repository_signature: hostEnvelope.repository_signature,
+          source_task_sha256: hostEnvelope.source_task_sha256,
+        });
+        assert.equal(pair.after.hostTaskIdentitySha256, sha256(stableStringify({
+          host_task_id: hostEnvelope.host_task_id,
+          task_signature: hostEnvelope.task_signature,
+          task_family: hostEnvelope.task_family,
+          repository_signature: hostEnvelope.repository_signature,
+          source_task_sha256: hostEnvelope.source_task_sha256,
+        })));
+        assert.equal(pair.provenance.collectionClass, "eligible_host");
+        assert.equal(pair.provenance.collectionPrincipalSha256, principalBinding.collection_principal_sha256);
+        assert.equal(pair.provenance.experimentId, fixture.revision.experiment_id);
+        assert.equal(pair.provenance.experimentRevision, fixture.revision.experiment_revision);
+        assert.equal(pair.provenance.promotionEligible, true);
+        assert.deepEqual(pair.provenance.reasonCodes, []);
+
+        const measurementId = "measurement-pair-builder";
+        const measurementOperationId = "operation-measurement-pair-builder";
+        const measurementRequestSha256 = sha256("measurement-pair-builder-request");
+        const eligibleMeasurement = productMeasurementFixture({
+          measurementId,
+          tenantId: exposureEvent.tenant_id,
+          scope: exposureEvent.scope,
+          baselineEpisodeId: pair.baseline.episodeId,
+          afterEpisodeId: pair.after.episodeId,
+          createdAt: new Date(new Date(afterRecordedAt).getTime() + 1_000).toISOString(),
+          eligibleForSkillExport: true,
+          runtimeEvidenceIds: [
+            `tool_feedback_event:event-feedback-missing:${sha256("feedback-event-missing")}`,
+            `tool_feedback_receipt:operation-feedback-missing:${sha256("feedback-receipt-missing")}`,
+            productMeasureOperationEvidenceReference({
+              operationId: measurementOperationId,
+              requestSha256: measurementRequestSha256,
+            }),
+            effectExpectedV1EvidenceReference({
+              tenantId: exposureEvent.tenant_id,
+              scope: exposureEvent.scope,
+              measurementId,
+              baselineEpisodeId: pair.baseline.episodeId,
+              afterEpisodeId: pair.after.episodeId,
+            }),
+          ],
+        });
+        insertProductMeasurementFixture(database.db, eligibleMeasurement);
+        const measurementRecordSha256 = eligibleMeasurement.record_sha256!;
+        const operationReceipt = stableStringify({
+          ok: true,
+          statusCode: 200,
+          body: {
+            contract_version: "aionis_measure_result_v1",
+            operation_id: measurementOperationId,
+            tenant_id: eligibleMeasurement.tenant_id,
+            scope: eligibleMeasurement.scope,
+            measurement_id: eligibleMeasurement.measurement_id,
+            measurement_digest: eligibleMeasurement.measurement_digest,
+            measurement_persisted: true,
+            evidence_assessment: {
+              status: eligibleMeasurement.evidence_status,
+              sufficient_evidence: true,
+              eligible_for_skill_export: eligibleMeasurement.eligible_for_skill_export,
+              runtime_evidence_ids: eligibleMeasurement.runtime_evidence_ids,
+              reasons: eligibleMeasurement.eligibility_reasons,
+            },
+            measurement_input: { source: eligibleMeasurement.source },
+            effect_report: eligibleMeasurement.effect_report,
+          },
+        });
+        const effectPayload = {
+          contract_version: "aionis_learning_effect_v1",
+          measurement_id: measurementId,
+          measurement_record_sha256: measurementRecordSha256,
+          operation_receipt_sha256: sha256(operationReceipt),
+          baseline_episode_id: pair.baseline.episodeId,
+          after_episode_id: pair.after.episodeId,
+          evidence_status: "sufficient",
+          eligible_for_skill_export: true,
+        } as const;
+        const effectPayloadEncoded = canonicalJson(effectPayload);
+        const effectEvent: EventWithoutDigest = {
+          contract_version: "aionis_learning_episode_event_v1",
+          tenant_id: exposureEvent.tenant_id,
+          scope: exposureEvent.scope,
+          event_id: "event-measurement-pair-builder",
+          episode_id: pair.after.episodeId,
+          episode_sequence: pair.after.headSequence + 1,
+          event_kind: "effect_measured",
+          source_kind: "product_measurement",
+          source_id: effectPayload.measurement_id,
+          source_sha256: measurementRecordSha256,
+          previous_event_sha256: pair.after.headEventSha256,
+          payload_sha256: effectPayloadEncoded.sha256,
+          item_set_sha256: sha256(stableStringify([])),
+          source_commit_id: null,
+          supersedes_event_id: null,
+          operation_id: measurementOperationId,
+          run_id: exposureRunId,
+          collection_class: pair.provenance.collectionClass,
+          recorded_at: new Date(new Date(afterRecordedAt).getTime() + 1_000).toISOString(),
+        };
+        const effectRow = buildLiteMeasurementEffectEventRow({
+          event: effectEvent,
+          payload: effectPayload,
+          pair,
+        });
+        const {
+          operation_receipt_sha256: _historicalReceiptBinding,
+          ...historicalEffectPayload
+        } = effectPayload;
+        assert.throws(
+          () => buildLiteMeasurementEffectEventRow({
+            event: {
+              ...effectEvent,
+              payload_sha256: sha256(stableStringify(historicalEffectPayload)),
+            },
+            payload: historicalEffectPayload,
+            pair,
+          }),
+          /new measurement effect requires an explicit operation receipt binding/,
+        );
+        assert.throws(
+          () => buildLiteMeasurementEffectEventRow({
+            event: { ...effectEvent, operation_id: null },
+            payload: effectPayload,
+            pair,
+          }),
+          /requires a protected operation id/,
+        );
+        assert.deepEqual(
+          Object.keys(effectRow).sort(),
+          LITE_LEARNING_LEDGER_REQUIRED_COLUMNS.lite_learning_episode_events
+            .filter((column) => column !== "row_id")
+            .sort(),
+        );
+        assert.equal(effectRow.event_kind, "effect_measured");
+        assert.equal(effectRow.source_kind, "product_measurement");
+        assert.equal(effectRow.experiment_id, afterRow.experiment_id);
+        assert.equal(effectRow.experiment_revision, afterRow.experiment_revision);
+        assert.equal(effectRow.collection_principal_sha256, afterRow.collection_principal_sha256);
+        assert.equal(effectRow.host_task_id, afterRow.host_task_id);
+        assert.equal(effectRow.candidate_policy_id, afterRow.candidate_policy_id);
+        assert.equal(effectRow.promotion_eligible, 0);
+        await assert.rejects(
+          ledger.appendEpisodeEvent({ row: effectRow, event: effectEvent, payload: effectPayload }),
+          /requires a product measure operation/,
+        );
+        const receiptAuthority = buildProductMeasureReceiptAuthority({
+          tenantId: effectEvent.tenant_id,
+          scope: effectEvent.scope,
+          operationId: effectEvent.operation_id!,
+          productMeasureRequestSha256: measurementRequestSha256,
+          operationReceiptJson: operationReceipt,
+          measurement: eligibleMeasurement,
+        });
+        database.db.prepare(
+          `INSERT INTO lite_runtime_write_operations
+            (tenant_id, scope, operation_kind, operation_id, request_sha256,
+             receipt_json, commit_id, created_at)
+           VALUES (?, ?, 'product_measure_v1', ?, ?, ?, NULL, ?)`,
+        ).run(
+          effectEvent.tenant_id,
+          effectEvent.scope,
+          effectEvent.operation_id,
+          measurementRequestSha256,
+          operationReceipt,
+          effectEvent.recorded_at,
+        );
+        database.db.prepare(
+          `INSERT INTO lite_runtime_write_operations
+            (tenant_id, scope, operation_kind, operation_id, request_sha256,
+             receipt_json, commit_id, created_at)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+        ).run(
+          effectEvent.tenant_id,
+          effectEvent.scope,
+          receiptAuthority.operationKind,
+          effectEvent.operation_id,
+          receiptAuthority.requestSha256,
+          receiptAuthority.receiptJson,
+          receiptAuthority.commitId,
+          effectEvent.recorded_at,
+        );
+        await assert.rejects(
+          ledger.appendEpisodeEvent({ row: effectRow, event: effectEvent, payload: effectPayload }),
+          /requires protected positive tool feedback: feedback_missing/,
+        );
+
+        const sameEpisode = await ledger.resolveMeasurementEpisodePair({
+          tenantId: exposureEvent.tenant_id,
+          scope: exposureEvent.scope,
+          baselineGuideTraceId: exposurePayload.guide_trace_id,
+          afterGuideTraceId: exposurePayload.guide_trace_id,
+        });
+        assert.deepEqual(sameEpisode, {
+          status: "unavailable",
+          baselineEpisodeId: exposureEvent.episode_id,
+          afterEpisodeId: exposureEvent.episode_id,
+          reasonCode: "episode_ids_not_distinct",
+        });
+        const reversed = await ledger.resolveMeasurementEpisodePair({
+          tenantId: exposureEvent.tenant_id,
+          scope: exposureEvent.scope,
+          baselineGuideTraceId: afterGuideTraceId,
+          afterGuideTraceId: exposurePayload.guide_trace_id,
+        });
+        assert.equal(reversed.status, "unavailable");
+        if (reversed.status === "unavailable") assert.equal(reversed.reasonCode, "exposure_order_invalid");
+
+        const mixed = legacyExposureProbe({
+          suffix: "measurement-mixed-provenance",
+          scope: exposureEvent.scope,
+          runId: exposureRunId,
+          recordedAt: new Date(new Date(afterRecordedAt).getTime() + 2_000).toISOString(),
+          hostTaskEnvelope: {
+            ...hostEnvelope,
+            repository_signature: "repository-signature-mismatched",
+            source_task_sha256: sha256("source-task-measurement-mixed-provenance"),
+            source_event_sha256: sha256("source-event-measurement-mixed-provenance"),
+          },
+        });
+        await ledger.appendEpisodeEvent({
+          row: mixed.row,
+          event: mixed.event,
+          payload: mixed.payload,
+          exposureItems: [mixed.item],
+        });
+        const mixedPair = await ledger.resolveMeasurementEpisodePair({
+          tenantId: exposureEvent.tenant_id,
+          scope: exposureEvent.scope,
+          baselineGuideTraceId: exposurePayload.guide_trace_id,
+          afterGuideTraceId: mixed.payload.guide_trace_id,
+        });
+        assert.equal(mixedPair.status, "available");
+        if (mixedPair.status !== "available") throw new Error("mixed provenance pair should resolve");
+        assert.equal(mixedPair.provenance.collectionClass, "unverified");
+        assert.equal(mixedPair.provenance.promotionEligible, false);
+        assert.ok(mixedPair.provenance.reasonCodes.includes("after_not_eligible_host"));
+        assert.ok(mixedPair.provenance.reasonCodes.includes("host_task_identity_mismatch"));
+        assert.equal(mixedPair.provenance.reasonCodes.includes("host_task_id_mismatch"), false);
+        assert.equal(mixedPair.provenance.reasonCodes.includes("task_signature_mismatch"), false);
+        assert.equal(mixedPair.provenance.reasonCodes.includes("task_family_mismatch"), false);
+
+        const wrongRun = legacyExposureProbe({
+          suffix: "measurement-run-mismatch",
+          scope: exposureEvent.scope,
+          runId: "run-confirmatory-other",
+          recordedAt: new Date(new Date(afterRecordedAt).getTime() + 3_000).toISOString(),
+        });
+        await ledger.appendEpisodeEvent({
+          row: wrongRun.row,
+          event: wrongRun.event,
+          payload: wrongRun.payload,
+          exposureItems: [wrongRun.item],
+        });
+        const mismatchedRun = await ledger.resolveMeasurementEpisodePair({
+          tenantId: exposureEvent.tenant_id,
+          scope: exposureEvent.scope,
+          baselineGuideTraceId: exposurePayload.guide_trace_id,
+          afterGuideTraceId: wrongRun.payload.guide_trace_id,
+        });
+        assert.equal(mismatchedRun.status, "unavailable");
+        if (mismatchedRun.status === "unavailable") assert.equal(mismatchedRun.reasonCode, "exposure_run_mismatch");
+        throw new Error("measurement pair probe rollback");
+      }),
+      /measurement pair probe rollback/,
+    );
     const compactRootLedger = JSON.parse(String((database.db.prepare(
       `SELECT ledger_json FROM lite_product_guide_receipts
        WHERE tenant_id = ? AND scope = ? AND guide_trace_id = ?`,
@@ -4407,9 +4888,157 @@ test("markerless historical unused feedback reopens without a synthesized contro
   }
 });
 
+test("historical v1 effect without receipt binding reopens as observable but never export authority", async () => {
+  const temp = tempDatabase("historical-effect-receipt-compatibility");
+  const scope = "scope-historical-effect";
+  const runId = "run-historical-effect";
+  const after = legacyExposureProbe({
+    suffix: "historical-effect-after",
+    scope,
+    runId,
+    recordedAt: "2026-07-13T00:01:00.000Z",
+  });
+  const database = createLiteRuntimeDatabase(temp.path);
+  let writeStore: ReturnType<typeof createLiteWriteStoreFromDatabase> | null = null;
+  try {
+    writeStore = createLiteWriteStoreFromDatabase(database, { annProjectionEnabled: false });
+    const ledger = createLiteLearningEpisodeLedgerAccess(database);
+    await database.transaction.run(async () => await ledger.appendEpisodeEvent({
+      row: after.row,
+      event: after.event,
+      payload: after.payload,
+      exposureItems: [after.item],
+    }));
+    const measurement = {
+      id: "measurement-historical-effect",
+      digest: sha256("historical-arbitrary-measurement-digest"),
+      recordSha256: sha256("historical-arbitrary-measurement-record"),
+      baselineEpisodeId: `lep_${"1".repeat(64)}`,
+    };
+    database.db.prepare(
+      `INSERT INTO lite_product_measurements
+        (measurement_id, tenant_id, scope, source, measurement_digest,
+         effect_report_json, eligible_for_skill_export, evidence_status,
+         runtime_evidence_ids_json, eligibility_reasons_json, created_by,
+         created_at, baseline_episode_id, after_episode_id, record_sha256)
+       VALUES (?, ?, ?, 'product_trace', ?, ?, 1, 'sufficient', '[]', '[]', ?, ?, ?, ?, ?)`,
+    ).run(
+      measurement.id,
+      after.event.tenant_id,
+      scope,
+      measurement.digest,
+      stableStringify({ status: "sufficient" }),
+      "historical-v1-writer",
+      "2026-07-13T00:02:00.000Z",
+      measurement.baselineEpisodeId,
+      after.event.episode_id,
+      measurement.recordSha256,
+    );
+    const payload = {
+      contract_version: "aionis_learning_effect_v1",
+      measurement_id: measurement.id,
+      measurement_record_sha256: measurement.recordSha256,
+      baseline_episode_id: measurement.baselineEpisodeId,
+      after_episode_id: after.event.episode_id,
+      evidence_status: "sufficient",
+      eligible_for_skill_export: true,
+    } as const;
+    const encoded = canonicalJson(payload);
+    const event: EventWithoutDigest = {
+      contract_version: "aionis_learning_episode_event_v1",
+      tenant_id: after.event.tenant_id,
+      scope,
+      event_id: "event-historical-effect",
+      episode_id: after.event.episode_id,
+      episode_sequence: 2,
+      event_kind: "effect_measured",
+      source_kind: "product_measurement",
+      source_id: measurement.id,
+      source_sha256: measurement.recordSha256,
+      previous_event_sha256: learningEpisodeEventDigest(after.event),
+      payload_sha256: encoded.sha256,
+      item_set_sha256: sha256(stableStringify([])),
+      source_commit_id: null,
+      supersedes_event_id: null,
+      operation_id: null,
+      run_id: runId,
+      collection_class: after.event.collection_class,
+      recorded_at: "2026-07-13T00:03:00.000Z",
+    };
+    const historicalRow = episodeEventRow(event, payload);
+    await assert.rejects(
+      database.transaction.run(async () => await ledger.appendEpisodeEvent({
+        row: historicalRow,
+        event,
+        payload,
+      })),
+      /new measurement effect requires an explicit operation receipt binding/,
+    );
+    insertAuthorityRowDirect(
+      database.db,
+      "lite_learning_episode_events",
+      historicalRow,
+    );
+    const resolve = async () => await database.transaction.run(async () => (
+      await ledger.resolveMeasurementEffectAuthority({
+        tenantId: after.event.tenant_id,
+        scope,
+        measurementId: measurement.id,
+        measurementDigest: measurement.digest,
+      })
+    ));
+    assert.deepEqual(await resolve(), {
+      status: "unavailable",
+      reasonCode: "effect_receipt_authority_missing",
+    });
+    await ledger.verifyIntegrity();
+    await writeStore.close();
+    writeStore = null;
+    await database.close();
+
+    const reopened = createLiteRuntimeDatabase(temp.path);
+    try {
+      const reopenedLedger = createLiteLearningEpisodeLedgerAccess(reopened);
+      await reopenedLedger.verifyIntegrity();
+      assert.deepEqual(await reopened.transaction.run(async () => (
+        await reopenedLedger.resolveMeasurementEffectAuthority({
+          tenantId: after.event.tenant_id,
+          scope,
+          measurementId: measurement.id,
+          measurementDigest: measurement.digest,
+        })
+      )), {
+        status: "unavailable",
+        reasonCode: "effect_receipt_authority_missing",
+      });
+    } finally {
+      await reopened.close();
+    }
+  } finally {
+    if (writeStore) await writeStore.close();
+    await database.close();
+    fs.rmSync(temp.directory, { recursive: true, force: true });
+  }
+});
+
 test("feedback and effect rows stay atomic while legal control blockers fail learning artifacts", async () => {
   const temp = tempDatabase("episode-feedback-effect");
-  const exposure = legacyExposureFixture();
+  const exposureBase = legacyExposureFixture();
+  const exposureEvent = {
+    ...exposureBase.event,
+    run_id: "run-measurement-pair-a",
+  } satisfies EventWithoutDigest;
+  const exposure = {
+    ...exposureBase,
+    event: exposureEvent,
+    row: episodeEventRow(exposureEvent, exposureBase.payload),
+  };
+  const baselineExposure = legacyExposureProbe({
+    suffix: "measurement-baseline",
+    scope: exposure.event.scope,
+    runId: exposure.event.run_id,
+    recordedAt: "2026-07-12T23:00:00.000Z",
+  });
   const database = createLiteRuntimeDatabase(temp.path);
   let writeStore: ReturnType<typeof createLiteWriteStoreFromDatabase> | null = null;
   try {
@@ -4421,6 +5050,12 @@ test("feedback and effect rows stay atomic while legal control blockers fail lea
       await ledger.insertPolicyVersion(gateFixture.gate);
       await ledger.provisionConfirmatorySet(gateFixture);
     });
+    await database.transaction.run(async () => await ledger.appendEpisodeEvent({
+      row: baselineExposure.row,
+      event: baselineExposure.event,
+      payload: baselineExposure.payload,
+      exposureItems: [baselineExposure.item],
+    }));
     await database.transaction.run(async () => await ledger.appendEpisodeEvent({
       row: exposure.row,
       event: exposure.event,
@@ -4571,36 +5206,91 @@ test("feedback and effect rows stay atomic while legal control blockers fail lea
       feedbackAttributions: [correction],
     }));
 
-    const baselineEpisodeId = `lep_${"1".repeat(64)}`;
-    const measurementRecordSha256 = sha256("measurement-record-a");
-    database.db.prepare(
-      `INSERT INTO lite_product_measurements
-        (measurement_id, tenant_id, scope, source, measurement_digest,
-         effect_report_json, eligible_for_skill_export, evidence_status,
-         runtime_evidence_ids_json, eligibility_reasons_json, created_by,
-         created_at, baseline_episode_id, after_episode_id, record_sha256)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-    ).run(
-      "measurement-a",
-      "tenant-a",
-      "scope-a",
-      "product_trace",
-      sha256("measurement-digest-a"),
-      stableStringify({ status: "sufficient" }),
-      0,
-      "sufficient",
-      "[]",
-      "[]",
-      "test-measurement",
-      "2026-07-13T03:00:00.000Z",
-      baselineEpisodeId,
-      exposure.episodeId,
-      measurementRecordSha256,
+    const forgedBaselineEpisodeId = `lep_${"1".repeat(64)}`;
+    const forgedMeasurement = productMeasurementFixture({
+      measurementId: "measurement-forged-pair",
+      tenantId: "tenant-a",
+      scope: "scope-a",
+      baselineEpisodeId: forgedBaselineEpisodeId,
+      afterEpisodeId: exposure.episodeId,
+      createdAt: "2026-07-13T03:00:00.000Z",
+      runtimeEvidenceIds: [effectExpectedV1EvidenceReference({
+        tenantId: "tenant-a",
+        scope: "scope-a",
+        measurementId: "measurement-forged-pair",
+        baselineEpisodeId: forgedBaselineEpisodeId,
+        afterEpisodeId: exposure.episodeId,
+      })],
+    });
+    insertProductMeasurementFixture(database.db, forgedMeasurement);
+    const forgedMeasurementRecordSha256 = forgedMeasurement.record_sha256!;
+    const forgedEffectPayload = {
+      contract_version: "aionis_learning_effect_v1",
+      measurement_id: "measurement-forged-pair",
+      measurement_record_sha256: forgedMeasurementRecordSha256,
+      operation_receipt_sha256: null,
+      baseline_episode_id: forgedBaselineEpisodeId,
+      after_episode_id: exposure.episodeId,
+      evidence_status: "sufficient",
+      eligible_for_skill_export: false,
+    } as const;
+    const forgedEffectPayloadEncoded = canonicalJson(forgedEffectPayload);
+    const forgedEffectEvent: EventWithoutDigest = {
+      contract_version: "aionis_learning_episode_event_v1",
+      tenant_id: "tenant-a",
+      scope: "scope-a",
+      event_id: "event-effect-forged-pair",
+      episode_id: exposure.episodeId,
+      episode_sequence: 4,
+      event_kind: "effect_measured",
+      source_kind: "product_measurement",
+      source_id: forgedEffectPayload.measurement_id,
+      source_sha256: forgedMeasurementRecordSha256,
+      previous_event_sha256: learningEpisodeEventDigest(correctionEvent),
+      payload_sha256: forgedEffectPayloadEncoded.sha256,
+      item_set_sha256: sha256(stableStringify([])),
+      source_commit_id: null,
+      supersedes_event_id: null,
+      operation_id: null,
+      run_id: exposure.event.run_id,
+      collection_class: "unverified",
+      recorded_at: "2026-07-13T03:00:00.000Z",
+    };
+    await assert.rejects(
+      database.transaction.run(async () => await ledger.appendEpisodeEvent({
+        row: episodeEventRow(forgedEffectEvent, forgedEffectPayload),
+        event: forgedEffectEvent,
+        payload: forgedEffectPayload,
+      })),
+      /baseline exposure is missing/,
     );
+    database.db.prepare(
+      "DELETE FROM lite_product_measurements WHERE measurement_id = ?",
+    ).run(forgedMeasurement.measurement_id);
+
+    const baselineEpisodeId = baselineExposure.event.episode_id;
+    const measurement = productMeasurementFixture({
+      measurementId: "measurement-a",
+      tenantId: "tenant-a",
+      scope: "scope-a",
+      baselineEpisodeId,
+      afterEpisodeId: exposure.episodeId,
+      createdAt: "2026-07-13T03:00:00.000Z",
+      runtimeEvidenceIds: [effectExpectedV1EvidenceReference({
+        tenantId: "tenant-a",
+        scope: "scope-a",
+        measurementId: "measurement-a",
+        baselineEpisodeId,
+        afterEpisodeId: exposure.episodeId,
+      })],
+    });
+    insertProductMeasurementFixture(database.db, measurement);
+    const measurementRecordSha256 = measurement.record_sha256!;
     const effectPayload = {
       contract_version: "aionis_learning_effect_v1",
       measurement_id: "measurement-a",
       measurement_record_sha256: measurementRecordSha256,
+      operation_receipt_sha256: null,
       baseline_episode_id: baselineEpisodeId,
       after_episode_id: exposure.episodeId,
       evidence_status: "sufficient",
@@ -4624,7 +5314,7 @@ test("feedback and effect rows stay atomic while legal control blockers fail lea
       source_commit_id: null,
       supersedes_event_id: null,
       operation_id: null,
-      run_id: null,
+      run_id: exposure.event.run_id,
       collection_class: "unverified",
       recorded_at: "2026-07-13T03:00:00.000Z",
     };
@@ -4738,6 +5428,41 @@ test("feedback and effect rows stay atomic while legal control blockers fail lea
       ).run(deadLetterControl.job_id),
       /learning_control_job_delete_forbidden/,
     );
+
+    const tamperedEffectReport = {
+      ...measurement.effect_report,
+      history_impact: {
+        ...measurement.effect_report.history_impact,
+        explanation: "Tampered persisted effect report must fail measurement authority replay.",
+      },
+    };
+    database.db.prepare(
+      "UPDATE lite_product_measurements SET effect_report_json = ? WHERE measurement_id = ?",
+    ).run(JSON.stringify(tamperedEffectReport), measurement.measurement_id);
+    try {
+      await assert.rejects(
+        ledger.verifyIntegrity(),
+        /lite_learning_integrity_failed:product_measure_receipt_authority/,
+      );
+    } finally {
+      database.db.prepare(
+        "UPDATE lite_product_measurements SET effect_report_json = ? WHERE measurement_id = ?",
+      ).run(JSON.stringify(measurement.effect_report), measurement.measurement_id);
+    }
+    database.db.prepare(
+      "UPDATE lite_product_measurements SET measurement_digest = ? WHERE measurement_id = ?",
+    ).run("f".repeat(64), measurement.measurement_id);
+    try {
+      await assert.rejects(
+        ledger.verifyIntegrity(),
+        /lite_learning_integrity_failed:product_measure_receipt_authority/,
+      );
+    } finally {
+      database.db.prepare(
+        "UPDATE lite_product_measurements SET measurement_digest = ? WHERE measurement_id = ?",
+      ).run(measurement.measurement_digest, measurement.measurement_id);
+    }
+    await ledger.verifyIntegrity();
 
     const verification = await verifyLiteRuntimeDatabase(temp.path);
     assert.equal(verification.ok, true);
@@ -4944,8 +5669,9 @@ test("feedback and effect rows stay atomic while legal control blockers fail lea
     assert.equal(restored.verification.learning.reclaimable_expired_control_job_leases, 1);
     assert.equal(
       (database.db.prepare("SELECT COUNT(*) AS count FROM lite_learning_episode_events").get() as { count: number }).count,
-      4,
+      5,
     );
+    await ledger.verifyIntegrity();
   } finally {
     await writeStore?.close();
     await database.close();

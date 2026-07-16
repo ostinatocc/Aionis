@@ -17,6 +17,7 @@ import { createSqliteDatabase, type SqliteDatabase } from "../../src/store/sqlit
 import { inspectLiteRuntimeSchema } from "../../src/store/lite-runtime-schema.ts";
 import {
   productMeasurementDigest,
+  productMeasurementRecordDigest,
   type ProductMeasurementRecord,
   type TraceDerivedSkillTrainingCandidate,
 } from "../../src/store/memory-store.ts";
@@ -152,7 +153,15 @@ function candidate(input: { skillName?: string; sourceTraceId?: string } = {}): 
   };
 }
 
-function measurement(candidates: TraceDerivedSkillTrainingCandidate[]): ProductMeasurementRecord {
+function measurement(
+  candidates: TraceDerivedSkillTrainingCandidate[],
+  options: {
+    measurementId?: string;
+    baselineEpisodeId?: string | null;
+    afterEpisodeId?: string | null;
+    includeRecordDigest?: boolean;
+  } = {},
+): ProductMeasurementRecord {
   const effectReport = buildAionisEffectReport({
     tenant_id: "tenant-a",
     scope: "scope-a",
@@ -227,7 +236,7 @@ function measurement(candidates: TraceDerivedSkillTrainingCandidate[]): ProductM
   });
   effectReport.training_candidates = candidates;
   const recordWithoutDigest = {
-    measurement_id: "measurement:test-runtime",
+    measurement_id: options.measurementId ?? "measurement:test-runtime",
     tenant_id: "tenant-a",
     scope: "scope-a",
     source: "product_trace",
@@ -238,19 +247,83 @@ function measurement(candidates: TraceDerivedSkillTrainingCandidate[]): ProductM
     eligibility_reasons: ["runtime evidence verified"],
     created_by: "aionis-runtime",
     created_at: "2026-06-26T00:30:00.000Z",
-  };
-  return {
+  } as const;
+  const recordWithoutFullDigest = {
     ...recordWithoutDigest,
     measurement_digest: productMeasurementDigest(recordWithoutDigest),
+    baseline_episode_id: options.baselineEpisodeId ?? null,
+    after_episode_id: options.afterEpisodeId ?? null,
+  };
+  return {
+    ...recordWithoutFullDigest,
+    record_sha256: options.includeRecordDigest
+      ? productMeasurementRecordDigest(recordWithoutFullDigest)
+      : null,
   };
 }
+
+test("product measurement full-record digest binds identity source episode pair and content digest", () => {
+  const base = {
+    measurement_id: "measurement:digest-a",
+    tenant_id: "tenant-a",
+    scope: "scope-a",
+    source: "product_trace" as const,
+    baseline_episode_id: `lep_${"1".repeat(64)}`,
+    after_episode_id: `lep_${"2".repeat(64)}`,
+    measurement_digest: "a".repeat(64),
+    created_by: "actor:digest-a",
+    created_at: "2026-06-26T00:30:00.000Z",
+  };
+  const digest = productMeasurementRecordDigest(base);
+  assert.match(digest, /^[0-9a-f]{64}$/u);
+  for (const changed of [
+    { ...base, measurement_id: "measurement:digest-b" },
+    { ...base, tenant_id: "tenant-b" },
+    { ...base, scope: "scope-b" },
+    { ...base, source: "manual_observations" as const },
+    { ...base, baseline_episode_id: `lep_${"3".repeat(64)}` },
+    { ...base, after_episode_id: `lep_${"4".repeat(64)}` },
+    { ...base, measurement_digest: "b".repeat(64) },
+    { ...base, created_by: "actor:digest-b" },
+    { ...base, created_at: "2026-06-26T00:31:00.000Z" },
+  ]) {
+    assert.notEqual(productMeasurementRecordDigest(changed), digest);
+  }
+});
+
+test("product measurement integrity rejects noncanonical creation time even with a matching full-record digest", async () => {
+  const valid = measurement([candidate()], {
+    measurementId: "measurement:invalid-created-at",
+    baselineEpisodeId: `lep_${"1".repeat(64)}`,
+    afterEpisodeId: `lep_${"2".repeat(64)}`,
+    includeRecordDigest: true,
+  });
+  const invalid = {
+    ...valid,
+    created_at: "2026-06-26T00:30:00Z",
+  };
+  invalid.record_sha256 = productMeasurementRecordDigest(invalid);
+
+  const store = createLiteSkillCandidateReviewStore(tmpDbPath("invalid-created-at"));
+  try {
+    await assert.rejects(
+      store.createSkillCandidateReviewAccess().recordMeasurement({ record: invalid }),
+      /expected a canonical UTC millisecond timestamp/,
+    );
+  } finally {
+    await store.close();
+  }
+});
 
 test("trace-derived skill review store queues candidates idempotently", async () => {
   const store = createLiteSkillCandidateReviewStore(tmpDbPath("queue"));
   const access = store.createSkillCandidateReviewAccess();
   try {
     const record = measurement([candidate()]);
-    await access.recordMeasurement({ record });
+    const persisted = await access.recordMeasurement({ record });
+    assert.equal(persisted.baseline_episode_id, null);
+    assert.equal(persisted.after_episode_id, null);
+    assert.equal(persisted.record_sha256, null);
     const first = await access.enqueueTraceDerivedSkillCandidates({
       tenantId: "tenant-a",
       scope: "scope-a",
@@ -501,6 +574,117 @@ test("standalone review schema cannot create or serve a partial v3 measurement s
     );
   } finally {
     await partial.close();
+    fs.rmSync(path.dirname(dbPath), { recursive: true, force: true });
+  }
+});
+
+test("shared v3 measurement store persists authoritative episode links and reads legacy null links", async () => {
+  const dbPath = tmpDbPath("shared-v3-measurement-links");
+  const database = createLiteRuntimeDatabase(dbPath);
+  const writeStore = createLiteWriteStoreFromDatabase(database, { annProjectionEnabled: false });
+  let store: ReturnType<typeof createLiteSkillCandidateReviewStoreFromDatabase> | null = null;
+  try {
+    store = createLiteSkillCandidateReviewStoreFromDatabase(database);
+    const access = store.createSkillCandidateReviewAccess();
+    const linked = measurement([candidate()], {
+      measurementId: "measurement:linked",
+      baselineEpisodeId: `lep_${"1".repeat(64)}`,
+      afterEpisodeId: `lep_${"2".repeat(64)}`,
+      includeRecordDigest: true,
+    });
+
+    assert.deepEqual(await access.recordMeasurement({ record: linked }), linked);
+    const storedLinks = database.db.prepare(
+      `SELECT baseline_episode_id, after_episode_id, record_sha256
+       FROM lite_product_measurements WHERE measurement_id = ?`,
+    ).get(linked.measurement_id) as Record<string, unknown>;
+    assert.equal(storedLinks.baseline_episode_id, linked.baseline_episode_id);
+    assert.equal(storedLinks.after_episode_id, linked.after_episode_id);
+    assert.equal(storedLinks.record_sha256, linked.record_sha256);
+    assert.deepEqual(await access.getMeasurement({
+      tenantId: linked.tenant_id,
+      scope: linked.scope,
+      measurementId: linked.measurement_id,
+    }), linked);
+
+    database.db.prepare(
+      `UPDATE lite_product_measurements
+       SET effect_report_json = json_set(
+         effect_report_json,
+         '$.history_impact.explanation',
+         'tampered measurement effect report'
+       )
+       WHERE measurement_id = ?`,
+    ).run(linked.measurement_id);
+    await assert.rejects(
+      access.getMeasurement({
+        tenantId: linked.tenant_id,
+        scope: linked.scope,
+        measurementId: linked.measurement_id,
+      }),
+      /persisted measurement digest does not match its effect evidence/,
+    );
+    database.db.prepare(
+      `UPDATE lite_product_measurements SET effect_report_json = ?
+       WHERE measurement_id = ?`,
+    ).run(JSON.stringify(linked.effect_report), linked.measurement_id);
+
+    const changedPair = {
+      ...linked,
+      after_episode_id: `lep_${"3".repeat(64)}`,
+    };
+    await assert.rejects(
+      access.recordMeasurement({
+        record: {
+          ...changedPair,
+          record_sha256: productMeasurementRecordDigest(changedPair),
+        },
+      }),
+      /measurement id already exists with a different record digest/,
+    );
+    await assert.rejects(
+      access.recordMeasurement({
+        record: {
+          ...linked,
+          record_sha256: "f".repeat(64),
+        },
+      }),
+      /measurement record digest does not match/,
+    );
+
+    const legacy = measurement([candidate()], { measurementId: "measurement:legacy-v3" });
+    database.db.prepare(
+      `INSERT INTO lite_product_measurements (
+        measurement_id, tenant_id, scope, source, measurement_digest,
+        effect_report_json, eligible_for_skill_export, evidence_status,
+        runtime_evidence_ids_json, eligibility_reasons_json, created_by, created_at
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    ).run(
+      legacy.measurement_id,
+      legacy.tenant_id,
+      legacy.scope,
+      legacy.source,
+      legacy.measurement_digest,
+      JSON.stringify(legacy.effect_report),
+      legacy.eligible_for_skill_export ? 1 : 0,
+      legacy.evidence_status,
+      JSON.stringify(legacy.runtime_evidence_ids),
+      JSON.stringify(legacy.eligibility_reasons),
+      legacy.created_by,
+      legacy.created_at,
+    );
+    const loadedLegacy = await access.getMeasurement({
+      tenantId: legacy.tenant_id,
+      scope: legacy.scope,
+      measurementId: legacy.measurement_id,
+    });
+    assert.equal(loadedLegacy?.baseline_episode_id, null);
+    assert.equal(loadedLegacy?.after_episode_id, null);
+    assert.equal(loadedLegacy?.record_sha256, null);
+  } finally {
+    await store?.close();
+    await writeStore.close();
+    await database.close();
     fs.rmSync(path.dirname(dbPath), { recursive: true, force: true });
   }
 });

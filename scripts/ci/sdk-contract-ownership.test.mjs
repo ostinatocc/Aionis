@@ -19,9 +19,18 @@ const SDK_REPO = SDK_REPO_CANDIDATES.find((candidate) => fs.existsSync(path.join
 const RUNTIME_SDK = path.join(ROOT, "src", "sdk.ts");
 const DISTRIBUTED_SDK = path.join(SDK_REPO, "src", "index.ts");
 const SDK_SYNC = path.join(ROOT, "scripts", "sdk-source.mjs");
+const CI_DEPENDENCIES = path.join(ROOT, "ci-dependencies.json");
 
 function read(file) {
   return fs.readFileSync(file, "utf8");
+}
+
+function workflowStep(workflow, name) {
+  const marker = `      - name: ${name}\n`;
+  const start = workflow.indexOf(marker);
+  assert.notEqual(start, -1, `missing workflow step: ${name}`);
+  const next = workflow.indexOf("\n      - name:", start + marker.length);
+  return workflow.slice(start, next === -1 ? workflow.length : next);
 }
 
 function runtimeOwnedRegions(source) {
@@ -110,19 +119,47 @@ test("Runtime owns named SDK contract regions instead of the whole client file",
   for (const [name, body] of runtimeRegions) assert.equal(distributedRegions.get(name), body, `${name} must be generated from Runtime`);
 });
 
-test("Runtime CI checks out the standalone SDK for ownership verification", () => {
+test("Runtime CI pins candidate SDK contracts separately from frozen release artifacts", () => {
   const workflow = read(path.join(ROOT, ".github", "workflows", "ci.yml"));
+  const resolver = workflowStep(workflow, "Resolve standalone SDK ref");
+  const contractCheckout = workflowStep(workflow, "Checkout standalone SDK contracts");
+  const releaseCheckout = workflowStep(workflow, "Checkout frozen SDK release artifact");
+  const releaseGate = workflowStep(workflow, "Release artifact gate");
+
   assert.match(workflow, /sdk_ref:/);
   assert.doesNotMatch(workflow, /sdk_ref:[\s\S]*?default: "main"/);
-  assert.match(workflow, /id: sdk-ref/);
-  assert.match(workflow, /release-train\.json/);
-  assert.match(workflow, /releaseTrain\.packages\.sdk\.source_ref \|\| "main"/);
-  assert.doesNotMatch(workflow, /releaseTrain\.status === "candidate"/);
-  assert.doesNotMatch(workflow, /release\/sdk-\$\{releaseTrain\.packages\.sdk\.version\}/);
-  assert.match(workflow, /repository: ostinatocc\/aionis-sdk/);
-  assert.match(workflow, /ref: \$\{\{ steps\.sdk-ref\.outputs\.ref \}\}/);
-  assert.match(workflow, /path: external\/aionis-sdk/);
+  assert.match(resolver, /ci-dependencies\.json/);
+  assert.match(resolver, /dependencies\.sdk\?\.contract_commit/);
+  assert.match(resolver, /releaseTrain\.packages\?\.sdk\?\.source_ref/);
+  assert.match(resolver, /contract_ref=\$\{process\.env\.SDK_REF_OVERRIDE \|\| contractCommit\}/);
+  assert.match(resolver, /release_ref=\$\{releaseRef\}/);
+  assert.doesNotMatch(resolver, /\|\| "main"/);
+  assert.doesNotMatch(resolver, /releaseTrain\.status === "candidate"/);
+  assert.doesNotMatch(resolver, /release\/sdk-/);
+
+  assert.match(contractCheckout, /repository: \$\{\{ steps\.sdk-ref\.outputs\.repository \}\}/);
+  assert.match(contractCheckout, /ref: \$\{\{ steps\.sdk-ref\.outputs\.contract_ref \}\}/);
+  assert.match(contractCheckout, /path: external\/aionis-sdk/);
+  assert.match(releaseCheckout, /repository: \$\{\{ steps\.sdk-ref\.outputs\.repository \}\}/);
+  assert.match(releaseCheckout, /ref: \$\{\{ steps\.sdk-ref\.outputs\.release_ref \}\}/);
+  assert.match(releaseCheckout, /path: external\/release\/aionis-sdk/);
+  assert.equal(
+    (workflow.match(/repository: \$\{\{ steps\.sdk-ref\.outputs\.repository \}\}/g) ?? []).length,
+    2,
+  );
+  assert.equal((workflow.match(/path: external\/aionis-sdk/g) ?? []).length, 1);
+  assert.equal((workflow.match(/path: external\/release\/aionis-sdk/g) ?? []).length, 1);
+
   assert.match(workflow, /AIONIS_SDK_REPO:.*external\/aionis-sdk/);
+  assert.match(releaseGate, /AIONIS_RELEASE_SDK_REPO:.*external\/release\/aionis-sdk/);
+  assert.doesNotMatch(releaseGate, /AIONIS_RELEASE_SDK_REPO:.*external\/aionis-sdk$/m);
+});
+
+test("CI dependency lock uses an immutable standalone SDK contract commit", () => {
+  const dependencies = JSON.parse(read(CI_DEPENDENCIES));
+  assert.equal(dependencies.schema_version, "aionis_ci_dependency_lock_v1");
+  assert.equal(dependencies.sdk?.repository, "ostinatocc/aionis-sdk");
+  assert.match(dependencies.sdk?.contract_commit ?? "", /^[a-f0-9]{40}$/i);
 });
 
 test("AgentContext schema and SDK prompt format have one Runtime authority", () => {

@@ -39,6 +39,12 @@ AgentContext schema, and the named `public-contracts` region in Runtime
 that named contract region during sync. Runtime Core does not import the
 published SDK package.
 
+Cross-repository CI keeps two independent immutable authorities. The checked-in
+`ci-dependencies.json` pins the exact standalone SDK commit used for generated
+contract ownership checks, while `release-train.json` continues to pin the
+already-published SDK artifact verified by the release gate. A development SDK
+contract update therefore cannot silently rewrite frozen release coordinates.
+
 Execution-scoped memory that reaches the final Agent prompt must be admitted as
 current task execution state: exact `task_signature` evidence or accepted /
 passed same-`workflow_signature` continuation evidence promoted by the route

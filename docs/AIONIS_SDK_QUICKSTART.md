@@ -152,7 +152,11 @@ if (agentResult.used_memory_ids.length > 0) {
   }));
 }
 
-const measure = await aionis.measure(measureInputFromGuideLoop({
+// Allocate this once for the logical measure write and persist it with the
+// host job before the first request.
+const measureOperationId = "measure:task-001:run-001:attempt-1";
+const measureRequest = measureInputFromGuideLoop({
+  operation_id: measureOperationId,
   task: {
     task_id: "task-001",
     run_id: "run-001",
@@ -161,7 +165,11 @@ const measure = await aionis.measure(measureInputFromGuideLoop({
   },
   after_guide: guide,
   feedback_result: feedback,
-}));
+});
+const measure = await aionis.measure(measureRequest);
+
+// If the transport outcome is unknown, retry aionis.measure(measureRequest)
+// unchanged. Do not allocate another operation_id or mutate the request.
 
 // Client evidence claims do not open the export gate. Inspect the Runtime-owned
 // assessment before treating any training candidate as exportable.
@@ -220,6 +228,9 @@ host reports zero used IDs, do not submit feedback. If attribution is
 unavailable, request a new guide; never fall back to AgentContext IDs.
 `measureInputFromGuideLoop()` and `snapshotInputFromGuideLoop()` keep the
 normal product trace and operator snapshot payloads out of handwritten app code.
+For measure, allocate and persist one stable `operation_id` before the first
+attempt. An exact retry must reuse the same request object and ID; a changed
+request needs a new ID.
 `traceDerivedSkillCandidatesFromMeasure()` exposes Runtime-verified positive
 execution traces as raw controlled skill candidates only after the evidence
 assessment opens the export gate. `traceDerivedSkillReviewItemsFromMeasure()`

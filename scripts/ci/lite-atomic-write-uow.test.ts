@@ -21,8 +21,9 @@ import { updateRuleState } from "../../src/memory/rules.ts";
 import { selectTools, type DeferredToolsSelectDecision } from "../../src/memory/tools-select.ts";
 import { buildAionisMemoryPacket } from "../../src/memory/product-output/memory-packet.ts";
 import { createProductGuideService } from "../../src/product/guide-service.ts";
+import { createProductMeasureService } from "../../src/product/measure-service.ts";
 import { createProductObserveService } from "../../src/product/observe-service.ts";
-import { ProductGuideRequest } from "../../src/product/product-services.ts";
+import { ProductGuideRequest, ProductMeasureRequest } from "../../src/product/product-services.ts";
 import { createProductToolFeedbackService } from "../../src/product/tool-feedback-service.ts";
 import { createHandoffRouteService } from "../../src/routes/handoff.ts";
 import { DEFERRED_PLANNING_TOOL_DECISION } from "../../src/routes/memory-context-runtime.ts";
@@ -34,11 +35,13 @@ import {
   createLiteRuntimeDatabase,
   type LiteRuntimeDatabaseFaultInjector,
 } from "../../src/store/lite-runtime-database.ts";
+import { verifyLiteRuntimeDatabase } from "../../src/store/lite-runtime-data-operations.ts";
 import {
   createLiteWriteStoreFromDatabase,
   createLiteWriteStore,
   type LiteWriteAnnSync,
 } from "../../src/store/lite-write-store.ts";
+import { createLiteSkillCandidateReviewStoreFromDatabase } from "../../src/store/lite-skill-candidate-review-store.ts";
 import { createSqliteDatabase } from "../../src/store/sqlite.ts";
 import { DeterministicEmbeddingProvider } from "./support/deterministic-embedding.ts";
 
@@ -82,6 +85,8 @@ function openAtomicRuntime(
   const recallStore = createLiteRecallStore(dbPath);
   const claimStore = createLiteClaimLedgerStoreFromDatabase(database);
   const claimLedgerAccess = claimStore.createClaimLedgerAccess();
+  const skillCandidateReviewStore = createLiteSkillCandidateReviewStoreFromDatabase(database);
+  const skillCandidateReviewAccess = skillCandidateReviewStore.createSkillCandidateReviewAccess();
   const learningEpisodeLedgerAccess = createLiteLearningEpisodeLedgerAccess(database);
   const executionStateStore = createLiteExecutionStateStoreFromDatabase(database.db, {
     path: database.path,
@@ -136,10 +141,18 @@ function openAtomicRuntime(
     learningKernel,
     learningEpisodeLedgerAccess,
   } as any);
+  const measure = createProductMeasureService({
+    defaultTenantId: env.MEMORY_TENANT_ID,
+    defaultScope: env.MEMORY_SCOPE,
+    skillCandidateReviewAccess,
+    runtimeEvidenceStore: writeStore,
+    learningEpisodeLedgerAccess,
+  });
   return {
     database,
     observe,
     guide,
+    measure,
     toolFeedback,
     learningKernel,
     learningEpisodeLedgerAccess,
@@ -156,6 +169,7 @@ function openAtomicRuntime(
       } finally {
         await executionTreeStore.close();
         await executionStateStore.close();
+        await skillCandidateReviewStore.close();
         await claimStore.close();
         await writeStore.close();
       }
@@ -401,6 +415,137 @@ const ZERO_GUIDE_LEARNING_ATOMIC_COUNTS: GuideLearningAtomicCounts = {
   learning_exposure_items: 0,
   guide_operation_receipts: 0,
 };
+
+function protectedManualMeasureInput(operationId: string, label = "manual-measure-atomic") {
+  return ProductMeasureRequest.parse({
+    operation_id: operationId,
+    tenant_id: "default",
+    scope: "default",
+    task: {
+      task_id: `task:${label}`,
+      run_id: `run:${label}`,
+      task_signature: label,
+      task_family: "manual_measurement_regression",
+    },
+    baseline: {
+      label: `${label}:baseline`,
+      continuity: {
+        repeatedDiscoverySteps: 4,
+        continuityGuidanceCorrect: false,
+        recoveredStateFacts: 0,
+        expectedStateFacts: 1,
+        recoveredStateApplicable: true,
+        verifiedFactsCarried: 0,
+        verifiedFactsExpected: 1,
+        verifiedFactsApplicable: true,
+      },
+      learning: {
+        workflowReused: false,
+        stableWorkflowReused: false,
+        provisionalMemoriesWritten: 0,
+        trustedPromotions: 0,
+        weakEvidencePromoted: 0,
+        counterEvidenceDemotions: 0,
+      },
+      forgetting: {
+        contextItems: 1,
+        usefulContextItems: 0,
+        staleMemorySurfaced: 0,
+        staleMemorySuppressed: 0,
+        archivedMemoryRehydratedOnDemand: 0,
+        unnecessaryRehydrations: 0,
+        staleMemoryControlApplicable: false,
+        rehydrationApplicable: false,
+      },
+      learning_control: {
+        weakEvidenceBlocked: 0,
+        authorityRequiresEvidence: true,
+        blockedAuthorityVisible: true,
+        unverifiedAuthorityApplied: 0,
+      },
+    },
+    aionis: {
+      label: `${label}:aionis`,
+      continuity: {
+        repeatedDiscoverySteps: 0,
+        continuityGuidanceCorrect: true,
+        recoveredStateFacts: 1,
+        expectedStateFacts: 1,
+        recoveredStateApplicable: true,
+        verifiedFactsCarried: 1,
+        verifiedFactsExpected: 1,
+        verifiedFactsApplicable: true,
+      },
+      learning: {
+        workflowReused: true,
+        stableWorkflowReused: true,
+        provisionalMemoriesWritten: 0,
+        trustedPromotions: 1,
+        weakEvidencePromoted: 0,
+        counterEvidenceDemotions: 0,
+      },
+      forgetting: {
+        contextItems: 1,
+        usefulContextItems: 1,
+        staleMemorySurfaced: 0,
+        staleMemorySuppressed: 0,
+        archivedMemoryRehydratedOnDemand: 0,
+        unnecessaryRehydrations: 0,
+        staleMemoryControlApplicable: false,
+        rehydrationApplicable: false,
+      },
+      learning_control: {
+        weakEvidenceBlocked: 0,
+        authorityRequiresEvidence: true,
+        blockedAuthorityVisible: true,
+        unverifiedAuthorityApplied: 0,
+      },
+    },
+    comparison: {
+      mode: "baseline_vs_aionis",
+      sufficient_evidence: true,
+    },
+    evidence_ids: ["caller-claimed-manual-evidence"],
+  });
+}
+
+function measurementAtomicCounts(dbPath: string, operationId: string) {
+  const db = createSqliteDatabase(dbPath);
+  try {
+    const count = (sql: string, ...params: unknown[]): number => Number(
+      db.prepare<{ count: number }>(sql).get(...params).count,
+    );
+    const measurement = db.prepare<{
+      measurement_id: string;
+      baseline_episode_id: string | null;
+      after_episode_id: string | null;
+      record_sha256: string | null;
+      created_at: string;
+    }>(
+      `SELECT measurement_id, baseline_episode_id, after_episode_id, record_sha256, created_at
+       FROM lite_product_measurements LIMIT 1`,
+    ).get() ?? null;
+    return {
+      measurement_count: count("SELECT COUNT(*) AS count FROM lite_product_measurements"),
+      effect_event_count: count(
+        "SELECT COUNT(*) AS count FROM lite_learning_episode_events WHERE event_kind = 'effect_measured'",
+      ),
+      operation_receipt_count: count(
+        `SELECT COUNT(*) AS count FROM lite_runtime_write_operations
+         WHERE operation_kind = 'product_measure_v1' AND operation_id = ?`,
+        operationId,
+      ),
+      operation_authority_count: count(
+        `SELECT COUNT(*) AS count FROM lite_runtime_write_operations
+         WHERE operation_kind = 'product_measure_receipt_authority_v1' AND operation_id = ?`,
+        operationId,
+      ),
+      measurement,
+    };
+  } finally {
+    db.close();
+  }
+}
 
 function atomicToolFeedbackContext(): Record<string, unknown> {
   return {
@@ -681,6 +826,233 @@ test("a before-commit SQLite fault leaves no earlier mutation visible after reop
   for (const [table, count] of Object.entries(counts)) {
     assert.equal(count, 0, `${table} must remain empty after injected fault and reopen`);
   }
+  fs.rmSync(directory, { recursive: true, force: true });
+});
+
+test("protected manual measure replays exactly without creating effect authority", async () => {
+  const directory = fs.mkdtempSync(path.join(os.tmpdir(), "aionis-manual-measure-atomic-"));
+  const dbPath = path.join(directory, "runtime.sqlite");
+  const operationId = "measure-manual-atomic-1";
+  const runtime = openAtomicRuntime(dbPath);
+  let first: Awaited<ReturnType<typeof runtime.measure.execute>>;
+  try {
+    const input = protectedManualMeasureInput(operationId);
+    first = await runtime.measure.execute(input, { actorId: "local-user" });
+    assert.equal(first.ok, true);
+    assert.equal(first.statusCode, 200);
+    assert.equal((first.body as any).operation_id, operationId);
+    assert.equal((first.body as any).evidence_assessment.provenance, "manual_unverified");
+    assert.equal((first.body as any).evidence_assessment.eligible_for_skill_export, false);
+
+    const replay = await runtime.measure.execute(input, { actorId: "local-user" });
+    assert.deepEqual(replay, first, "a protected retry must return the exact stored product result");
+
+    const changed = protectedManualMeasureInput(operationId, "manual-measure-changed-request");
+    const conflict = await runtime.measure.execute(changed, { actorId: "local-user" });
+    assert.equal(conflict.ok, false);
+    assert.equal(conflict.statusCode, 409);
+    assert.equal((conflict.body as any).error, "measure_operation_id_conflict");
+
+    const primary = runtime.database.db.prepare(
+      `SELECT tenant_id, scope, operation_kind, operation_id, request_sha256,
+              receipt_json, commit_id, created_at
+       FROM lite_runtime_write_operations
+       WHERE operation_kind = 'product_measure_v1' AND operation_id = ?`,
+    ).get(operationId) as {
+      tenant_id: string; scope: string; operation_kind: string; operation_id: string;
+      request_sha256: string; receipt_json: string; commit_id: string | null; created_at: string;
+    };
+    const tamperedReceipt = JSON.parse(primary.receipt_json) as {
+      body: { source_map: { internal_surfaces_used: string[] } };
+    };
+    tamperedReceipt.body.source_map.internal_surfaces_used.push("tampered_manual_surface");
+    runtime.database.db.prepare(
+      `UPDATE lite_runtime_write_operations SET receipt_json = ?
+       WHERE operation_kind = 'product_measure_v1' AND operation_id = ?`,
+    ).run(stableStringify(tamperedReceipt), operationId);
+    const tamperedReplay = await runtime.measure.execute(input, { actorId: "local-user" });
+    assert.equal(tamperedReplay.ok, false);
+    assert.equal(tamperedReplay.statusCode, 500);
+    assert.equal((tamperedReplay.body as any).error, "protected_measure_receipt_invalid");
+    await assert.rejects(
+      runtime.learningEpisodeLedgerAccess.verifyIntegrity(),
+      /product_measure_receipt_authority/,
+    );
+    runtime.database.db.prepare(
+      `UPDATE lite_runtime_write_operations SET receipt_json = ?
+       WHERE operation_kind = 'product_measure_v1' AND operation_id = ?`,
+    ).run(primary.receipt_json, operationId);
+    await runtime.learningEpisodeLedgerAccess.verifyIntegrity();
+
+    const root = runtime.database.db.prepare(
+      `SELECT tenant_id, scope, operation_kind, operation_id, request_sha256,
+              receipt_json, commit_id, created_at
+       FROM lite_runtime_write_operations
+       WHERE operation_kind = 'product_measure_receipt_authority_v1' AND operation_id = ?`,
+    ).get(operationId) as Record<string, string | null>;
+    runtime.database.db.prepare(
+      `DELETE FROM lite_runtime_write_operations
+       WHERE operation_kind = 'product_measure_receipt_authority_v1' AND operation_id = ?`,
+    ).run(operationId);
+    const missingRootReplay = await runtime.measure.execute(input, { actorId: "local-user" });
+    assert.equal(missingRootReplay.ok, false);
+    assert.equal(missingRootReplay.statusCode, 500);
+    await assert.rejects(
+      runtime.learningEpisodeLedgerAccess.verifyIntegrity(),
+      /product_measure_receipt_authority/,
+    );
+    runtime.database.db.prepare(
+      `INSERT INTO lite_runtime_write_operations
+        (tenant_id, scope, operation_kind, operation_id, request_sha256,
+         receipt_json, commit_id, created_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+    ).run(
+      root.tenant_id,
+      root.scope,
+      root.operation_kind,
+      root.operation_id,
+      root.request_sha256,
+      root.receipt_json,
+      root.commit_id,
+      root.created_at,
+    );
+    await runtime.learningEpisodeLedgerAccess.verifyIntegrity();
+
+    runtime.database.db.prepare(
+      `DELETE FROM lite_runtime_write_operations
+       WHERE operation_id = ? AND operation_kind IN (
+         'product_measure_v1', 'product_measure_receipt_authority_v1'
+       )`,
+    ).run(operationId);
+    const pairedDeletionReplay = await runtime.measure.execute(input, { actorId: "local-user" });
+    assert.equal(pairedDeletionReplay.ok, false);
+    assert.equal(pairedDeletionReplay.statusCode, 500);
+    assert.equal((pairedDeletionReplay.body as any).error, "protected_measure_receipt_invalid");
+    const pairedDeletionConflict = await runtime.measure.execute(changed, { actorId: "local-user" });
+    assert.equal(pairedDeletionConflict.ok, false);
+    assert.equal(pairedDeletionConflict.statusCode, 409);
+    assert.equal((pairedDeletionConflict.body as any).error, "measure_operation_id_conflict");
+    assert.equal(Number((runtime.database.db.prepare(
+      "SELECT COUNT(*) AS count FROM lite_product_measurements",
+    ).get() as { count: number }).count), 1);
+    await assert.rejects(
+      runtime.learningEpisodeLedgerAccess.verifyIntegrity(),
+      /product_measure_receipt_authority/,
+    );
+    const restoreOperation = runtime.database.db.prepare(
+      `INSERT INTO lite_runtime_write_operations
+        (tenant_id, scope, operation_kind, operation_id, request_sha256,
+         receipt_json, commit_id, created_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+    );
+    for (const row of [primary, root]) {
+      restoreOperation.run(
+        row.tenant_id,
+        row.scope,
+        row.operation_kind,
+        row.operation_id,
+        row.request_sha256,
+        row.receipt_json,
+        row.commit_id,
+        row.created_at,
+      );
+    }
+    await runtime.learningEpisodeLedgerAccess.verifyIntegrity();
+  } finally {
+    await runtime.close();
+  }
+
+  const snapshot = measurementAtomicCounts(dbPath, operationId);
+  assert.equal(snapshot.measurement_count, 1);
+  assert.equal(snapshot.operation_receipt_count, 1);
+  assert.equal(snapshot.operation_authority_count, 1);
+  assert.equal(snapshot.effect_event_count, 0);
+  assert.ok(snapshot.measurement);
+  assert.equal(snapshot.measurement.baseline_episode_id, null);
+  assert.equal(snapshot.measurement.after_episode_id, null);
+  assert.match(snapshot.measurement.record_sha256 ?? "", /^[0-9a-f]{64}$/u);
+  const tamperDb = createSqliteDatabase(dbPath);
+  try {
+    tamperDb.prepare(
+      "UPDATE lite_product_measurements SET created_at = ? WHERE measurement_id = ?",
+    ).run("2000-01-01T00:00:00.000Z", snapshot.measurement.measurement_id);
+  } finally {
+    tamperDb.close();
+  }
+  const tamperedVerification = await verifyLiteRuntimeDatabase(dbPath);
+  assert.equal(tamperedVerification.ok, false);
+  assert.equal(tamperedVerification.integrity_findings.learning_episode_ledger_invalid, 1);
+  const restoreDb = createSqliteDatabase(dbPath);
+  try {
+    restoreDb.prepare(
+      "UPDATE lite_product_measurements SET created_at = ? WHERE measurement_id = ?",
+    ).run(snapshot.measurement.created_at, snapshot.measurement.measurement_id);
+  } finally {
+    restoreDb.close();
+  }
+  assert.equal((await verifyLiteRuntimeDatabase(dbPath)).ok, true);
+  fs.rmSync(directory, { recursive: true, force: true });
+});
+
+test("a before-commit fault rolls back manual measurement and replay receipt together", async () => {
+  const directory = fs.mkdtempSync(path.join(os.tmpdir(), "aionis-manual-measure-fault-"));
+  const dbPath = path.join(directory, "runtime.sqlite");
+  const operationId = "measure-manual-fault-1";
+  let injected = false;
+  const runtime = openAtomicRuntime(dbPath, (phase) => {
+    if (phase === "before_commit" && !injected) {
+      injected = true;
+      throw new Error("injected manual measure before-commit fault");
+    }
+  });
+  try {
+    const failed = await runtime.measure.execute(
+      protectedManualMeasureInput(operationId),
+      { actorId: "local-user" },
+    );
+    assert.equal(injected, true);
+    assert.equal(failed.ok, false);
+    assert.equal(failed.statusCode, 500);
+  } finally {
+    await runtime.close();
+  }
+
+  const snapshot = measurementAtomicCounts(dbPath, operationId);
+  assert.equal(snapshot.measurement_count, 0);
+  assert.equal(snapshot.operation_receipt_count, 0);
+  assert.equal(snapshot.operation_authority_count, 0);
+  assert.equal(snapshot.effect_event_count, 0);
+  fs.rmSync(directory, { recursive: true, force: true });
+});
+
+test("a receipt-authority root insert fault rolls back the complete protected measurement", async () => {
+  const directory = fs.mkdtempSync(path.join(os.tmpdir(), "aionis-manual-measure-root-fault-"));
+  const dbPath = path.join(directory, "runtime.sqlite");
+  const operationId = "measure-manual-root-fault-1";
+  const runtime = openAtomicRuntime(dbPath);
+  try {
+    runtime.database.db.exec(`
+      CREATE TRIGGER reject_product_measure_receipt_authority
+      BEFORE INSERT ON lite_runtime_write_operations
+      WHEN NEW.operation_kind = 'product_measure_receipt_authority_v1'
+      BEGIN
+        SELECT RAISE(ABORT, 'injected product measure receipt authority failure');
+      END;
+    `);
+    const failed = await runtime.measure.execute(
+      protectedManualMeasureInput(operationId),
+      { actorId: "local-user" },
+    );
+    assert.equal(failed.ok, false);
+    assert.equal(failed.statusCode, 500);
+  } finally {
+    await runtime.close();
+  }
+  const snapshot = measurementAtomicCounts(dbPath, operationId);
+  assert.equal(snapshot.measurement_count, 0);
+  assert.equal(snapshot.operation_receipt_count, 0);
+  assert.equal(snapshot.operation_authority_count, 0);
+  assert.equal(snapshot.effect_event_count, 0);
   fs.rmSync(directory, { recursive: true, force: true });
 });
 
