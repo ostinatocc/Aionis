@@ -1,13 +1,13 @@
 {
   "schema_version": "aionis_runtime_complexity_budget_v1",
-  "baseline_commit": "c7f80409e45fec87fb2e6add11e309347be981bd",
-  "intent": "Structural growth guard only; the exact Task 8.1 rebaseline adds frozen policy-affected predecision slicing, strict exact-96-case paired finite-holdout contracts, fresh byte-identical Runtime-copy evidence bindings, counterbalanced planned and observed execution order, immutable profile and external-authority digests, full-risk-set missing-endpoint handling, and diagnostic/formal-candidate reporting without granting promotion authority or changing route, environment-field, largest-file, or zero-cycle allowances.",
+  "baseline_commit": "a2a5c67c23efdc0c536040e67cacf6b371afd070",
+  "intent": "Structural growth guard only; the exact Task 8.2A kernel rebaseline adds strict versioned evidence DTOs, pre-calibration gate-policy digest binding, exact BigInt absolute-risk and risk-difference randomization kernels, exact McNemar and offline finite-lattice checks, independent brute-force and compressed-reference oracles, frozen 96/192/384 boundary vectors, and policy-shaped resource regressions while keeping the gate calibration_pending and adding no authority action, route, environment field, largest-file growth, or import cycle.",
   "thresholds": {
-    "source_files": 319,
-    "source_lines": 157256,
+    "source_files": 320,
+    "source_lines": 157931,
     "route_matrix_entries": 21,
     "env_schema_fields": 177,
     "import_cycles": 0,
-    "largest_file_lines": 7206
+    "largest_file_lines": 7203
   }
 }

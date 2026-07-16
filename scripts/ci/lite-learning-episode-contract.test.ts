@@ -1019,6 +1019,7 @@ test("gate registry freezes v1 tuple, schedule, exact rational budgets, and pend
   assert.equal(gate.config.diagnostic_assignment_bucket_count, 10_000);
   assert.equal(gate.config.confirmatory_attempt_limit_per_task_family_candidate_implementation, 1);
   assert.equal(gate.config.assignment_unit, "store_memory_namespace");
+  assert.equal(gate.config.offline_paired_case_count, 96);
   assert.match(gate.policy_config_sha256, /^[0-9a-f]{64}$/);
   assert.match(gate.implementation_contract_sha256, /^[0-9a-f]{64}$/);
   assert.match(gate.prospective_calibration_contract_sha256, /^[0-9a-f]{64}$/);

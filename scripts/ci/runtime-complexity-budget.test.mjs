@@ -9,14 +9,14 @@ import { fileURLToPath } from "node:url";
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..", "..");
 const COLLECTOR = path.join(ROOT, "scripts", "ci", "runtime-complexity-budget.mjs");
 const BUDGET = path.join(ROOT, "docs", "architecture", "runtime-complexity-budget.json");
-const EXPECTED_BASELINE_COMMIT = "c7f80409e45fec87fb2e6add11e309347be981bd";
+const EXPECTED_BASELINE_COMMIT = "a2a5c67c23efdc0c536040e67cacf6b371afd070";
 const EXPECTED_THRESHOLDS = {
-  source_files: 319,
-  source_lines: 157256,
+  source_files: 320,
+  source_lines: 157931,
   route_matrix_entries: 21,
   env_schema_fields: 177,
   import_cycles: 0,
-  largest_file_lines: 7206,
+  largest_file_lines: 7203,
 };
 
 function runCollector(args = []) {
@@ -66,8 +66,9 @@ function assertBudgetMetadata(budget) {
   assert.equal(budget.baseline_commit, EXPECTED_BASELINE_COMMIT);
   assert.equal(typeof budget.intent, "string");
   assert.equal(budget.intent, budget.intent.trim());
-  assert.match(budget.intent, /exact Task 8\.1 rebaseline/);
-  assert.match(budget.intent, /without granting promotion authority/);
+  assert.match(budget.intent, /exact Task 8\.2A kernel rebaseline/);
+  assert.match(budget.intent, /keeping the gate calibration_pending/);
+  assert.match(budget.intent, /adding no authority action/);
   assert.deepEqual(budget.thresholds, EXPECTED_THRESHOLDS);
 }
 

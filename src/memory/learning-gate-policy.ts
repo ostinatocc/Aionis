@@ -83,6 +83,7 @@ const GATE_POLICY_CORE_CONFIG = deepFreeze({
   min_distinct_task_signatures: 6,
   min_activation_waves: 2,
   min_feedback_coverage: rational(9, 10),
+  offline_paired_case_count: 96,
   max_candidate_exploit_harm_upper: rational(1, 20),
   exploit_harm_noninferiority_margin: rational(1, 20),
   accepted_action_noninferiority_margin: rational(1, 20),

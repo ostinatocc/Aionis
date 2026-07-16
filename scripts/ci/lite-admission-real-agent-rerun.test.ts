@@ -674,6 +674,14 @@ test("finite holdout rejects malformed, relabeled, replayed, or unobserved evide
   wrongObservedOrder.cases[0]!.observed_first_arm = "candidate";
   const wrongObservedResult = evaluateAdmissionRealAgentFiniteHoldout(wrongObservedOrder);
   assert.ok(wrongObservedResult.hold_reasons.includes("observed_execution_order_mismatch"));
+
+  const incompleteCaseSet = finiteHoldoutFixture();
+  incompleteCaseSet.cases.pop();
+  const incompleteResult = evaluateAdmissionRealAgentFiniteHoldout(incompleteCaseSet);
+  assert.equal(incompleteResult.evidence_grade, "diagnostic_only");
+  assert.equal(incompleteResult.finite_regression_verdict, "hold");
+  assert.ok(incompleteResult.hold_reasons.includes("exact_96_case_set_required"));
+  assert.equal(incompleteResult.checks.harm_assessability_at_least_90_percent, false);
 });
 
 test("finite holdout runner accepts only the exact counterbalanced 96-unit manifest", () => {

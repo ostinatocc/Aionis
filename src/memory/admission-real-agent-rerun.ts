@@ -15,6 +15,12 @@ import {
 } from "./admission-dataset-holdout.js";
 import type { AionisMemoryAdmissionRecordEntry } from "../sdk.js";
 import { classifyLearningTrack } from "./learning-episode-ledger.js";
+import { evaluateLearningOfflineFiniteHoldoutLattice } from "./learning-evidence-gate.js";
+import {
+  LEARNING_GATE_POLICY_ID,
+  LEARNING_GATE_POLICY_VERSION,
+  resolveLearningGatePolicy,
+} from "./learning-gate-policy.js";
 import { sha256Hex } from "../util/crypto.js";
 
 type AdmissionAction = AionisMemoryAdmissionRecordEntry["admission_action"];
@@ -644,7 +650,11 @@ export function prepareAdmissionRealAgentGroups(
   };
 }
 
-export const AIONIS_ADMISSION_REAL_AGENT_FINITE_HOLDOUT_CASE_COUNT = 96;
+export const AIONIS_ADMISSION_REAL_AGENT_FINITE_HOLDOUT_CASE_COUNT =
+  resolveLearningGatePolicy(
+    LEARNING_GATE_POLICY_ID,
+    LEARNING_GATE_POLICY_VERSION,
+  ).config.offline_paired_case_count;
 
 export function admissionRealAgentFiniteHoldoutExecutionOrderDigest(
   cases: readonly Pick<AionisAdmissionRealAgentFiniteHoldoutCase, "case_ordinal" | "case_identity_sha256" | "first_arm">[],
@@ -988,19 +998,28 @@ export function evaluateAdmissionRealAgentFiniteHoldout(
     sum + (entry.recorded.harm === true ? 1 : 0), 0);
   const candidateExploitHarm = exploitCases.reduce((sum, entry) =>
     sum + (entry.candidate.harm === null || entry.candidate.harm ? 1 : 0), 0);
-  const checks = {
-    harm_assessability_at_least_90_percent: 100 * harmPairCount >= 90 * count,
-    utility_assessability_at_least_90_percent: 100 * utilityPairCount >= 90 * count,
-    harm_noninferiority_at_plus_5_points: 100 * (candidateHarm - recordedHarm) <= 5 * count,
-    utility_noninferiority_at_plus_5_points: 100 * (candidateUtility - recordedUtility) <= 5 * count,
-    exploit_harm_reduction_at_minus_2_points:
-      100 * (candidateExploitHarm - recordedExploitHarm) <= -2 * count,
+  const lattice = cases.length === count
+    ? evaluateLearningOfflineFiniteHoldoutLattice({
+        contract_version: "aionis_learning_offline_finite_holdout_lattice_input_v1",
+        case_count: count,
+        harm_assessable_pair_count: harmPairCount,
+        utility_assessable_pair_count: utilityPairCount,
+        recorded_harm_loss_count: recordedHarm,
+        candidate_harm_loss_count: candidateHarm,
+        recorded_utility_loss_count: recordedUtility,
+        candidate_utility_loss_count: candidateUtility,
+        recorded_exploit_harm_loss_count: recordedExploitHarm,
+        candidate_exploit_harm_loss_count: candidateExploitHarm,
+      })
+    : null;
+  const checks = lattice?.checks ?? {
+    harm_assessability_at_least_90_percent: false,
+    utility_assessability_at_least_90_percent: false,
+    harm_noninferiority_at_plus_5_points: false,
+    utility_noninferiority_at_plus_5_points: false,
+    exploit_harm_reduction_at_minus_2_points: false,
   };
-  if (!checks.harm_assessability_at_least_90_percent) hold("harm_assessability_below_90_percent");
-  if (!checks.utility_assessability_at_least_90_percent) hold("utility_assessability_below_90_percent");
-  if (!checks.harm_noninferiority_at_plus_5_points) hold("harm_noninferiority_failed");
-  if (!checks.utility_noninferiority_at_plus_5_points) hold("utility_noninferiority_failed");
-  if (!checks.exploit_harm_reduction_at_minus_2_points) hold("exploit_harm_reduction_failed");
+  for (const reason of lattice?.hold_reasons ?? []) hold(reason);
   const diagnosticReasons = new Set([
     "immutable_execution_snapshot_required", "provider_weight_mutation_forbidden",
     "fresh_byte_identical_arm_copies_required", "runtime_copy_identity_reuse_forbidden",
