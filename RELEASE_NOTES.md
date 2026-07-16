@@ -12,7 +12,7 @@ admission-candidate serving remains off.
 
 - `aionis@0.3.8` — immutable source ref `v0.3.8`
 - `@aionis/create@0.3.8` — immutable source ref `v0.3.8`
-- `@aionis/sdk@0.3.17` — frozen immutable source commit recorded in `release-train.json`
+- `@aionis/sdk@0.3.18` — immutable source ref `v0.3.18`
 - `@aionis/mcp@0.3.7` — immutable source ref `v0.3.7`
 - `@aionis/aifs@0.3.4` — immutable source ref `v0.3.4`
 - `@aionis/claude-code@0.3.5` — immutable source ref `v0.3.5`
@@ -94,7 +94,7 @@ node --test \
 node scripts/ci/release-artifact-gate.mjs --check --expect-tag v0.3.9
 # Against an already-running EMBEDDING_PROVIDER=none Runtime:
 AIONIS_BASE_URL="http://127.0.0.1:3210" \
-AIONIS_EXTERNAL_SMOKE_SDK_SPEC="@aionis/sdk@0.3.17" \
+AIONIS_EXTERNAL_SMOKE_SDK_SPEC="@aionis/sdk@0.3.18" \
 AIONIS_EXTERNAL_SMOKE_MCP_SPEC="@aionis/mcp@0.3.7" \
 AIONIS_EXTERNAL_SMOKE_CREATE_SPEC="@aionis/create@0.3.8" \
 AIONIS_EXTERNAL_SMOKE_EMBEDDING_EXPECTATION=unavailable \
@@ -159,7 +159,7 @@ or Substrate coordinates for this Runtime-only patch.
 
 ```bash
 AIONIS_FRESH_INSTALL_CREATE_SPEC="@aionis/create@0.3.8" \
-AIONIS_FRESH_INSTALL_SDK_SPEC="@aionis/sdk@0.3.17" \
+AIONIS_FRESH_INSTALL_SDK_SPEC="@aionis/sdk@0.3.18" \
 AIONIS_FRESH_INSTALL_MCP_SPEC="@aionis/mcp@0.3.7" \
 AIONIS_FRESH_INSTALL_REPO="https://github.com/ostinatocc/Aionis.git" \
 AIONIS_FRESH_INSTALL_RUNTIME_REF="v0.3.9" \

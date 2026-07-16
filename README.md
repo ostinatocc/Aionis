@@ -43,7 +43,7 @@ rehydrated later, and why each decision was made.
 npx aionis setup
 ```
 
-Current candidate: **Runtime v0.3.9 / SDK v0.3.17** (Local Runtime Public Beta).
+Current candidate: **Runtime v0.3.9 / SDK v0.3.18** (Local Runtime Public Beta).
 It is intended for a single self-hosted Runtime process with same-host Agent
 clients. The TypeScript SDK, HTTP API, MCP bridge, AIFS file surface, Memory
 Firewall, Agent Flight Recorder, optional Zvec candidate retrieval, and
