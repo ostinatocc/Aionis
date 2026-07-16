@@ -1,7 +1,7 @@
 # Aionis SDK Quickstart
 
 Status: developer-facing quickstart for the Runtime v0.3.10 development train
-and SDK v0.3.18 (Local Runtime Public Beta maturity)
+and SDK v0.3.19 (Local Runtime Public Beta maturity)
 
 This quickstart shows the smallest SDK product loop:
 
@@ -230,7 +230,10 @@ unavailable, request a new guide; never fall back to AgentContext IDs.
 normal product trace and operator snapshot payloads out of handwritten app code.
 For measure, allocate and persist one stable `operation_id` before the first
 attempt. An exact retry must reuse the same request object and ID; a changed
-request needs a new ID.
+request needs a new ID. The protected response carries the same `operation_id`,
+an immutable `measurement_id` and `measurement_digest`, and
+`measurement_persisted: true`. This evidence persistence does not itself mutate
+memory posture or authorize candidate promotion.
 `traceDerivedSkillCandidatesFromMeasure()` exposes Runtime-verified positive
 execution traces as raw controlled skill candidates only after the evidence
 assessment opens the export gate. `traceDerivedSkillReviewItemsFromMeasure()`
@@ -350,9 +353,15 @@ JSON showing:
 5. `compiled_context` exposes route and receipt metadata for host/operator logic
 6. `feedback()` attributes outcome only to host-instrumented actual-use IDs
    authorized by the guide's persisted `feedback_attribution_v1`
-7. `measure()` reports whether history changed the future context
-8. admission dataset JSONL export is produced without prompt payload
-9. `snapshot()` exposes read-only memory use receipt, admission record, and effect state
+7. the Runtime-governed `read` selection is executed against this quickstart
+   document before protected positive tool feedback is recorded
+8. the Runtime executes `npm run -s typecheck` itself; caller-supplied
+   `sufficient_evidence: false` remains ignored while exact episode-ledger
+   feedback authority can still verify the product trace
+9. `measure()` replays a protected operation identity, persists the immutable
+   measurement, and binds the verified effect to distinct baseline/after episodes
+10. admission dataset JSONL export is produced without prompt payload
+11. `snapshot()` exposes read-only memory use receipt, admission record, and effect state
 
 For multi-agent execution memory, use:
 

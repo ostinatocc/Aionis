@@ -3353,13 +3353,14 @@ test("product memory admission route exposes Memory Firewall summary in firewall
   }
 });
 
-test("protected product measure binds a real unverified episode pair and rejects forged body attribution", async () => {
+test("protected product measure uses exact episode feedback authority without requiring a rule row", async () => {
   const fixture = openFormalMeasureEpisodeRouteFixture("measure-formal-episode-pair");
   const runId = "run:measure-formal-episode-pair";
   const taskSignature = "measure-formal-episode-pair";
   const query = "Recover the verified scoped continuation before broad rediscovery";
   const beforeGuideOperationId = "guide-measure-formal-before-1";
   const afterGuideOperationId = "guide-measure-formal-after-1";
+  const feedbackOperationId = "feedback-measure-formal-positive-1";
   const measureOperationId = "measure-formal-episode-pair-1";
   const tamperedMeasureOperationId = "measure-formal-tampered-attribution-1";
   const context = {
@@ -3402,7 +3403,6 @@ test("protected product measure binds a real unverified episode pair and rejects
   };
 
   try {
-    await seedProductMeasureToolRule(fixture.liteWriteStore);
     const beforeGuide = await fixture.app.inject({
       method: "POST",
       url: "/v1/guide",
@@ -3475,11 +3475,56 @@ test("protected product measure binds a real unverified episode pair and rejects
     assert.equal(afterGuideBody.agent_context.actionable_history_used, true);
     await new Promise((resolve) => setTimeout(resolve, 5));
 
+    const missingFeedbackOperationId = "measure-formal-missing-feedback-1";
+    const missingFeedbackMeasure = await fixture.app.inject({
+      method: "POST",
+      url: "/v1/measure",
+      payload: {
+        operation_id: missingFeedbackOperationId,
+        tenant_id: "default",
+        scope: "default",
+        task: {
+          task_id: "task:measure-formal-episode-pair",
+          run_id: runId,
+          task_signature: taskSignature,
+          task_family: "continuity_recovery",
+        },
+        product_trace: {
+          before_guide: beforeGuideBody,
+          after_guide: afterGuideBody,
+          sufficient_evidence: true,
+          evidence_ids: ["caller:cannot-replace-missing-feedback"],
+        },
+      },
+    });
+    assert.equal(missingFeedbackMeasure.statusCode, 200, missingFeedbackMeasure.body);
+    const missingFeedbackBody = missingFeedbackMeasure.json();
+    assert.equal(missingFeedbackBody.evidence_assessment.status, "insufficient");
+    assert.equal(missingFeedbackBody.evidence_assessment.sufficient_evidence, false);
+    assert.equal(missingFeedbackBody.evidence_assessment.eligible_for_skill_export, false);
+    assert.ok(missingFeedbackBody.evidence_assessment.reasons.includes(
+      "measurement_tool_feedback_authority:feedback_missing",
+    ));
+    assert.equal(
+      missingFeedbackBody.evidence_assessment.runtime_evidence_ids.some(
+        (value: string) => value.startsWith(EFFECT_EXPECTED_V1_EVIDENCE_PREFIX),
+      ),
+      false,
+    );
+    assert.equal(
+      fixture.runtimeDatabase.readDb.prepare<{ count: number }>(
+        `SELECT COUNT(*) AS count FROM lite_learning_episode_events
+         WHERE event_kind = 'effect_measured' AND operation_id = ?`,
+      ).get(missingFeedbackOperationId).count,
+      0,
+    );
+
     const feedback = await fixture.app.inject({
       method: "POST",
       url: "/v1/feedback",
       payload: {
         feedback_kind: "tool_selection",
+        operation_id: feedbackOperationId,
         tenant_id: "default",
         scope: "default",
         guide_trace_id: afterGuideBody.guide_trace_id,
@@ -3493,6 +3538,13 @@ test("protected product measure binds a real unverified episode pair and rejects
       },
     });
     assert.equal(feedback.statusCode, 200, feedback.body);
+    assert.equal(feedback.json().operation_id, feedbackOperationId);
+    const legacyRuleFeedback = await fixture.liteWriteStore.listRuleFeedbackByRun({
+      scope: "default",
+      runId,
+      limit: 20,
+    });
+    assert.equal(legacyRuleFeedback.rows.length, 0);
 
     const task = {
       task_id: "task:measure-formal-episode-pair",
@@ -3508,10 +3560,11 @@ test("protected product measure binds a real unverified episode pair and rejects
       product_trace: {
         before_guide: beforeGuideBody,
         after_guide: afterGuideBody,
-        sufficient_evidence: true,
+        sufficient_evidence: false,
         evidence_ids: ["caller:must-not-select-episode-provenance"],
       },
     };
+    const beforeFirstMeasure = fixture.measureMutationCounts(measureOperationId);
     const measure = await fixture.app.inject({
       method: "POST",
       url: "/v1/measure",
@@ -3524,6 +3577,16 @@ test("protected product measure binds a real unverified episode pair and rejects
     assert.equal(measureBody.evidence_assessment.status, "sufficient");
     assert.equal(measureBody.evidence_assessment.provenance, "runtime_verified");
     assert.equal(measureBody.evidence_assessment.eligible_for_skill_export, false);
+    assert.deepEqual(measureBody.evidence_assessment.client_claims_ignored, {
+      sufficient_evidence: false,
+      evidence_id_count: 1,
+    });
+    assert.equal(
+      measureBody.evidence_assessment.runtime_evidence_ids.includes(
+        "caller:must-not-select-episode-provenance",
+      ),
+      false,
+    );
     assert.equal(
       measureBody.evidence_assessment.runtime_evidence_ids.filter(
         (value: string) => value.startsWith(EFFECT_EXPECTED_V1_EVIDENCE_PREFIX),
@@ -3531,11 +3594,12 @@ test("protected product measure binds a real unverified episode pair and rejects
       1,
     );
     assert.ok(measureBody.evidence_assessment.reasons.includes("measurement_episode_pair_not_promotion_eligible"));
-    assert.ok(
-      measureBody.evidence_assessment.reasons.includes(
-        "measurement_tool_feedback_authority:feedback_operation_unprotected",
-      ),
-    );
+    assert.ok(measureBody.evidence_assessment.runtime_evidence_ids.some(
+      (value: string) => value.startsWith("tool_feedback_event:"),
+    ));
+    assert.ok(measureBody.evidence_assessment.runtime_evidence_ids.some(
+      (value: string) => value.startsWith("tool_feedback_receipt:"),
+    ));
     assert.deepEqual(measureBody.effect_report.task, {
       task_id: null,
       run_id: runId,
@@ -3551,8 +3615,8 @@ test("protected product measure binds a real unverified episode pair and rejects
     assert.equal(unverifiedEnqueue.json().error, "measurement_not_skill_export_eligible");
     const afterFirstMeasure = fixture.measureMutationCounts(measureOperationId);
     assert.deepEqual(afterFirstMeasure, {
-      measurements: 1,
-      effect_events: 1,
+      measurements: beforeFirstMeasure.measurements + 1,
+      effect_events: beforeFirstMeasure.effect_events + 1,
       operation_receipts: 1,
     });
 
@@ -3567,6 +3631,175 @@ test("protected product measure binds a real unverified episode pair and rejects
       fixture.measureMutationCounts(measureOperationId),
       afterFirstMeasure,
       "an exact protected measure retry must not duplicate any durable mutation",
+    );
+
+    await new Promise((resolve) => setTimeout(resolve, 5));
+    const negativeAfterGuide = await fixture.app.inject({
+      method: "POST",
+      url: "/v1/guide",
+      payload: {
+        ...guidePayload,
+        operation_id: "guide-measure-formal-negative-after-1",
+        runtime_verification: {
+          version: 1,
+          mode: "execute",
+          agent_lifecycle_state: "agent_exited",
+          include_pending_validations: true,
+          validation_boundary: "runtime_orchestrator",
+          timeout_ms: 5_000,
+          max_requests: 4,
+          cwd: null,
+          agent_claimed_success: true,
+        },
+      },
+    });
+    assert.equal(negativeAfterGuide.statusCode, 200, negativeAfterGuide.body);
+    const negativeAfterGuideBody = negativeAfterGuide.json();
+    assert.notEqual(negativeAfterGuideBody.guide_trace_id, beforeGuideBody.guide_trace_id);
+    const negativeFeedback = await fixture.app.inject({
+      method: "POST",
+      url: "/v1/feedback",
+      payload: {
+        feedback_kind: "tool_selection",
+        operation_id: "feedback-measure-formal-negative-1",
+        tenant_id: "default",
+        scope: "default",
+        guide_trace_id: negativeAfterGuideBody.guide_trace_id,
+        decision_id: negativeAfterGuideBody.tool_selection.decision_id,
+        run_id: negativeAfterGuideBody.tool_selection.run_id,
+        selected_tool: negativeAfterGuideBody.tool_selection.selected_tool,
+        candidates: negativeAfterGuideBody.tool_selection.candidates,
+        outcome: "negative",
+        context,
+        input_text: "The selected tool did not complete the verified continuation.",
+      },
+    });
+    assert.equal(negativeFeedback.statusCode, 200, negativeFeedback.body);
+    const negativeMeasureOperationId = "measure-formal-negative-feedback-1";
+    const negativeMeasure = await fixture.app.inject({
+      method: "POST",
+      url: "/v1/measure",
+      payload: {
+        operation_id: negativeMeasureOperationId,
+        tenant_id: "default",
+        scope: "default",
+        task,
+        product_trace: {
+          before_guide: beforeGuideBody,
+          after_guide: negativeAfterGuideBody,
+          sufficient_evidence: true,
+          evidence_ids: ["caller:cannot-override-negative-feedback"],
+        },
+      },
+    });
+    assert.equal(negativeMeasure.statusCode, 200, negativeMeasure.body);
+    const negativeMeasureBody = negativeMeasure.json();
+    assert.equal(negativeMeasureBody.evidence_assessment.status, "insufficient");
+    assert.equal(negativeMeasureBody.evidence_assessment.sufficient_evidence, false);
+    assert.equal(negativeMeasureBody.evidence_assessment.eligible_for_skill_export, false);
+    assert.ok(negativeMeasureBody.evidence_assessment.reasons.includes(
+      "measurement_tool_feedback_authority:feedback_not_positive",
+    ));
+    assert.equal(
+      negativeMeasureBody.evidence_assessment.runtime_evidence_ids.some(
+        (value: string) => value.startsWith(EFFECT_EXPECTED_V1_EVIDENCE_PREFIX),
+      ),
+      false,
+    );
+    assert.equal(
+      fixture.runtimeDatabase.readDb.prepare<{ count: number }>(
+        `SELECT COUNT(*) AS count FROM lite_learning_episode_events
+         WHERE event_kind = 'effect_measured' AND operation_id = ?`,
+      ).get(negativeMeasureOperationId).count,
+      0,
+    );
+    const legacyRuleFeedbackAfterNegative = await fixture.liteWriteStore.listRuleFeedbackByRun({
+      scope: "default",
+      runId,
+      limit: 20,
+    });
+    assert.equal(legacyRuleFeedbackAfterNegative.rows.length, 0);
+
+    await new Promise((resolve) => setTimeout(resolve, 5));
+    const unprotectedFeedbackAfterGuide = await fixture.app.inject({
+      method: "POST",
+      url: "/v1/guide",
+      payload: {
+        ...guidePayload,
+        operation_id: "guide-measure-formal-unprotected-feedback-after-1",
+        runtime_verification: {
+          version: 1,
+          mode: "execute",
+          agent_lifecycle_state: "agent_exited",
+          include_pending_validations: true,
+          validation_boundary: "runtime_orchestrator",
+          timeout_ms: 5_000,
+          max_requests: 4,
+          cwd: null,
+          agent_claimed_success: true,
+        },
+      },
+    });
+    assert.equal(unprotectedFeedbackAfterGuide.statusCode, 200, unprotectedFeedbackAfterGuide.body);
+    const unprotectedFeedbackAfterGuideBody = unprotectedFeedbackAfterGuide.json();
+    const unprotectedPositiveFeedback = await fixture.app.inject({
+      method: "POST",
+      url: "/v1/feedback",
+      payload: {
+        feedback_kind: "tool_selection",
+        tenant_id: "default",
+        scope: "default",
+        guide_trace_id: unprotectedFeedbackAfterGuideBody.guide_trace_id,
+        decision_id: unprotectedFeedbackAfterGuideBody.tool_selection.decision_id,
+        run_id: unprotectedFeedbackAfterGuideBody.tool_selection.run_id,
+        selected_tool: unprotectedFeedbackAfterGuideBody.tool_selection.selected_tool,
+        candidates: unprotectedFeedbackAfterGuideBody.tool_selection.candidates,
+        outcome: "positive",
+        context,
+        input_text: "The selected tool completed the compatibility continuation.",
+      },
+    });
+    assert.equal(unprotectedPositiveFeedback.statusCode, 200, unprotectedPositiveFeedback.body);
+    assert.equal(unprotectedPositiveFeedback.json().operation_id, undefined);
+    const unprotectedFeedbackMeasureOperationId =
+      "measure-formal-unprotected-tool-feedback-1";
+    const unprotectedFeedbackMeasure = await fixture.app.inject({
+      method: "POST",
+      url: "/v1/measure",
+      payload: {
+        operation_id: unprotectedFeedbackMeasureOperationId,
+        tenant_id: "default",
+        scope: "default",
+        task,
+        product_trace: {
+          before_guide: beforeGuideBody,
+          after_guide: unprotectedFeedbackAfterGuideBody,
+          sufficient_evidence: false,
+          evidence_ids: ["caller:cannot-upgrade-unprotected-tool-feedback"],
+        },
+      },
+    });
+    assert.equal(unprotectedFeedbackMeasure.statusCode, 200, unprotectedFeedbackMeasure.body);
+    const unprotectedFeedbackMeasureBody = unprotectedFeedbackMeasure.json();
+    assert.equal(unprotectedFeedbackMeasureBody.evidence_assessment.status, "sufficient");
+    assert.equal(unprotectedFeedbackMeasureBody.evidence_assessment.sufficient_evidence, true);
+    assert.equal(unprotectedFeedbackMeasureBody.evidence_assessment.provenance, "runtime_verified");
+    assert.equal(unprotectedFeedbackMeasureBody.evidence_assessment.eligible_for_skill_export, false);
+    assert.ok(unprotectedFeedbackMeasureBody.evidence_assessment.reasons.includes(
+      "measurement_tool_feedback_authority:feedback_operation_unprotected",
+    ));
+    assert.equal(
+      unprotectedFeedbackMeasureBody.evidence_assessment.runtime_evidence_ids.filter(
+        (value: string) => value.startsWith(EFFECT_EXPECTED_V1_EVIDENCE_PREFIX),
+      ).length,
+      1,
+    );
+    assert.equal(
+      fixture.runtimeDatabase.readDb.prepare<{ count: number }>(
+        `SELECT COUNT(*) AS count FROM lite_learning_episode_events
+         WHERE event_kind = 'effect_measured' AND operation_id = ?`,
+      ).get(unprotectedFeedbackMeasureOperationId).count,
+      1,
     );
 
     const storedMeasureOperation = fixture.runtimeDatabase.db.prepare<{
@@ -3614,6 +3847,7 @@ test("protected product measure binds a real unverified episode pair and rejects
     );
     await fixture.learningEpisodeLedgerAccess.verifyIntegrity();
 
+    const beforeConflict = fixture.measureMutationCounts(measureOperationId);
     const conflict = await fixture.app.inject({
       method: "POST",
       url: "/v1/measure",
@@ -3629,7 +3863,7 @@ test("protected product measure binds a real unverified episode pair and rejects
     assert.equal(conflict.json().error, "measure_operation_id_conflict");
     assert.deepEqual(
       fixture.measureMutationCounts(measureOperationId),
-      afterFirstMeasure,
+      beforeConflict,
       "a changed request under one operation_id must fail before durable mutation",
     );
 

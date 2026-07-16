@@ -30,9 +30,9 @@
     },
     "sdk": {
       "name": "@aionis/sdk",
-      "version": "0.3.18",
-      "source_ref": "v0.3.18",
-      "source_commit": "88bdbd265b6dcf3e03eec70ee08301b16a7a10a6",
+      "version": "0.3.19",
+      "source_ref": "v0.3.19",
+      "source_commit": "948cd738fea8e7bb787ef220a9b8afe53c7f48c0",
       "repository": "https://github.com/ostinatocc/aionis-sdk.git",
       "package_path": "."
     },

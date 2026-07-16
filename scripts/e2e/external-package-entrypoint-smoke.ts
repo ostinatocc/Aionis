@@ -421,7 +421,9 @@ if (embeddingExpectation === "available") {
   );
 }
 
-const measure = await client.measure(measureInputFromGuideLoop({
+const measureOperationId = "external-package-sdk-measure:" + runId;
+const measureRequest = measureInputFromGuideLoop({
+  operation_id: measureOperationId,
   task: {
     task_id: "task:" + runId,
     run_id: runId,
@@ -433,8 +435,24 @@ const measure = await client.measure(measureInputFromGuideLoop({
   feedback_result: semanticFeedback,
   sufficient_evidence: false,
   evidence_ids: [],
-}));
+});
+const measure = await client.measure(measureRequest);
 assertCondition(measure.contract_version === "aionis_measure_result_v1", "SDK packaged measure missing contract");
+assertCondition(measure.operation_id === measureOperationId, "SDK packaged measure did not preserve protected operation identity");
+assertCondition(measure.measurement_persisted === true, "SDK packaged measure did not persist its immutable measurement");
+assertCondition(
+  typeof measure.measurement_id === "string" && measure.measurement_id.length > 0,
+  "SDK packaged measure missing measurement identity",
+);
+assertCondition(
+  typeof measure.measurement_digest === "string" && /^[0-9a-f]{64}$/.test(measure.measurement_digest),
+  "SDK packaged measure missing canonical measurement digest",
+);
+const measureReplay = await client.measure(measureRequest);
+assertCondition(
+  JSON.stringify(measureReplay) === JSON.stringify(measure),
+  "SDK packaged protected measure did not replay its exact durable receipt",
+);
 
 const snapshot = await client.snapshot(snapshotInputFromGuideLoop({
   run_id: runId,
@@ -469,6 +487,11 @@ process.stdout.write(JSON.stringify({
   semantic_feedback_contract: asRecord(semanticFeedback)?.contract_version ?? null,
   internal_surfaces: internalSurfaces,
   measure_contract: measure.contract_version,
+  measure_operation_id: measure.operation_id,
+  measurement_id: measure.measurement_id,
+  measurement_digest: measure.measurement_digest,
+  measurement_persisted: measure.measurement_persisted,
+  measure_exact_replay: JSON.stringify(measureReplay) === JSON.stringify(measure),
   snapshot_contract: operatorSnapshot.contract_version
 }, null, 2) + "\\n");
 `);

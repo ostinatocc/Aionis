@@ -3,7 +3,8 @@
 Release status `development`.
 
 Runtime `v0.3.10` is the next development train. It assigns the post-v0.3.9
-atomic tool-feedback work, standalone SDK `0.3.18`, and Manifest `0.1.1` to a
+atomic tool-feedback and measurement-authority work, standalone SDK `0.3.19`,
+and Manifest `0.1.1` to a
 new version boundary instead of rewriting the immutable v0.3.9 release. This
 file describes a target train, not an already-published Runtime tag or image.
 
@@ -11,7 +12,7 @@ file describes a target train, not an already-published Runtime tag or image.
 
 - `aionis@0.3.8` — immutable source ref `v0.3.8`
 - `@aionis/create@0.3.8` — immutable source ref `v0.3.8`
-- `@aionis/sdk@0.3.18` — immutable source ref `v0.3.18`
+- `@aionis/sdk@0.3.19` — immutable source ref `v0.3.19`
 - `@aionis/manifest@0.1.1` — immutable source ref `v0.1.1`
 - `@aionis/mcp@0.3.7` — immutable source ref `v0.3.7`
 - `@aionis/aifs@0.3.4` — immutable source ref `v0.3.4`
@@ -31,8 +32,11 @@ the Docker target, or movement of Docker `latest`.
   transaction, revalidates and persists the complete attribution unit inside
   one transaction, stores an exact operation receipt, and schedules external
   effects only after commit.
-- SDK `0.3.18` carries the matching protected tool-feedback identity and
-  provenance contract.
+- Task 6.1 adds protected measure `operation_id` handling, exact receipt replay,
+  immutable measurement persistence, and Runtime-verified effect-to-episode
+  binding for sufficient product traces.
+- SDK `0.3.19` carries the matching protected tool-feedback and measure
+  operation-identity contracts.
 - Manifest `0.1.1` is a formal release-train member. Ordinary CI and Docker
   release verification resolve its exact tag and commit, build and verify it,
   and run the real Manifest-to-Runtime resume integration without silently
@@ -41,9 +45,10 @@ the Docker target, or movement of Docker `latest`.
   asynchronous learning-control boundary. Feedback still does not synchronously
   claim a posture change.
 
-Task 6.1 measurement-to-episode binding is not part of this baseline. Global
-candidate serving remains disabled, and the evidence gate remains
-calibration-pending.
+Measurement evidence can now be bound to the persisted before/after episode
+pair without granting promotion authority. Formal gate calibration and
+autonomous promotion remain pending, and global candidate serving remains
+disabled.
 
 ## Development Gate
 
@@ -90,5 +95,5 @@ git push origin v0.3.10
 
 Do not republish `@aionis/create@0.3.8`; its default Runtime remains `v0.3.6`.
 Do not republish any other frozen package coordinate as part of Runtime
-promotion. Manifest `0.1.1` and SDK `0.3.18` must remain bound to the exact
+promotion. Manifest `0.1.1` and SDK `0.3.19` must remain bound to the exact
 commits recorded in `release-train.json`.

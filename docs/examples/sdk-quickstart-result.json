@@ -1,10 +1,11 @@
 {
   "contract_version": "aionis_sdk_quickstart_result_v1",
-  "run_id": "sdk-quickstart-example",
+  "run_id": "sdk-quickstart-8292031d",
   "runtime": {
     "mode": "spawned",
-    "base_url": "http://127.0.0.1:3001",
-    "embedding_provider": "minimax"
+    "base_url": "http://127.0.0.1:57449",
+    "embedding_provider": "dashscope",
+    "embedding_model": "text-embedding-v4"
   },
   "integration_path": {
     "sdk_client": "createAionisClient",
@@ -14,48 +15,64 @@
   "agent_context": {
     "before_actionable_history_used": false,
     "after_actionable_history_used": true,
-    "prompt_char_count": 723,
-    "prompt_preview": "AIONIS_CTX v2\nstate role=agent history=actionable\ncurrent use_now=SDK preference and project context",
+    "prompt_char_count": 2678,
+    "prompt_preview": "AIONIS_AGENT_CONTEXT v1\nstate: role=agent history=yes actionable_history=yes posture=reuse_supported_history authority=trusted risk=low\ncommand_posture: should_continue=50a34d98-aca8-5185-a3e2-bbd39c04b32a optional_context=c1359660-50ca-582c-a6ab-5b8b28f53569,a1e2e466-a278-5820-bb1b-f3d99d88cb6b\nexecution_contract: SHOULD_CONTINUE is the primary next route when present; Missing SHOULD_CONTINUE target is not stale proof; create, restore, rehydrate, or report conflict before fallback\nroute_contract: conflict_policy=do_not_treat_missing_active_target_as_superseded; if_active_target_missing=create_or_restore_or_rehydrate_or_report_conflict_before_fallback; executable_evidence=route_safe_but_patch_may_require_rehydrate; after_rehydrate=continue_allowed_action_if_task_consistent; old_or_referenc",
     "use_now_memory_ids": [
-      "mem_preference_example",
-      "mem_project_fact_example"
+      "50a34d98-aca8-5185-a3e2-bbd39c04b32a",
+      "c1359660-50ca-582c-a6ab-5b8b28f53569",
+      "a1e2e466-a278-5820-bb1b-f3d99d88cb6b"
     ]
   },
   "execution_context_compiler": {
     "contract_version": "aionis_execution_agent_context_v1",
     "budget_profile": "balanced",
-    "metadata_prompt_char_count": 2711,
+    "metadata_prompt_char_count": 2840,
     "route_contract_present": true,
-    "active_targets": [],
+    "active_targets": [
+      "docs/AIONIS_SDK_QUICKSTART.md",
+      "scripts/e2e/developer-sdk-quickstart.ts"
+    ],
     "missing_active_targets": [],
     "blocked_direction_targets": [],
     "rehydrate_request_count": 0,
-    "warning_codes": [
-      "reference_only_target_present"
-    ],
+    "warning_codes": [],
     "memory_use_receipt_visible": true
   },
   "memory_governance": {
-    "preference_memory_id": "mem_preference_example",
-    "project_fact_memory_id": "mem_project_fact_example",
+    "preference_memory_id": "a1e2e466-a278-5820-bb1b-f3d99d88cb6b",
+    "project_fact_memory_id": "c1359660-50ca-582c-a6ab-5b8b28f53569",
     "execution_handoff_memory_id": null,
     "execution_handoff_stored": true,
     "feedback_attributed_memory_count": 1,
-    "measure_history_impact": "positive"
+    "measure_history_impact": "positive",
+    "measure_operation_id": "measure:sdk-quickstart:sdk-quickstart-8292031d",
+    "measurement_id": "measurement:9f199e3a-234f-49fe-bf47-d34dab358883",
+    "measurement_digest": "672c9ae9ba8a9d24d966e9ac1790133f4f6f6fc018b1615175d854feddd545f4",
+    "measurement_persisted": true,
+    "measure_exact_replay": true,
+    "measure_evidence_status": "sufficient",
+    "measure_evidence_provenance": "runtime_verified",
+    "ignored_caller_sufficient_evidence_value": false,
+    "caller_evidence_id_count_ignored": 1,
+    "baseline_episode_id": "lep_f53121459ecbacac122b2134c9e3c51035236c135f7c3204f8d3a27391df6dae",
+    "after_episode_id": "lep_66424d3f2d5eecc76769402c2e8fbdcf514ccba93a0725a115ffa9087a946be1",
+    "effect_episode_binding_persisted": true,
+    "governed_tool_selected": "read",
+    "governed_tool_document_verified": true
   },
   "admission_dataset_export": {
     "contract_version": "aionis_memory_admission_dataset_row_v1",
-    "row_count": 4,
-    "jsonl_line_count": 4,
+    "row_count": 3,
+    "jsonl_line_count": 3,
     "positive_use_count": 1,
     "blocked_or_suppressed_count": 0,
     "prompt_payload_excluded": true,
     "raw_slots_excluded": true,
-    "example_jsonl_line": "{\"contract_version\":\"aionis_memory_admission_dataset_row_v1\",\"intended_use\":\"memory_admission_policy_training_or_audit\",\"source\":\"memory_admission_record\",\"agent_prompt_included\":false,\"runtime_mutation\":false,\"tenant_id\":\"default\",\"scope\":\"sdk-quickstart-example\",\"guide_trace_id\":\"guide-example\",\"run_id\":\"sdk-quickstart-example\",\"task_id\":\"task:sdk-quickstart-example\",\"task_signature\":\"sdk-quickstart\",\"row_index\":0,\"memory_id\":\"mem_project_fact_example\",\"title\":\"SDK quickstart project fact\",\"domain\":\"general\",\"memory_type\":\"project_context\",\"lifecycle_state\":\"active\",\"authority\":\"advisory\",\"admission_action\":\"use_now\",\"decision_kind\":\"used\",\"actionable\":true,\"prompt_included\":true,\"agent_used\":true,\"feedback_outcome\":\"positive\",\"attribution_strength\":\"positive_attribution\",\"outcome_label\":\"positive_use\",\"reason_codes\":[\"available_for_agent_use\"],\"evidence_ids\":[],\"prompt_char_count\":723,\"history_used\":true,\"actionable_history_used\":true}"
+    "example_jsonl_line": "{\"contract_version\":\"aionis_memory_admission_dataset_row_v1\",\"intended_use\":\"memory_admission_policy_training_or_audit\",\"source\":\"memory_admission_record\",\"agent_prompt_included\":false,\"runtime_mutation\":false,\"policy_id\":\"AIONIS_ADMISSION_POLICY_V1\",\"policy_version\":\"2026-06-17\",\"policy_mode\":\"deterministic_admission\",\"runtime_version\":null,\"tenant_id\":\"default\",\"scope\":\"sdk-quickstart:sdk-quickstart-8292031d\",\"guide_trace_id\":\"guide_trace:12abb090-e31f-44f4-900c-c413db265275\",\"run_id\":\"sdk-quickstart-8292031d\",\"task_id\":\"task:sdk-quickstart-8292031d\",\"task_signature\":\"sdk-quickstart\",\"row_index\":0,\"memory_id\":\"50a34d98-aca8-5185-a3e2-bbd39c04b32a\",\"title\":\"SDK_QUICKSTART_ACTIVE_PREF SDK_QUICKSTART_PROJECT_FACT continue SDK quickstart integration\",\"memory_origin\":\"aionis\",\"source_backend\":\"aionis\",\"domain\":\"execution\",\"memory_type\":\"execution_memory\",\"lifecycle_state\":\"active\",\"authority\":\"advisory\",\"admission_action\":\"rehydrate\",\"decision_kind\":\"rehydrate\",\"actionable\":false,\"prompt_included\":true,\"agent_used\":false,\"feedback_outcome\":null,\"attribution_strength\":null,\"outcome_label\":\"rehydrate_requested\",\"reason_codes\":[\"lifecycle_active\",\"authority_advisory\",\"scope_unscoped\",\"request_rehydrate\",\"agent_context_projection_rehydrate\",\"requires_differential_rehydration\",\"memory_contract_direct_use\",\"agent_context_projection_checked\",\"guide_history_used\"],\"evidence_ids\":[\"0cd19454-3120-5842-a548-8fd8a772d28a\"],\"prompt_char_count\":2678,\"history_used\":true,\"actionable_history_used\":true,\"prior_supported_use_count\":0,\"prior_contradicted_use_count\":0,\"prior_rehydrate_requested_count\":0,\"closed_loop_effect_state\":\"no_prior\",\"repeated_negative_posture\":false}"
   },
   "operator_audit": {
     "memory_use_receipt_visible": true,
-    "receipt_decision_summary_count": 2,
+    "receipt_decision_summary_count": 3,
     "memory_admission_record_visible": true,
     "snapshot_receipt_visible": true,
     "snapshot_admission_record_visible": true,
@@ -68,11 +85,19 @@
     "agent_prompt_boundary_preserved": true,
     "execution_context_compiler_used": true,
     "execution_context_receipt_visible": true,
+    "execution_context_repo_state_verified": true,
     "feedback_attributed": true,
     "admission_dataset_exported": true,
     "admission_dataset_feedback_joined": true,
     "admission_dataset_prompt_payload_excluded": true,
     "positive_history_impact_measured": true,
+    "protected_measure_identity_preserved": true,
+    "immutable_measurement_persisted": true,
+    "protected_measure_exact_replay": true,
+    "runtime_verified_measure_evidence": true,
+    "caller_measure_claim_did_not_open_gate": true,
+    "verified_effect_episode_binding_persisted": true,
+    "runtime_governed_tool_executed": true,
     "operator_snapshot_read_only": true
   }
 }

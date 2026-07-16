@@ -5,8 +5,9 @@
 Development baseline: 2026-07-16
 
 This unreleased train gives post-v0.3.9 work a truthful version boundary. It
-includes Task 5.1 atomic tool-feedback attribution, SDK `0.3.18`, and Manifest
-`0.1.1`; it does not claim a v0.3.10 Runtime tag or Docker publication.
+includes Task 5.1 atomic tool-feedback attribution, Task 6.1 protected
+measurement-to-episode binding, SDK `0.3.19`, and Manifest `0.1.1`; it does not
+claim a v0.3.10 Runtime tag or Docker publication.
 
 ### Changed
 
@@ -17,13 +18,16 @@ includes Task 5.1 atomic tool-feedback attribution, SDK `0.3.18`, and Manifest
   integration whenever CI supplies its explicit checkout.
 - Ordinary and Docker CI resolve, verify, and build the exact Manifest source
   ref recorded in `release-train.json`.
+- Protected measure writes now use stable operation identity and exact receipt
+  replay, persist immutable measurement records, and bind sufficient
+  Runtime-verified effects to the authoritative after episode.
 - v0.3.9 release evidence is restored to its original SDK `0.3.17` coordinate;
-  SDK `0.3.18` belongs only to this development train.
+  SDK `0.3.19` belongs only to this development train.
 
 ### Deferred
 
-- Task 6.1 measurement episode binding and later calibrated evidence/promotion
-  phases remain future work. Global candidate serving remains off.
+- Formal gate calibration, promotion authority, and global candidate serving
+  remain future work. Global candidate serving remains off.
 
 ## v0.3.9 - Durable Learning Control Candidate
 
