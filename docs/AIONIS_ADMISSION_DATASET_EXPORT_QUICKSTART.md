@@ -1,6 +1,6 @@
 # Aionis Admission Dataset Export Quickstart
 
-Status: SDK v0.3.17 read-only export path for Runtime v0.3.9 memory admission
+Status: SDK v0.3.18 read-only export path for Runtime v0.3.9 memory admission
 audit rows
 
 This quickstart shows how to turn a real Aionis guide/feedback/measure loop

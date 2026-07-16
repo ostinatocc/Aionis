@@ -175,9 +175,13 @@ export type LiteRuleDefSyncRow = {
   rule_scope: "global" | "team" | "agent";
   target_agent_id: string | null;
   target_team_id: string | null;
+  rule_memory_lane: "private" | "shared";
+  rule_owner_agent_id: string | null;
+  rule_owner_team_id: string | null;
   if_json: Record<string, unknown>;
   then_json: Record<string, unknown>;
   exceptions_json: unknown[];
+  rule_slots: Record<string, unknown>;
   positive_count: number;
   negative_count: number;
   commit_id: string | null;
@@ -466,6 +470,13 @@ export type LiteWriteStore = WriteStoreAccess & LiteProjectionOutboxAccess & {
     tools_feedback_count: number;
     latest_feedback_at: string | null;
     rows: LiteRuleFeedbackRow[];
+  }>;
+  toolRunLifecycleRowidCutoffs(args: {
+    scope: string;
+    runId: string;
+  }): Promise<{
+    decision_rowid_cutoff: number;
+    feedback_rowid_cutoff: number;
   }>;
   updateRuleFeedbackAggregates(args: {
     scope: string;
@@ -2332,22 +2343,27 @@ export function createLiteWriteStoreFromDatabase(
     async getRuleDef(scope: string, ruleNodeId: string): Promise<LiteRuleDefSyncRow | null> {
       const row = db.prepare(
         `SELECT
-           scope,
-           rule_node_id,
-           state,
-           rule_scope,
-           target_agent_id,
-           target_team_id,
-           if_json,
-           then_json,
-           exceptions_json,
-           positive_count,
-           negative_count,
-           commit_id,
-           updated_at
-         FROM lite_memory_rule_defs
-         WHERE scope = ?
-           AND rule_node_id = ?
+           d.scope,
+           d.rule_node_id,
+           d.state,
+           d.rule_scope,
+           d.target_agent_id,
+           d.target_team_id,
+           d.if_json,
+           d.then_json,
+           d.exceptions_json,
+           d.positive_count,
+           d.negative_count,
+           d.commit_id,
+           d.updated_at,
+           n.memory_lane,
+           n.owner_agent_id,
+           n.owner_team_id,
+           n.slots_json
+         FROM lite_memory_rule_defs d
+         JOIN lite_memory_nodes n ON n.id = d.rule_node_id AND n.scope = d.scope
+         WHERE d.scope = ?
+           AND d.rule_node_id = ?
          LIMIT 1`,
       ).get(scope, ruleNodeId) as {
         scope: string;
@@ -2363,6 +2379,10 @@ export function createLiteWriteStoreFromDatabase(
         negative_count: number;
         commit_id: string | null;
         updated_at: string;
+        memory_lane: "private" | "shared";
+        owner_agent_id: string | null;
+        owner_team_id: string | null;
+        slots_json: string;
       } | undefined;
       if (!row) return null;
       return {
@@ -2372,9 +2392,13 @@ export function createLiteWriteStoreFromDatabase(
         rule_scope: row.rule_scope,
         target_agent_id: row.target_agent_id,
         target_team_id: row.target_team_id,
+        rule_memory_lane: row.memory_lane,
+        rule_owner_agent_id: row.owner_agent_id,
+        rule_owner_team_id: row.owner_team_id,
         if_json: parseJsonObject(row.if_json),
         then_json: parseJsonObject(row.then_json),
         exceptions_json: parseJsonArray(row.exceptions_json),
+        rule_slots: parseJsonObject(row.slots_json),
         positive_count: Number(row.positive_count ?? 0),
         negative_count: Number(row.negative_count ?? 0),
         commit_id: row.commit_id,
@@ -2686,6 +2710,31 @@ export function createLiteWriteStoreFromDatabase(
         latest_feedback_at: stats?.latest_feedback_at ?? null,
         rows,
       };
+      });
+    },
+
+    async toolRunLifecycleRowidCutoffs(args) {
+      return await transaction.read(() => {
+        const decision = db.prepare(
+          `SELECT COALESCE(MAX(rowid), 0) AS rowid_cutoff
+           FROM lite_memory_execution_decisions
+           WHERE scope = ? AND run_id = ?`,
+        ).get(args.scope, args.runId) as { rowid_cutoff: number };
+        const feedback = db.prepare(
+          `SELECT COALESCE(MAX(rowid), 0) AS rowid_cutoff
+           FROM lite_memory_rule_feedback
+           WHERE scope = ? AND run_id = ?`,
+        ).get(args.scope, args.runId) as { rowid_cutoff: number };
+        const decisionRowidCutoff = Number(decision.rowid_cutoff);
+        const feedbackRowidCutoff = Number(feedback.rowid_cutoff);
+        if (!Number.isSafeInteger(decisionRowidCutoff) || decisionRowidCutoff < 1
+          || !Number.isSafeInteger(feedbackRowidCutoff) || feedbackRowidCutoff < 0) {
+          throw new Error("tool run lifecycle rowid cutoffs are invalid");
+        }
+        return {
+          decision_rowid_cutoff: decisionRowidCutoff,
+          feedback_rowid_cutoff: feedbackRowidCutoff,
+        };
       });
     },
 

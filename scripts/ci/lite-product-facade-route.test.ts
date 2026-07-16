@@ -16,6 +16,7 @@ import {
 } from "../../src/execution/index.ts";
 import { applyMemoryWrite, prepareMemoryWrite } from "../../src/memory/write.ts";
 import { updateRuleState } from "../../src/memory/rules.ts";
+import { readToolRuleEvaluationProvenance } from "../../src/memory/tool-rule-evaluation-provenance.ts";
 import { buildAionisUri } from "../../src/memory/uri.ts";
 import { createHandoffRouteService, registerHandoffRoutes } from "../../src/routes/handoff.ts";
 import {
@@ -1572,6 +1573,10 @@ test("product guide exposes the persisted tool decision as an attributed receipt
     assert.equal(typeof receipt.decision_uri, "string");
     assert.equal(typeof receipt.policy_sha256, "string");
     assert.equal(receipt.policy_sha256.length, 64);
+    assert.equal(typeof receipt.context_sha256, "string");
+    assert.equal(receipt.context_sha256.length, 64);
+    assert.equal(typeof receipt.rule_evaluation_sha256, "string");
+    assert.equal(receipt.rule_evaluation_sha256.length, 64);
     assert.ok(Array.isArray(receipt.source_rule_ids));
     assert.equal(typeof receipt.created_at, "string");
     assert.equal(body.source_map.internal_surfaces_used.includes("tool_selection_receipt"), true);
@@ -1584,6 +1589,11 @@ test("product guide exposes the persisted tool decision as an attributed receipt
     assert.equal(receipt.selected_tool, persisted.selected_tool);
     assert.equal(receipt.run_id, persisted.run_id);
     assert.equal(receipt.policy_sha256, persisted.policy_sha256);
+    assert.equal(receipt.context_sha256, persisted.context_sha256);
+    assert.equal(
+      receipt.rule_evaluation_sha256,
+      readToolRuleEvaluationProvenance(persisted.metadata_json)?.provenance_sha256,
+    );
     assert.deepEqual(receipt.candidates, persisted.candidates_json);
     assert.deepEqual(receipt.source_rule_ids, persisted.source_rule_ids ?? []);
 

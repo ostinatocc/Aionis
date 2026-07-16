@@ -42,6 +42,10 @@ import { resolvePatternTaskAffinity, type PatternAffinityLevel } from "./pattern
 import {
   resolveNodePatternExecutionSurface,
 } from "./node-execution-surface.js";
+import {
+  buildToolRuleEvaluationProvenance,
+  TOOL_RULE_EVALUATION_PROVENANCE_METADATA_KEY,
+} from "./tool-rule-evaluation-provenance.js";
 
 function inferBroadToolKind(name: string): "scan" | "test" | null {
   const lowered = name.toLowerCase();
@@ -516,6 +520,14 @@ export async function selectTools(
   const decision_id = randomUUID();
   const context_sha256 = hashExecutionContext(evaluationContext);
   const policy_sha256 = hashPolicy(applied.policy ?? {});
+  const ruleEvaluationProvenance = buildToolRuleEvaluationProvenance({
+    effective_context_sha256: context_sha256,
+    policy_sha256,
+    include_shadow: parsed.include_shadow,
+    rules_limit: parsed.rules_limit,
+    active_sources: rules.rule_evaluation_sources.active_sources,
+    shadow_sources: rules.rule_evaluation_sources.shadow_sources,
+  });
   const selectedTool = selection.selected ?? null;
   const usedTrustedPatterns = selectedTool
     ? trustedPatterns.filter((pattern) => pattern.selected_tool === selectedTool)
@@ -547,6 +559,7 @@ export async function selectTools(
     skipped_suppressed_pattern_anchor_ids: suppressedPatterns.map((pattern) => pattern.node_id),
     skipped_suppressed_pattern_tools: uniqueSelectedTools(suppressedPatterns),
     skipped_suppressed_pattern_affinity_levels: uniqueStrings(suppressedPatterns.map((pattern) => pattern.affinity_level), 8),
+    [TOOL_RULE_EVALUATION_PROVENANCE_METADATA_KEY]: ruleEvaluationProvenance,
     ...(parsed.include_shadow ? { shadow_tool_conflicts_summary } : {}),
   };
   const decisionWrite = {
@@ -648,7 +661,9 @@ export async function selectTools(
       }),
       run_id: parsed.run_id ?? null,
       selected_tool: selection.selected ?? null,
+      context_sha256,
       policy_sha256,
+      rule_evaluation_sha256: ruleEvaluationProvenance.provenance_sha256,
       source_rule_ids,
       created_at: decision_created_at,
       pattern_summary: {

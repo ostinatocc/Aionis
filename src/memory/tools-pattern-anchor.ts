@@ -12,7 +12,12 @@ import {
 import { buildExecutionContractFromProjection } from "./execution-contract.js";
 import { resolveNodePriorityProfile } from "./importance-dynamics.js";
 import { ExecutionNativeV1Schema, MemoryAnchorV1Schema, type MemoryAnchorV1 } from "./schemas.js";
-import { applyPreparedMemoryWrite, prepareMemoryWrite } from "./write.js";
+import {
+  completeLiteInlineEmbeddings,
+  persistLitePreparedWrite,
+  type LiteProjectedWriteStore,
+} from "./lite-projected-write-commit.js";
+import { applyPreparedMemoryWrite, prepareMemoryWrite, type PreparedWrite } from "./write.js";
 import { buildPromotionEvidenceLedgerV1 } from "./promotion-evidence-ledger.js";
 import {
   buildTaskSignature,
@@ -38,7 +43,7 @@ type DecisionAnchorSource = {
   commit_id: string | null;
 };
 
-type WriteToolsDecisionPatternAnchorArgs = {
+export type WriteToolsDecisionPatternAnchorArgs = {
   tenant_id: string;
   scope: string;
   actor: string;
@@ -55,7 +60,7 @@ type WriteToolsDecisionPatternAnchorArgs = {
   learning_control_pattern_state_override?: "stable" | null;
 };
 
-type WriteToolsDecisionPatternAnchorOptions = {
+export type WriteToolsDecisionPatternAnchorOptions = {
   defaultScope: string;
   defaultTenantId: string;
   maxTextLen: number;
@@ -63,10 +68,10 @@ type WriteToolsDecisionPatternAnchorOptions = {
   allowCrossScopeEdges?: boolean;
   embedder: EmbeddingProvider | null;
   writeAccess?: WriteStoreAccess | null;
-  liteWriteStore?: Pick<LiteWriteStore, "findNodes" | "updateNodeAnchorState"> | null;
+  liteWriteStore?: LiteWriteStore | null;
 };
 
-type PatternAnchorWriteResult = {
+export type PatternAnchorWriteResult = {
   node_id: string;
   client_id: string;
   pattern_signature: string;
@@ -81,6 +86,22 @@ type ExistingPatternAnchorNode = {
   salience: number;
   importance: number;
   confidence: number;
+};
+
+export type PreparedToolsDecisionPatternAnchor = {
+  scope: string;
+  feedback_commit_id: string;
+  expected_existing_sha256: string | null;
+  update: {
+    id: string;
+    slots: Record<string, unknown>;
+    text_summary: string;
+    salience: number;
+    importance: number;
+    confidence: number;
+  } | null;
+  prepared_write: PreparedWrite | null;
+  result: PatternAnchorWriteResult;
 };
 
 function asRecord(value: unknown): Record<string, unknown> | null {
@@ -701,6 +722,10 @@ async function findExistingPatternAnchorLite(
   };
 }
 
+function existingPatternAnchorSha256(node: ExistingPatternAnchorNode | null): string | null {
+  return node ? sha256Hex(stableStringify(node)) : null;
+}
+
 async function updateExistingPatternAnchorLite(
   liteWriteStore: Pick<LiteWriteStore, "updateNodeAnchorState">,
   args: {
@@ -726,15 +751,10 @@ async function updateExistingPatternAnchorLite(
   });
 }
 
-export async function writeToolsDecisionPatternAnchor(
+export async function prepareToolsDecisionPatternAnchor(
   args: WriteToolsDecisionPatternAnchorArgs,
   opts: WriteToolsDecisionPatternAnchorOptions,
-): Promise<PatternAnchorWriteResult | null> {
-  const writeAccess = opts.writeAccess ?? null;
-  if (!writeAccess) {
-    throw new Error("write_access_required_for_tools_pattern_anchor");
-  }
-
+): Promise<PreparedToolsDecisionPatternAnchor | null> {
   const taskCue = extractTaskCue(args.context, args.input_text ?? null, args.note ?? null);
   const taskFamily = extractTaskFamily(args.context, taskCue);
   const errorSignature = extractErrorSignature(args.context);
@@ -752,10 +772,9 @@ export async function writeToolsDecisionPatternAnchor(
     180,
   );
 
-  if (!opts.liteWriteStore) {
-    throw new Error("writeToolsDecisionPatternAnchor requires liteWriteStore");
-  }
-  const existingNode = await findExistingPatternAnchorLite(opts.liteWriteStore, args.scope, clientId);
+  const existingNode = opts.liteWriteStore
+    ? await findExistingPatternAnchorLite(opts.liteWriteStore, args.scope, clientId)
+    : null;
   if (!existingNode && args.feedback_outcome === "negative") {
     return null;
   }
@@ -795,21 +814,25 @@ export async function writeToolsDecisionPatternAnchor(
   });
 
   if (existingNode) {
-    await updateExistingPatternAnchorLite(opts.liteWriteStore, {
-      scope: args.scope,
-      id: existingNode.id,
-      slots,
-      textSummary: summary,
-      salience: trustProfile.salience,
-      importance: trustProfile.importance,
-      confidence: trustProfile.confidence,
-      commitId: args.feedback_commit_id,
-    });
     return {
-      node_id: existingNode.id,
-      client_id: clientId,
-      pattern_signature: patternSignature,
-      anchor,
+      scope: args.scope,
+      feedback_commit_id: args.feedback_commit_id,
+      expected_existing_sha256: existingPatternAnchorSha256(existingNode),
+      update: {
+        id: existingNode.id,
+        slots,
+        text_summary: summary,
+        salience: trustProfile.salience,
+        importance: trustProfile.importance,
+        confidence: trustProfile.confidence,
+      },
+      prepared_write: null,
+      result: {
+        node_id: existingNode.id,
+        client_id: clientId,
+        pattern_signature: patternSignature,
+        anchor,
+      },
     };
   }
 
@@ -845,26 +868,107 @@ export async function writeToolsDecisionPatternAnchor(
     },
     opts.embedder,
   );
-  if (opts.embedder) {
-    const planned = prepared.nodes.filter((node) => !node.embedding && typeof node.embed_text === "string" && node.embed_text.trim());
-    if (planned.length > 0) {
+  return {
+    scope: args.scope,
+    feedback_commit_id: args.feedback_commit_id,
+    expected_existing_sha256: null,
+    update: null,
+    prepared_write: prepared,
+    result: {
+      node_id: prepared.nodes[0]!.id,
+      client_id: clientId,
+      pattern_signature: patternSignature,
+      anchor,
+    },
+  };
+}
+
+export async function persistPreparedToolsDecisionPatternAnchor(
+  prepared: PreparedToolsDecisionPatternAnchor,
+  opts: {
+    liteWriteStore: LiteProjectedWriteStore & Pick<LiteWriteStore, "findNodes" | "updateNodeAnchorState">;
+    maxTextLen: number;
+    piiRedaction: boolean;
+    allowCrossScopeEdges?: boolean;
+  },
+): Promise<PatternAnchorWriteResult> {
+  const current = await findExistingPatternAnchorLite(
+    opts.liteWriteStore,
+    prepared.scope,
+    prepared.result.client_id,
+  );
+  if (existingPatternAnchorSha256(current) !== prepared.expected_existing_sha256) {
+    throw new Error("tools_pattern_anchor_prepare_conflict");
+  }
+  if (prepared.update) {
+    await updateExistingPatternAnchorLite(opts.liteWriteStore, {
+      scope: prepared.scope,
+      id: prepared.update.id,
+      slots: prepared.update.slots,
+      textSummary: prepared.update.text_summary,
+      salience: prepared.update.salience,
+      importance: prepared.update.importance,
+      confidence: prepared.update.confidence,
+      commitId: prepared.feedback_commit_id,
+    });
+  } else if (prepared.prepared_write) {
+    await persistLitePreparedWrite({
+      prepared: prepared.prepared_write,
+      liteWriteStore: opts.liteWriteStore,
+      writeOptions: {
+        maxTextLen: opts.maxTextLen,
+        piiRedaction: opts.piiRedaction,
+        allowCrossScopeEdges: opts.allowCrossScopeEdges ?? false,
+        associativeLinkOrigin: "memory_write",
+      },
+    });
+  }
+  return prepared.result;
+}
+
+export async function writeToolsDecisionPatternAnchor(
+  args: WriteToolsDecisionPatternAnchorArgs,
+  opts: WriteToolsDecisionPatternAnchorOptions,
+): Promise<PatternAnchorWriteResult | null> {
+  if (!opts.writeAccess) throw new Error("write_access_required_for_tools_pattern_anchor");
+  const liteWriteStore = opts.liteWriteStore ?? null;
+  if (liteWriteStore && opts.writeAccess !== liteWriteStore) {
+    throw new Error("tools pattern anchor write authorities must share one Lite store");
+  }
+  if (liteWriteStore?.transactionRunner().inTransaction()) {
+    throw new Error("writeToolsDecisionPatternAnchor must be entered outside a transaction");
+  }
+  const prepared = await prepareToolsDecisionPatternAnchor(args, opts);
+  if (!prepared) return null;
+  if (!liteWriteStore) {
+    const write = prepared.prepared_write;
+    if (!write) throw new Error("tools pattern anchor generic write plan is missing");
+    const planned = write.nodes.filter((node) => (
+      !node.embedding && typeof node.embed_text === "string" && node.embed_text.trim().length > 0
+    ));
+    if (opts.embedder && planned.length > 0) {
       const vectors = await opts.embedder.embed(planned.map((node) => String(node.embed_text)));
-      for (let i = 0; i < planned.length; i += 1) {
-        planned[i].embedding = vectors[i] ?? planned[i].embedding;
-        planned[i].embedding_model = opts.embedder.name;
+      for (let index = 0; index < planned.length; index += 1) {
+        planned[index]!.embedding = vectors[index] ?? planned[index]!.embedding;
+        planned[index]!.embedding_model = opts.embedder.name;
       }
     }
+    const out = await applyPreparedMemoryWrite(opts.writeAccess, write, {
+      maxTextLen: opts.maxTextLen,
+      piiRedaction: opts.piiRedaction,
+      allowCrossScopeEdges: opts.allowCrossScopeEdges ?? false,
+      associativeLinkOrigin: "memory_write",
+    });
+    return { ...prepared.result, node_id: out.nodes[0]!.id };
   }
-  const out = await applyPreparedMemoryWrite(writeAccess, prepared, {
+  const result = await liteWriteStore.withTx(() => persistPreparedToolsDecisionPatternAnchor(prepared, {
+    liteWriteStore,
     maxTextLen: opts.maxTextLen,
     piiRedaction: opts.piiRedaction,
-    allowCrossScopeEdges: opts.allowCrossScopeEdges ?? false,
-    associativeLinkOrigin: "memory_write",
-  });
-  return {
-    node_id: out.nodes[0]!.id,
-    client_id: clientId,
-    pattern_signature: patternSignature,
-    anchor,
-  };
+    allowCrossScopeEdges: opts.allowCrossScopeEdges,
+  }));
+  if (prepared.prepared_write) {
+    await completeLiteInlineEmbeddings({ prepared: prepared.prepared_write, embedder: opts.embedder, liteWriteStore });
+  }
+  return result;
 }

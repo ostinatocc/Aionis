@@ -29,7 +29,15 @@ import {
 } from "../memory/schemas.js";
 import { resolveTenantScope } from "../memory/tenant.js";
 import { getToolsDecisionById } from "../memory/tools-decision.js";
-import { toolSelectionFeedback } from "../memory/tools-feedback.js";
+import {
+  finalizeToolSelectionFeedback,
+  persistToolSelectionFeedback,
+  prepareToolSelectionFeedback,
+  toolSelectionFeedback,
+  type PersistedToolSelectionFeedback,
+  type PreparedToolSelectionFeedback,
+  type ToolSelectionFeedbackFinalizeResult,
+} from "../memory/tools-feedback.js";
 import { getToolsRunLifecycle, listToolsRuns } from "../memory/tools-run.js";
 import { selectTools } from "../memory/tools-select.js";
 import type { RecallStoreAccess } from "../store/recall-access.js";
@@ -82,6 +90,9 @@ export type LearningKernel = {
   readToolDecision(body: unknown): Promise<unknown>;
   readToolRun(body: unknown): Promise<unknown>;
   listToolRuns(body: unknown): Promise<unknown>;
+  prepareToolSelectionFeedback(body: unknown): Promise<PreparedToolSelectionFeedback>;
+  persistToolSelectionFeedback(prepared: PreparedToolSelectionFeedback): Promise<PersistedToolSelectionFeedback>;
+  finalizeToolSelectionFeedback(persisted: PersistedToolSelectionFeedback): Promise<ToolSelectionFeedbackFinalizeResult>;
   recordToolSelectionFeedback(body: unknown): Promise<unknown>;
   runLearningLoop(body: unknown): Promise<unknown>;
   runRuntimeMaintenance(body: unknown): Promise<unknown>;
@@ -155,6 +166,33 @@ export function createLearningKernel(args: LearningKernelArgs): LearningKernel {
 
     listToolRuns: (body) =>
       listToolsRuns(body, env.MEMORY_SCOPE, env.MEMORY_TENANT_ID, {
+        liteWriteStore,
+      }),
+
+    prepareToolSelectionFeedback: (body) =>
+      prepareToolSelectionFeedback(null, body, env.MEMORY_SCOPE, env.MEMORY_TENANT_ID, {
+        maxTextLen: env.MAX_TEXT_LEN,
+        piiRedaction: env.PII_REDACTION,
+        embedder,
+        learningControlReviewProviders: learningControlProviders?.toolsFeedback,
+        liteWriteStore,
+      }),
+
+    persistToolSelectionFeedback: (prepared) =>
+      persistToolSelectionFeedback(prepared, {
+        maxTextLen: env.MAX_TEXT_LEN,
+        piiRedaction: env.PII_REDACTION,
+        embedder,
+        learningControlReviewProviders: learningControlProviders?.toolsFeedback,
+        liteWriteStore,
+      }),
+
+    finalizeToolSelectionFeedback: (persisted) =>
+      finalizeToolSelectionFeedback(persisted, {
+        maxTextLen: env.MAX_TEXT_LEN,
+        piiRedaction: env.PII_REDACTION,
+        embedder,
+        learningControlReviewProviders: learningControlProviders?.toolsFeedback,
         liteWriteStore,
       }),
 

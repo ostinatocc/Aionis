@@ -538,8 +538,8 @@ function productForgetEffect(args: {
   };
 }
 
-const PRODUCT_FEEDBACK_OPERATION_KIND = "product_feedback_v1";
-const PRODUCT_FEEDBACK_OPERATION_RECEIPT_MAX_BYTES = 2 * 1024 * 1024;
+export const PRODUCT_FEEDBACK_OPERATION_KIND = "product_feedback_v1";
+export const PRODUCT_FEEDBACK_OPERATION_RECEIPT_MAX_BYTES = 2 * 1024 * 1024;
 
 type ProductFeedbackOperationIdentity = Readonly<{
   tenantId: string;

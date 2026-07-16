@@ -23,6 +23,12 @@ import {
 import { applyPolicyMemoryLearningControlLite } from "../../src/memory/policy-memory.ts";
 import { updateRuleState } from "../../src/memory/rules.ts";
 import { buildMaterializationContextFromFeedback } from "../../src/memory/tools-feedback.ts";
+import {
+  buildToolRuleEvaluationProvenance,
+  buildToolRuleEvaluationSource,
+  readToolRuleEvaluationProvenance,
+  verifyToolRuleEvaluationProvenance,
+} from "../../src/memory/tool-rule-evaluation-provenance.ts";
 import { applyMemoryWrite, prepareMemoryWrite } from "../../src/memory/write.ts";
 import { registerMemoryFeedbackToolRoutes } from "./support/register-memory-feedback-tool-test-routes.ts";
 import { createLiteRecallStore } from "../../src/store/lite-recall-store.ts";
@@ -97,10 +103,12 @@ const TOOLS_SELECT_PATTERN_MATCHES_KEYS = ["anchors", "matched", "preferred_tool
 
 const TOOLS_SELECT_DECISION_KEYS = [
   "created_at",
+  "context_sha256",
   "decision_id",
   "decision_uri",
   "pattern_summary",
   "policy_sha256",
+  "rule_evaluation_sha256",
   "run_id",
   "selected_tool",
   "source_rule_ids",
@@ -178,6 +186,61 @@ function assertToolsSelectExactKeySurface(body: {
     TOOLS_SELECT_SELECTION_SUMMARY_KEYS,
   );
 }
+
+test("tool rule evaluation provenance is canonical, strict, and self-verifying", () => {
+  const source = (
+    ruleNodeId: string,
+    state: "active" | "shadow" = "active",
+    overrides: Partial<Parameters<typeof buildToolRuleEvaluationSource>[0]> = {},
+  ) => buildToolRuleEvaluationSource({
+    rule_node_id: ruleNodeId,
+    state,
+    rule_scope: "global",
+    target_agent_id: null,
+    target_team_id: null,
+    rule_memory_lane: "shared",
+    rule_owner_agent_id: null,
+    rule_owner_team_id: null,
+    if_json: { task_kind: { $eq: "repository_change" } },
+    then_json: { tool: { prefer: ["read"] } },
+    exceptions_json: [],
+    rule_slots: {},
+    commit_id: `commit:${ruleNodeId}`,
+    ...overrides,
+  });
+  const contextSha256 = "a".repeat(64);
+  const policySha256 = "b".repeat(64);
+  const provenance = buildToolRuleEvaluationProvenance({
+    effective_context_sha256: contextSha256,
+    policy_sha256: policySha256,
+    include_shadow: true,
+    rules_limit: 20,
+    active_sources: [source("rule:b"), source("rule:a")],
+    shadow_sources: [source("rule:shadow", "shadow")],
+  });
+  assert.deepEqual(provenance.active_sources.map((entry) => entry.rule_node_id), ["rule:a", "rule:b"]);
+  assert.deepEqual(provenance.active_sources[0]?.touched_paths, ["tool.prefer"]);
+  assert.equal(provenance.shadow_sources[0]?.state, "shadow");
+  assert.equal(verifyToolRuleEvaluationProvenance(provenance), true);
+  assert.equal("context" in provenance, false);
+  assert.equal(verifyToolRuleEvaluationProvenance({ ...provenance, policy_sha256: contextSha256 }), false);
+  const semanticBaseline = source("rule:semantic");
+  assert.notEqual(source("rule:semantic", "active", {
+    rule_memory_lane: "private",
+    rule_owner_agent_id: "agent:owner",
+  }).row_sha256, semanticBaseline.row_sha256);
+  assert.notEqual(source("rule:semantic", "active", {
+    rule_slots: { rule_meta: { priority: 7, weight: 1.5 } },
+  }).row_sha256, semanticBaseline.row_sha256);
+  assert.throws(() => buildToolRuleEvaluationProvenance({
+    effective_context_sha256: contextSha256,
+    policy_sha256: policySha256,
+    include_shadow: true,
+    rules_limit: 20,
+    active_sources: [source("rule:a")],
+    shadow_sources: [source("rule:a", "shadow")],
+  }));
+});
 
 function tmpDbPath(name: string): string {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), "aionis-lite-tools-select-route-"));
@@ -862,6 +925,25 @@ test("LearningKernel tool selection returns the stable execution-memory contract
     assert.deepEqual(body.decision.pattern_summary.used_trusted_pattern_anchor_ids, []);
     assert.deepEqual(body.decision.pattern_summary.used_trusted_pattern_affinity_levels ?? [], []);
     assert.deepEqual(body.decision.pattern_summary.skipped_contested_pattern_tools, []);
+    const persistedDecision = await liteWriteStore.getExecutionDecision({
+      scope: "default",
+      id: body.decision.decision_id,
+    });
+    assert.ok(persistedDecision);
+    assert.equal(body.decision.context_sha256, persistedDecision.context_sha256);
+    const ruleEvaluation = readToolRuleEvaluationProvenance(persistedDecision.metadata_json);
+    assert.ok(ruleEvaluation);
+    assert.equal(ruleEvaluation.effective_context_sha256, body.decision.context_sha256);
+    assert.equal(ruleEvaluation.policy_sha256, body.decision.policy_sha256);
+    assert.equal(ruleEvaluation.provenance_sha256, body.decision.rule_evaluation_sha256);
+    assert.equal(ruleEvaluation.include_shadow, false);
+    assert.equal(ruleEvaluation.rules_limit, 20);
+    assert.equal(ruleEvaluation.active_sources.length, 1);
+    assert.equal(ruleEvaluation.active_sources[0]?.state, "active");
+    assert.equal(ruleEvaluation.active_sources[0]?.row_sha256.length, 64);
+    assert.deepEqual(ruleEvaluation.active_sources[0]?.touched_paths, ["tool.prefer"]);
+    assert.deepEqual(ruleEvaluation.shadow_sources, []);
+    assert.equal("context" in ruleEvaluation, false, "decision provenance must not persist raw execution context");
     assert.equal(body.selection_summary.trusted_pattern_count, 1);
     assert.equal(body.selection_summary.contested_pattern_count, 0);
     assert.equal(body.selection_summary.pattern_lifecycle_summary.trusted_count, 1);

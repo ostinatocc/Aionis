@@ -16,7 +16,7 @@ a tag.
 | Default installer Runtime ref | `v0.3.6` | `v0.3.6` | Last immutable Runtime selected by the frozen installer. |
 | `aionis` | `0.3.8` npm candidate | `v0.3.8` | Top-level setup and operator CLI. |
 | `@aionis/create` | `0.3.8` frozen | `v0.3.8` | One-command installer; its default remains Runtime v0.3.6. |
-| `@aionis/sdk` | `0.3.17` candidate | frozen commit | Exact persisted guide-feedback attribution plus canonical host-task and host-use receipt contracts. |
+| `@aionis/sdk` | `0.3.18` candidate | `v0.3.18` | Atomic tool-feedback attribution with protected context and rule-evaluation provenance. |
 | `@aionis/mcp` | `0.3.7` candidate | `v0.3.7` | MCP stdio bridge for compatible clients. |
 | `@aionis/aifs` | `0.3.4` candidate | `v0.3.4` | Governed file surface for file-aware Agents. |
 | `@aionis/claude-code` | `0.3.5` candidate | `v0.3.5` | Claude Code lifecycle hooks and plugin metadata. |
@@ -105,7 +105,7 @@ node --test \
 node scripts/ci/release-artifact-gate.mjs --check --expect-tag v0.3.9
 # Against an already-running EMBEDDING_PROVIDER=none Runtime:
 AIONIS_BASE_URL="http://127.0.0.1:3210" \
-AIONIS_EXTERNAL_SMOKE_SDK_SPEC="@aionis/sdk@0.3.17" \
+AIONIS_EXTERNAL_SMOKE_SDK_SPEC="@aionis/sdk@0.3.18" \
 AIONIS_EXTERNAL_SMOKE_MCP_SPEC="@aionis/mcp@0.3.7" \
 AIONIS_EXTERNAL_SMOKE_CREATE_SPEC="@aionis/create@0.3.8" \
 AIONIS_EXTERNAL_SMOKE_EMBEDDING_EXPECTATION=unavailable \
@@ -164,7 +164,7 @@ Runtime-only patch. The default installer remains on Runtime v0.3.6.
 
 ```bash
 AIONIS_FRESH_INSTALL_CREATE_SPEC="@aionis/create@0.3.8" \
-AIONIS_FRESH_INSTALL_SDK_SPEC="@aionis/sdk@0.3.17" \
+AIONIS_FRESH_INSTALL_SDK_SPEC="@aionis/sdk@0.3.18" \
 AIONIS_FRESH_INSTALL_MCP_SPEC="@aionis/mcp@0.3.7" \
 AIONIS_FRESH_INSTALL_REPO="https://github.com/ostinatocc/Aionis.git" \
 AIONIS_FRESH_INSTALL_RUNTIME_REF="v0.3.9" \

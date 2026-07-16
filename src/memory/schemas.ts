@@ -3890,7 +3890,9 @@ export const ToolsDecisionContractSchema = z.object({
   decision_uri: z.string(),
   run_id: z.string().nullable(),
   selected_tool: z.string().nullable(),
+  context_sha256: z.string().regex(/^[a-f0-9]{64}$/),
   policy_sha256: z.string(),
+  rule_evaluation_sha256: z.string().regex(/^[a-f0-9]{64}$/),
   source_rule_ids: z.array(z.string()),
   created_at: z.string().nullable(),
   pattern_summary: DecisionPatternSummaryContractSchema,
@@ -4777,6 +4779,14 @@ export const ToolsFeedbackRequest = z
     tenant_id: z.string().min(1).optional(),
     scope: z.string().min(1).optional(),
     actor: z.string().min(1).optional(),
+    operation_id: z.string().trim().min(1).max(256).optional(),
+    guide_trace_id: z.string().trim().min(1).optional(),
+    // Server-only guide binding. Product callers cannot supply these fields; the
+    // validated product service injects them from the persisted guide receipt.
+    guide_policy_sha256: z.string().regex(/^[a-f0-9]{64}$/).optional(),
+    guide_source_rule_ids: z.array(z.string().min(1)).max(200).optional(),
+    guide_context_sha256: z.string().regex(/^[a-f0-9]{64}$/).optional(),
+    guide_rule_evaluation_sha256: z.string().regex(/^[a-f0-9]{64}$/).optional(),
     run_id: z.string().min(1).optional(),
     // Optional direct link to the persisted tools/select decision record.
     decision_id: UUID.optional(),

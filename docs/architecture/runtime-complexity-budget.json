@@ -1,10 +1,10 @@
 {
   "schema_version": "aionis_runtime_complexity_budget_v1",
-  "baseline_commit": "f1764bb8f7cd57c350592c4d79d951f0abcf4ec4",
-  "intent": "Structural growth guard only; the exact confirmatory provisioning hardening rebaseline adds BEGIN-only bounded SQLITE_BUSY retry without changing source-file, route, environment-field, largest-file, or zero-cycle allowances.",
+  "baseline_commit": "5deade1bbdb47d50b2fc77860a8138ac810d6516",
+  "intent": "Structural growth guard only; the exact Task 5.1 rebaseline adds atomic tool-feedback attribution, replay, restart integrity, and one shared tool-rule provenance module without changing route, environment-field, largest-file, or zero-cycle allowances.",
   "thresholds": {
-    "source_files": 315,
-    "source_lines": 151677,
+    "source_files": 316,
+    "source_lines": 154142,
     "route_matrix_entries": 21,
     "env_schema_fields": 177,
     "import_cycles": 0,

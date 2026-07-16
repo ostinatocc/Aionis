@@ -680,7 +680,7 @@ export function createRequestGuards({
       if (!obj.consumer_agent_id) obj.consumer_agent_id = runtime.LITE_LOCAL_ACTOR_ID;
     }
 
-    if (kind === "rules_evaluate" || kind === "tools_select" || kind === "tools_feedback" || kind === "planning_context" || kind === "context_assemble" || kind === "experience_intelligence") {
+    if (kind === "product_guide" || kind === "rules_evaluate" || kind === "tools_select" || kind === "tools_feedback" || kind === "planning_context" || kind === "context_assemble" || kind === "experience_intelligence") {
       const ctxRecord = asRecord(obj.context);
       const ctx = ctxRecord ? { ...ctxRecord } : {};
       const agentRecord = asRecord(ctx.agent);
