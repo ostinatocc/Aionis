@@ -48,17 +48,49 @@ jobs:
         run: |
           node --input-type=module -e '
             import fs from "node:fs";
+            const requiredString = (value, field) => {
+              const normalized = typeof value === "string" ? value.trim() : "";
+              if (!normalized) throw new Error(`${field} must be a non-empty string`);
+              return normalized;
+            };
+            const dependencies = JSON.parse(fs.readFileSync("ci-dependencies.json", "utf8"));
             const releaseTrain = JSON.parse(fs.readFileSync("release-train.json", "utf8"));
-            const fallbackRef = releaseTrain.packages.sdk.source_ref || "main";
-            fs.appendFileSync(process.env.GITHUB_OUTPUT, `ref=${process.env.SDK_REF_OVERRIDE || fallbackRef}\n`);
+            if (dependencies.schema_version !== "aionis_ci_dependency_lock_v1") {
+              throw new Error("unsupported ci-dependencies.json schema_version");
+            }
+            const repository = requiredString(dependencies.sdk?.repository, "ci-dependencies.sdk.repository");
+            const contractCommit = requiredString(
+              dependencies.sdk?.contract_commit,
+              "ci-dependencies.sdk.contract_commit",
+            );
+            if (!/^[a-f0-9]{40}$/i.test(contractCommit)) {
+              throw new Error("ci-dependencies.sdk.contract_commit must be a 40-character commit");
+            }
+            const releaseRef = requiredString(
+              releaseTrain.packages?.sdk?.source_ref,
+              "release-train.packages.sdk.source_ref",
+            );
+            fs.appendFileSync(process.env.GITHUB_OUTPUT, `repository=${repository}\n`);
+            fs.appendFileSync(
+              process.env.GITHUB_OUTPUT,
+              `contract_ref=${process.env.SDK_REF_OVERRIDE || contractCommit}\n`,
+            );
+            fs.appendFileSync(process.env.GITHUB_OUTPUT, `release_ref=${releaseRef}\n`);
           '
 
       - name: Checkout standalone SDK contracts
         uses: actions/checkout@v4
         with:
-          repository: ostinatocc/aionis-sdk
-          ref: ${{ steps.sdk-ref.outputs.ref }}
+          repository: ${{ steps.sdk-ref.outputs.repository }}
+          ref: ${{ steps.sdk-ref.outputs.contract_ref }}
           path: external/aionis-sdk
+
+      - name: Checkout frozen SDK release artifact
+        uses: actions/checkout@v4
+        with:
+          repository: ${{ steps.sdk-ref.outputs.repository }}
+          ref: ${{ steps.sdk-ref.outputs.release_ref }}
+          path: external/release/aionis-sdk
 
       - name: Resolve standalone Manifest ref
         id: manifest-ref
@@ -85,7 +117,7 @@ jobs:
       - name: Release artifact gate
         run: node scripts/ci/release-artifact-gate.mjs --check
         env:
-          AIONIS_RELEASE_SDK_REPO: ${{ github.workspace }}/external/aionis-sdk
+          AIONIS_RELEASE_SDK_REPO: ${{ github.workspace }}/external/release/aionis-sdk
           AIONIS_RELEASE_MANIFEST_REPO: ${{ github.workspace }}/external/AionisManifest
 
       - name: Verify standalone Manifest

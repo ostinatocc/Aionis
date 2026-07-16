@@ -8,6 +8,14 @@ import { fileURLToPath } from "node:url";
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..", "..");
 const read = (relativePath) => fs.readFileSync(path.join(ROOT, relativePath), "utf8");
 
+function workflowStep(workflow, name) {
+  const marker = `      - name: ${name}\n`;
+  const start = workflow.indexOf(marker);
+  assert.notEqual(start, -1, `missing workflow step: ${name}`);
+  const next = workflow.indexOf("\n      - name:", start + marker.length);
+  return workflow.slice(start, next === -1 ? workflow.length : next);
+}
+
 test("Docker release verifies all frozen package repositories before publication", () => {
   const workflow = read(".github/workflows/docker.yml");
   const frozenPackages = [
@@ -221,7 +229,17 @@ test("release smoke rejects mutable image tags before invoking Docker", () => {
 
 test("default CI verifies release metadata, SDK and Manifest ownership, complexity, smoke, and minimum Node", () => {
   const workflow = read(".github/workflows/ci.yml");
+  const contractCheckout = workflowStep(workflow, "Checkout standalone SDK contracts");
+  const releaseCheckout = workflowStep(workflow, "Checkout frozen SDK release artifact");
+  const releaseGate = workflowStep(workflow, "Release artifact gate");
   assert.match(workflow, /release-artifact-gate\.mjs --check/);
+  assert.match(contractCheckout, /ref: \$\{\{ steps\.sdk-ref\.outputs\.contract_ref \}\}/);
+  assert.match(contractCheckout, /path: external\/aionis-sdk/);
+  assert.match(releaseCheckout, /ref: \$\{\{ steps\.sdk-ref\.outputs\.release_ref \}\}/);
+  assert.match(releaseCheckout, /path: external\/release\/aionis-sdk/);
+  assert.match(releaseGate, /AIONIS_RELEASE_SDK_REPO: \$\{\{ github\.workspace \}\}\/external\/release\/aionis-sdk/);
+  assert.match(workflow, /AIONIS_SDK_REPO:.*external\/aionis-sdk/);
+  assert.doesNotMatch(releaseGate, /AIONIS_RELEASE_SDK_REPO:.*external\/aionis-sdk$/m);
   assert.match(workflow, /id: manifest-ref/);
   assert.match(workflow, /releaseTrain\.packages\.manifest\.source_ref/);
   assert.match(workflow, /repository: ostinatocc\/AionisManifest/);
