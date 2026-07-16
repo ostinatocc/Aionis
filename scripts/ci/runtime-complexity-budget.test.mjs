@@ -9,6 +9,15 @@ import { fileURLToPath } from "node:url";
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..", "..");
 const COLLECTOR = path.join(ROOT, "scripts", "ci", "runtime-complexity-budget.mjs");
 const BUDGET = path.join(ROOT, "docs", "architecture", "runtime-complexity-budget.json");
+const EXPECTED_BASELINE_COMMIT = "c7f80409e45fec87fb2e6add11e309347be981bd";
+const EXPECTED_THRESHOLDS = {
+  source_files: 319,
+  source_lines: 157256,
+  route_matrix_entries: 21,
+  env_schema_fields: 177,
+  import_cycles: 0,
+  largest_file_lines: 7206,
+};
 
 function runCollector(args = []) {
   return spawnSync(process.execPath, [COLLECTOR, ...args], {
@@ -50,6 +59,18 @@ function assertReportShape(report) {
   assert.deepEqual(report.largest_files, expectedOrder);
 }
 
+function assertBudgetMetadata(budget) {
+  assert.deepEqual(Object.keys(budget).sort(), ["baseline_commit", "intent", "schema_version", "thresholds"]);
+  assert.equal(budget.schema_version, "aionis_runtime_complexity_budget_v1");
+  assert.match(budget.baseline_commit, /^[0-9a-f]{40}$/);
+  assert.equal(budget.baseline_commit, EXPECTED_BASELINE_COMMIT);
+  assert.equal(typeof budget.intent, "string");
+  assert.equal(budget.intent, budget.intent.trim());
+  assert.match(budget.intent, /exact Task 8\.1 rebaseline/);
+  assert.match(budget.intent, /without granting promotion authority/);
+  assert.deepEqual(budget.thresholds, EXPECTED_THRESHOLDS);
+}
+
 test("runtime complexity collector emits deterministic tracked-source metrics", () => {
   const first = runCollector();
   assert.equal(first.status, 0, first.stderr);
@@ -76,8 +97,7 @@ test("runtime complexity collector emits deterministic tracked-source metrics", 
 
 test("runtime complexity collector enforces the committed budget", () => {
   const budget = JSON.parse(fs.readFileSync(BUDGET, "utf8"));
-  assert.equal(budget.thresholds.route_matrix_entries, 21);
-  assert.equal(budget.thresholds.import_cycles, 0);
+  assertBudgetMetadata(budget);
   const checked = runCollector(["--check", BUDGET]);
   assert.equal(checked.status, 0, checked.stderr);
   assertReportShape(JSON.parse(checked.stdout));

@@ -1,3 +1,6 @@
+import stableStringify from "fast-json-stable-stringify";
+import { z } from "zod";
+
 import {
   decideAdmissionCandidatePolicyActionForEvaluation,
   evaluateAdmissionCandidatePoliciesRows,
@@ -12,8 +15,10 @@ import {
 } from "./admission-dataset-holdout.js";
 import type { AionisMemoryAdmissionRecordEntry } from "../sdk.js";
 import { classifyLearningTrack } from "./learning-episode-ledger.js";
+import { sha256Hex } from "../util/crypto.js";
 
 type AdmissionAction = AionisMemoryAdmissionRecordEntry["admission_action"];
+const PREDECISION_PRIOR_FIELDS_COMPLETE = "__aionis_predecision_prior_fields_complete";
 
 export type AionisAdmissionRealAgentArmId =
   | "recorded_policy_baseline"
@@ -40,6 +45,79 @@ export type AionisAdmissionRealAgentSelectedPriorBucket =
   | "none"
   | "no_prior"
   | "prior_aware";
+
+const AdmissionRealAgentPredecisionTrackSchema = z.enum([
+  "explore", "exploit", "mixed", "unaffected", "unclassified",
+]);
+const FiniteHoldoutSha256Schema = z.string().regex(/^[0-9a-f]{64}$/u);
+const FiniteHoldoutIdSchema = z.string().min(1).max(256);
+const FiniteHoldoutArmNameSchema = z.enum(["recorded", "candidate"]);
+const AdmissionRealAgentFiniteHoldoutArmSchema = z.object({
+  harm: z.boolean().nullable(),
+  accepted_completed: z.boolean().nullable(),
+  runtime_copy_identity_sha256: FiniteHoldoutSha256Schema,
+  starting_runtime_snapshot_sha256: FiniteHoldoutSha256Schema,
+  ending_runtime_snapshot_sha256: FiniteHoldoutSha256Schema,
+  runtime_copy_destroyed: z.boolean(),
+  request_fingerprint_sha256: FiniteHoldoutSha256Schema,
+  response_payload_sha256: FiniteHoldoutSha256Schema,
+  response_fingerprint_sha256: FiniteHoldoutSha256Schema,
+}).strict();
+const AdmissionRealAgentFiniteHoldoutCaseSchema = z.object({
+  case_ordinal: z.number().int().nonnegative(),
+  case_identity_sha256: FiniteHoldoutSha256Schema,
+  policy_affected: z.boolean(),
+  predecision_track: AdmissionRealAgentPredecisionTrackSchema,
+  first_arm: FiniteHoldoutArmNameSchema,
+  observed_first_arm: FiniteHoldoutArmNameSchema,
+  recorded: AdmissionRealAgentFiniteHoldoutArmSchema,
+  candidate: AdmissionRealAgentFiniteHoldoutArmSchema,
+}).strict();
+const AdmissionRealAgentFiniteHoldoutProfileSchema = z.object({
+  immutable_snapshot: z.boolean(),
+  provider_may_update_weights: z.boolean(),
+  source_runtime_snapshot_sha256: FiniteHoldoutSha256Schema,
+  runtime_binary_sha256: FiniteHoldoutSha256Schema,
+  immutable_model_snapshot_sha256: FiniteHoldoutSha256Schema,
+  deterministic_decoding_seed_sha256: FiniteHoldoutSha256Schema,
+  deterministic_decoding_kernel_sha256: FiniteHoldoutSha256Schema,
+  tool_manifest_sha256: FiniteHoldoutSha256Schema,
+  execution_order_sha256: FiniteHoldoutSha256Schema,
+}).strict();
+const AdmissionRealAgentFiniteHoldoutAuthoritySchema = z.object({
+  reservation_id: FiniteHoldoutIdSchema,
+  reservation_sha256: FiniteHoldoutSha256Schema,
+  ticket_consumption_id: FiniteHoldoutIdSchema,
+  ticket_consumption_sha256: FiniteHoldoutSha256Schema,
+  claim_id: FiniteHoldoutIdSchema,
+  claim_sha256: FiniteHoldoutSha256Schema,
+  supervisor_binding_id: FiniteHoldoutIdSchema,
+  supervisor_binding_sha256: FiniteHoldoutSha256Schema,
+  session_termination_id: FiniteHoldoutIdSchema,
+  session_termination_sha256: FiniteHoldoutSha256Schema,
+  retry_policy_sha256: FiniteHoldoutSha256Schema,
+  case_set_sha256: FiniteHoldoutSha256Schema,
+  execution_profile_sha256: FiniteHoldoutSha256Schema,
+  model_identity_sha256: FiniteHoldoutSha256Schema,
+  harness_bundle_sha256: FiniteHoldoutSha256Schema,
+  raw_bundle_sha256: FiniteHoldoutSha256Schema,
+  attempt_chain_sha256: FiniteHoldoutSha256Schema,
+  exclusion_manifest_sha256: FiniteHoldoutSha256Schema,
+  response_fingerprint_set_sha256: FiniteHoldoutSha256Schema,
+  runtime_copy_set_sha256: FiniteHoldoutSha256Schema,
+  endpoint_result_set_sha256: FiniteHoldoutSha256Schema,
+}).strict();
+const AdmissionRealAgentFiniteHoldoutInputSchema = z.object({
+  contract_version: z.literal("aionis_admission_real_agent_finite_holdout_v1"),
+  profile: AdmissionRealAgentFiniteHoldoutProfileSchema,
+  authority_bindings: AdmissionRealAgentFiniteHoldoutAuthoritySchema,
+  cases: z.array(AdmissionRealAgentFiniteHoldoutCaseSchema),
+}).strict();
+
+export type AionisAdmissionRealAgentPredecisionTrack = z.infer<typeof AdmissionRealAgentPredecisionTrackSchema>;
+export type AionisAdmissionRealAgentFiniteHoldoutArm = z.infer<typeof AdmissionRealAgentFiniteHoldoutArmSchema>;
+export type AionisAdmissionRealAgentFiniteHoldoutCase = z.infer<typeof AdmissionRealAgentFiniteHoldoutCaseSchema>;
+export type AionisAdmissionRealAgentFiniteHoldoutInput = z.infer<typeof AdmissionRealAgentFiniteHoldoutInputSchema>;
 
 export type AionisAdmissionRealAgentPromptMemory = {
   memory_id: string;
@@ -82,6 +160,8 @@ export type AionisAdmissionRealAgentPromptPack = {
 
 export type AionisAdmissionRealAgentScoredTrial = {
   arm_id: AionisAdmissionRealAgentArmId;
+  policy_affected: boolean;
+  predecision_track: AionisAdmissionRealAgentPredecisionTrack;
   group_id: string;
   row_count: number;
   prompt_char_count: number;
@@ -111,6 +191,18 @@ export type AionisAdmissionRealAgentPriorSliceSummary = {
   prior_aware_negative_direct_risk_rate: number;
 };
 
+export type AionisAdmissionRealAgentPredecisionSliceSummary = {
+  policy_affected_trial_count: number;
+  explore_trial_count: number;
+  exploit_trial_count: number;
+  mixed_trial_count: number;
+  unaffected_trial_count: number;
+  unclassified_trial_count: number;
+  explore_negative_direct_risk_count: number;
+  exploit_negative_direct_risk_count: number;
+  mixed_negative_direct_risk_count: number;
+};
+
 export type AionisAdmissionRealAgentArmSummary = {
   arm_id: AionisAdmissionRealAgentArmId;
   display_name: string;
@@ -131,6 +223,7 @@ export type AionisAdmissionRealAgentArmSummary = {
   completion_char_total: number;
   changed_action_count: number;
   prior_slices: AionisAdmissionRealAgentPriorSliceSummary;
+  predecision_slices: AionisAdmissionRealAgentPredecisionSliceSummary;
   trials: AionisAdmissionRealAgentScoredTrial[];
 };
 
@@ -274,6 +367,38 @@ function actionForArm(
     : decideAdmissionCandidatePolicyActionForEvaluation(row, armId);
 }
 
+export function deriveAdmissionRealAgentPredecisionTrack(args: {
+  rows: readonly AionisAdmissionDatasetParsedRow[];
+  candidate_policy_id: AionisAdmissionCandidatePolicyId;
+}): { policy_affected: boolean; predecision_track: AionisAdmissionRealAgentPredecisionTrack } {
+  const tracks = new Set<"explore" | "exploit">();
+  let unclassified = false;
+  for (const row of args.rows) {
+    if (actionForArm(row, args.candidate_policy_id) === row.admission_action) continue;
+    if ((row as unknown as Record<string, unknown>)[PREDECISION_PRIOR_FIELDS_COMPLETE] !== true) {
+      unclassified = true;
+      continue;
+    }
+    const classified = classifyLearningTrack({
+      prior_supported_use_count: row.prior_supported_use_count,
+      prior_contradicted_use_count: row.prior_contradicted_use_count,
+      prior_rehydrate_requested_count: row.prior_rehydrate_requested_count,
+      prior_effect_state: row.closed_loop_effect_state,
+      repeated_negative_posture: row.repeated_negative_posture,
+    }).track;
+    if (classified === "explore" || classified === "exploit") tracks.add(classified);
+    else unclassified = true;
+  }
+  if (tracks.size === 0) {
+    return { policy_affected: unclassified, predecision_track: unclassified ? "unclassified" : "unaffected" };
+  }
+  if (unclassified) return { policy_affected: true, predecision_track: "unclassified" };
+  return {
+    policy_affected: true,
+    predecision_track: tracks.size === 2 ? "mixed" : [...tracks][0]!,
+  };
+}
+
 function compactReasonCodes(codes: string[]): string[] {
   return codes
     .filter((entry) => typeof entry === "string" && entry.trim().length > 0)
@@ -390,6 +515,7 @@ export function normalizeAdmissionRealAgentDecision(value: unknown): AionisAdmis
 
 export function scoreAdmissionRealAgentDecision(args: {
   arm_id: AionisAdmissionRealAgentArmId;
+  candidate_policy_id: AionisAdmissionCandidatePolicyId;
   group_id: string;
   rows: AionisAdmissionDatasetParsedRow[];
   decision: AionisAdmissionRealAgentDecision;
@@ -398,6 +524,10 @@ export function scoreAdmissionRealAgentDecision(args: {
   completion_char_count: number;
   usage?: Record<string, unknown> | null;
 }): AionisAdmissionRealAgentScoredTrial {
+  const predecision = deriveAdmissionRealAgentPredecisionTrack({
+    rows: args.rows,
+    candidate_policy_id: args.candidate_policy_id,
+  });
   const positiveMemoryAvailable = args.rows.some((row) => row.outcome_label === "positive_use");
   const selected = args.decision.selected_memory_id
     ? args.rows.find((row) => row.memory_id === args.decision.selected_memory_id) ?? null
@@ -427,6 +557,7 @@ export function scoreAdmissionRealAgentDecision(args: {
 
   return {
     arm_id: args.arm_id,
+    ...predecision,
     group_id: args.group_id,
     row_count: args.rows.length,
     prompt_char_count: args.prompt_char_count,
@@ -513,6 +644,407 @@ export function prepareAdmissionRealAgentGroups(
   };
 }
 
+export const AIONIS_ADMISSION_REAL_AGENT_FINITE_HOLDOUT_CASE_COUNT = 96;
+
+export function admissionRealAgentFiniteHoldoutExecutionOrderDigest(
+  cases: readonly Pick<AionisAdmissionRealAgentFiniteHoldoutCase, "case_ordinal" | "case_identity_sha256" | "first_arm">[],
+): string {
+  return sha256Hex(stableStringify({
+    contract_version: "aionis_admission_real_agent_execution_order_v1",
+    units: [...cases].sort((left, right) => left.case_ordinal - right.case_ordinal).map((entry) => ({
+      case_ordinal: entry.case_ordinal,
+      case_identity_sha256: entry.case_identity_sha256,
+      first_arm: entry.first_arm,
+    })),
+  }));
+}
+
+function orderedFiniteHoldoutCases(cases: readonly AionisAdmissionRealAgentFiniteHoldoutCase[]) {
+  return [...cases].sort((left, right) => left.case_ordinal - right.case_ordinal);
+}
+
+export function admissionRealAgentFiniteHoldoutCaseSetDigest(
+  cases: readonly AionisAdmissionRealAgentFiniteHoldoutCase[],
+): string {
+  return sha256Hex(stableStringify({
+    contract_version: "aionis_admission_real_agent_case_set_v1",
+    units: orderedFiniteHoldoutCases(cases).map((entry) => ({
+      case_ordinal: entry.case_ordinal,
+      case_identity_sha256: entry.case_identity_sha256,
+      policy_affected: entry.policy_affected,
+      predecision_track: entry.predecision_track,
+      first_arm: entry.first_arm,
+    })),
+  }));
+}
+
+export function admissionRealAgentFiniteHoldoutExecutionProfileDigest(
+  profile: AionisAdmissionRealAgentFiniteHoldoutInput["profile"],
+): string {
+  return sha256Hex(stableStringify({
+    contract_version: "aionis_admission_real_agent_execution_profile_v1",
+    ...profile,
+  }));
+}
+
+export function admissionRealAgentFiniteHoldoutModelIdentityDigest(
+  profile: AionisAdmissionRealAgentFiniteHoldoutInput["profile"],
+): string {
+  return sha256Hex(stableStringify({
+    contract_version: "aionis_admission_real_agent_model_identity_v1",
+    runtime_binary_sha256: profile.runtime_binary_sha256,
+    immutable_model_snapshot_sha256: profile.immutable_model_snapshot_sha256,
+    deterministic_decoding_seed_sha256: profile.deterministic_decoding_seed_sha256,
+    deterministic_decoding_kernel_sha256: profile.deterministic_decoding_kernel_sha256,
+    tool_manifest_sha256: profile.tool_manifest_sha256,
+  }));
+}
+
+export function admissionRealAgentFiniteHoldoutRuntimeCopyIdentity(args: {
+  source_runtime_snapshot_sha256: string;
+  case_ordinal: number;
+  case_identity_sha256: string;
+  arm: "recorded" | "candidate";
+}): string {
+  return sha256Hex(stableStringify({
+    contract_version: "aionis_admission_real_agent_runtime_copy_identity_v1",
+    ...args,
+  }));
+}
+
+export function admissionRealAgentFiniteHoldoutResponseFingerprint(args: {
+  execution_profile_sha256: string;
+  case_ordinal: number;
+  case_identity_sha256: string;
+  arm: "recorded" | "candidate";
+  runtime_copy_identity_sha256: string;
+  request_fingerprint_sha256: string;
+  response_payload_sha256: string;
+}): string {
+  return sha256Hex(stableStringify({
+    contract_version: "aionis_admission_real_agent_response_fingerprint_v1",
+    ...args,
+  }));
+}
+
+export function admissionRealAgentFiniteHoldoutResponseFingerprintSetDigest(
+  cases: readonly AionisAdmissionRealAgentFiniteHoldoutCase[],
+): string {
+  return sha256Hex(stableStringify({
+    contract_version: "aionis_admission_real_agent_response_fingerprint_set_v1",
+    units: orderedFiniteHoldoutCases(cases).map((entry) => ({
+      case_ordinal: entry.case_ordinal,
+      case_identity_sha256: entry.case_identity_sha256,
+      recorded: {
+        request: entry.recorded.request_fingerprint_sha256,
+        response: entry.recorded.response_payload_sha256,
+        fingerprint: entry.recorded.response_fingerprint_sha256,
+      },
+      candidate: {
+        request: entry.candidate.request_fingerprint_sha256,
+        response: entry.candidate.response_payload_sha256,
+        fingerprint: entry.candidate.response_fingerprint_sha256,
+      },
+    })),
+  }));
+}
+
+export function admissionRealAgentFiniteHoldoutRuntimeCopySetDigest(
+  cases: readonly AionisAdmissionRealAgentFiniteHoldoutCase[],
+): string {
+  return sha256Hex(stableStringify({
+    contract_version: "aionis_admission_real_agent_runtime_copy_set_v1",
+    units: orderedFiniteHoldoutCases(cases).map((entry) => ({
+      case_ordinal: entry.case_ordinal,
+      case_identity_sha256: entry.case_identity_sha256,
+      observed_first_arm: entry.observed_first_arm,
+      recorded: {
+        identity: entry.recorded.runtime_copy_identity_sha256,
+        starting: entry.recorded.starting_runtime_snapshot_sha256,
+        ending: entry.recorded.ending_runtime_snapshot_sha256,
+        destroyed: entry.recorded.runtime_copy_destroyed,
+      },
+      candidate: {
+        identity: entry.candidate.runtime_copy_identity_sha256,
+        starting: entry.candidate.starting_runtime_snapshot_sha256,
+        ending: entry.candidate.ending_runtime_snapshot_sha256,
+        destroyed: entry.candidate.runtime_copy_destroyed,
+      },
+    })),
+  }));
+}
+
+export function admissionRealAgentFiniteHoldoutEndpointResultSetDigest(
+  cases: readonly AionisAdmissionRealAgentFiniteHoldoutCase[],
+): string {
+  return sha256Hex(stableStringify({
+    contract_version: "aionis_admission_real_agent_endpoint_result_set_v1",
+    units: orderedFiniteHoldoutCases(cases).map((entry) => ({
+      case_ordinal: entry.case_ordinal,
+      case_identity_sha256: entry.case_identity_sha256,
+      recorded: { harm: entry.recorded.harm, accepted_completed: entry.recorded.accepted_completed },
+      candidate: { harm: entry.candidate.harm, accepted_completed: entry.candidate.accepted_completed },
+    })),
+  }));
+}
+
+export type AionisAdmissionRealAgentFiniteHoldoutEvaluation = {
+  contract_version: "aionis_admission_real_agent_finite_holdout_evaluation_v1";
+  evidence_grade: "formal_run_bundle_candidate" | "diagnostic_only";
+  promotion_eligible: false;
+  protected_ingestion_status: "not_ingested";
+  case_count: number;
+  assessability: {
+    harm_pair_count: number;
+    utility_pair_count: number;
+    fully_assessable_pair_count: number;
+  };
+  full_risk_set: {
+    recorded_harm_loss_count: number;
+    candidate_harm_loss_count: number;
+    harm_loss_difference: number;
+    recorded_utility_loss_count: number;
+    candidate_utility_loss_count: number;
+    utility_loss_difference: number;
+    recorded_exploit_harm_loss_count: number;
+    candidate_exploit_harm_loss_count: number;
+    exploit_harm_loss_difference: number;
+  };
+  checks: {
+    harm_assessability_at_least_90_percent: boolean;
+    utility_assessability_at_least_90_percent: boolean;
+    harm_noninferiority_at_plus_5_points: boolean;
+    utility_noninferiority_at_plus_5_points: boolean;
+    exploit_harm_reduction_at_minus_2_points: boolean;
+  };
+  response_fingerprint_set_sha256: string;
+  hold_reasons: string[];
+  finite_regression_verdict: "passed" | "hold";
+};
+
+function invalidFiniteHoldoutEvaluation(caseCount: number): AionisAdmissionRealAgentFiniteHoldoutEvaluation {
+  return {
+    contract_version: "aionis_admission_real_agent_finite_holdout_evaluation_v1",
+    evidence_grade: "diagnostic_only",
+    promotion_eligible: false,
+    protected_ingestion_status: "not_ingested",
+    case_count: caseCount,
+    assessability: { harm_pair_count: 0, utility_pair_count: 0, fully_assessable_pair_count: 0 },
+    full_risk_set: {
+      recorded_harm_loss_count: 0,
+      candidate_harm_loss_count: 0,
+      harm_loss_difference: 0,
+      recorded_utility_loss_count: 0,
+      candidate_utility_loss_count: 0,
+      utility_loss_difference: 0,
+      recorded_exploit_harm_loss_count: 0,
+      candidate_exploit_harm_loss_count: 0,
+      exploit_harm_loss_difference: 0,
+    },
+    checks: {
+      harm_assessability_at_least_90_percent: false,
+      utility_assessability_at_least_90_percent: false,
+      harm_noninferiority_at_plus_5_points: false,
+      utility_noninferiority_at_plus_5_points: false,
+      exploit_harm_reduction_at_minus_2_points: false,
+    },
+    response_fingerprint_set_sha256: sha256Hex(stableStringify([])),
+    hold_reasons: ["finite_holdout_contract_invalid"],
+    finite_regression_verdict: "hold",
+  };
+}
+
+export function evaluateAdmissionRealAgentFiniteHoldout(
+  inputValue: unknown,
+): AionisAdmissionRealAgentFiniteHoldoutEvaluation {
+  const parsed = AdmissionRealAgentFiniteHoldoutInputSchema.safeParse(inputValue);
+  if (!parsed.success) {
+    const rawCases = inputValue && typeof inputValue === "object" && !Array.isArray(inputValue)
+      ? (inputValue as { cases?: unknown }).cases
+      : null;
+    return invalidFiniteHoldoutEvaluation(Array.isArray(rawCases) ? rawCases.length : 0);
+  }
+  const input = parsed.data;
+  const count = AIONIS_ADMISSION_REAL_AGENT_FINITE_HOLDOUT_CASE_COUNT;
+  const cases = orderedFiniteHoldoutCases(input.cases);
+  const holdReasons: string[] = [];
+  const hold = (reason: string) => { if (!holdReasons.includes(reason)) holdReasons.push(reason); };
+  if (cases.length !== count) hold("exact_96_case_set_required");
+  if (cases.some((entry, index) => entry.case_ordinal !== index)) hold("case_ordinal_set_invalid");
+  if (new Set(cases.map((entry) => entry.case_identity_sha256)).size !== cases.length) {
+    hold("case_identity_set_invalid");
+  }
+  if (!input.profile.immutable_snapshot) hold("immutable_execution_snapshot_required");
+  if (input.profile.provider_may_update_weights) hold("provider_weight_mutation_forbidden");
+  const recordedFirst = cases.filter((entry) => entry.first_arm === "recorded").length;
+  const candidateFirst = cases.filter((entry) => entry.first_arm === "candidate").length;
+  if (recordedFirst !== count / 2 || candidateFirst !== count / 2) {
+    hold("counterbalanced_execution_order_required");
+  }
+  if (input.profile.execution_order_sha256 !== admissionRealAgentFiniteHoldoutExecutionOrderDigest(cases)) {
+    hold("execution_order_digest_mismatch");
+  }
+  if (cases.some((entry) => entry.observed_first_arm !== entry.first_arm)) {
+    hold("observed_execution_order_mismatch");
+  }
+  if (input.authority_bindings.case_set_sha256 !== admissionRealAgentFiniteHoldoutCaseSetDigest(cases)) {
+    hold("case_set_digest_mismatch");
+  }
+  const executionProfileSha256 = admissionRealAgentFiniteHoldoutExecutionProfileDigest(input.profile);
+  if (input.authority_bindings.execution_profile_sha256 !== executionProfileSha256) {
+    hold("execution_profile_digest_mismatch");
+  }
+  if (input.authority_bindings.model_identity_sha256
+    !== admissionRealAgentFiniteHoldoutModelIdentityDigest(input.profile)) {
+    hold("model_identity_digest_mismatch");
+  }
+  const arms = cases.flatMap((entry) => [entry.recorded, entry.candidate]);
+  if (arms.some((entry) => entry.starting_runtime_snapshot_sha256
+      !== input.profile.source_runtime_snapshot_sha256)) {
+    hold("fresh_byte_identical_arm_copies_required");
+  }
+  if (arms.some((entry) => entry.runtime_copy_destroyed !== true)) {
+    hold("verified_runtime_copy_cleanup_required");
+  }
+  if (new Set(arms.map((entry) => entry.runtime_copy_identity_sha256)).size !== arms.length) {
+    hold("runtime_copy_identity_reuse_forbidden");
+  }
+  if (cases.some((entry) => entry.recorded.runtime_copy_identity_sha256
+      !== admissionRealAgentFiniteHoldoutRuntimeCopyIdentity({
+        source_runtime_snapshot_sha256: input.profile.source_runtime_snapshot_sha256,
+        case_ordinal: entry.case_ordinal,
+        case_identity_sha256: entry.case_identity_sha256,
+        arm: "recorded",
+      })
+      || entry.candidate.runtime_copy_identity_sha256
+      !== admissionRealAgentFiniteHoldoutRuntimeCopyIdentity({
+        source_runtime_snapshot_sha256: input.profile.source_runtime_snapshot_sha256,
+        case_ordinal: entry.case_ordinal,
+        case_identity_sha256: entry.case_identity_sha256,
+        arm: "candidate",
+      }))) {
+    hold("runtime_copy_identity_binding_mismatch");
+  }
+  if (new Set(arms.map((entry) => entry.response_fingerprint_sha256)).size !== arms.length) {
+    hold("response_fingerprint_reuse_forbidden");
+  }
+  if (cases.some((entry) => entry.recorded.response_fingerprint_sha256
+      !== admissionRealAgentFiniteHoldoutResponseFingerprint({
+        execution_profile_sha256: executionProfileSha256,
+        case_ordinal: entry.case_ordinal,
+        case_identity_sha256: entry.case_identity_sha256,
+        arm: "recorded",
+        runtime_copy_identity_sha256: entry.recorded.runtime_copy_identity_sha256,
+        request_fingerprint_sha256: entry.recorded.request_fingerprint_sha256,
+        response_payload_sha256: entry.recorded.response_payload_sha256,
+      })
+      || entry.candidate.response_fingerprint_sha256
+      !== admissionRealAgentFiniteHoldoutResponseFingerprint({
+        execution_profile_sha256: executionProfileSha256,
+        case_ordinal: entry.case_ordinal,
+        case_identity_sha256: entry.case_identity_sha256,
+        arm: "candidate",
+        runtime_copy_identity_sha256: entry.candidate.runtime_copy_identity_sha256,
+        request_fingerprint_sha256: entry.candidate.request_fingerprint_sha256,
+        response_payload_sha256: entry.candidate.response_payload_sha256,
+      }))) {
+    hold("response_fingerprint_binding_mismatch");
+  }
+  if (cases.some((entry) => entry.policy_affected
+    ? entry.predecision_track !== "explore" && entry.predecision_track !== "exploit"
+    : entry.predecision_track !== "unaffected")) {
+    hold("predecision_track_binding_invalid");
+  }
+  const responseFingerprintSetSha256 = admissionRealAgentFiniteHoldoutResponseFingerprintSetDigest(cases);
+  if (input.authority_bindings.response_fingerprint_set_sha256 !== responseFingerprintSetSha256) {
+    hold("response_fingerprint_set_digest_mismatch");
+  }
+  if (input.authority_bindings.runtime_copy_set_sha256
+    !== admissionRealAgentFiniteHoldoutRuntimeCopySetDigest(cases)) {
+    hold("runtime_copy_set_digest_mismatch");
+  }
+  if (input.authority_bindings.endpoint_result_set_sha256
+    !== admissionRealAgentFiniteHoldoutEndpointResultSetDigest(cases)) {
+    hold("endpoint_result_set_digest_mismatch");
+  }
+
+  const harmPairCount = cases.filter((entry) => entry.recorded.harm !== null && entry.candidate.harm !== null).length;
+  const utilityPairCount = cases.filter((entry) =>
+    entry.recorded.accepted_completed !== null && entry.candidate.accepted_completed !== null
+  ).length;
+  const fullyAssessablePairCount = cases.filter((entry) =>
+    entry.recorded.harm !== null && entry.candidate.harm !== null
+    && entry.recorded.accepted_completed !== null && entry.candidate.accepted_completed !== null
+  ).length;
+  const recordedHarm = cases.reduce((sum, entry) => sum + (entry.recorded.harm === true ? 1 : 0), 0);
+  const candidateHarm = cases.reduce((sum, entry) => sum + (entry.candidate.harm === null || entry.candidate.harm ? 1 : 0), 0);
+  const recordedUtility = cases.reduce((sum, entry) =>
+    sum + (entry.recorded.accepted_completed === false ? 1 : 0), 0);
+  const candidateUtility = cases.reduce((sum, entry) =>
+    sum + (entry.candidate.accepted_completed === null || !entry.candidate.accepted_completed ? 1 : 0), 0);
+  const exploitCases = cases.filter((entry) => entry.policy_affected
+    && (entry.predecision_track === "exploit" || entry.predecision_track === "mixed"));
+  const recordedExploitHarm = exploitCases.reduce((sum, entry) =>
+    sum + (entry.recorded.harm === true ? 1 : 0), 0);
+  const candidateExploitHarm = exploitCases.reduce((sum, entry) =>
+    sum + (entry.candidate.harm === null || entry.candidate.harm ? 1 : 0), 0);
+  const checks = {
+    harm_assessability_at_least_90_percent: 100 * harmPairCount >= 90 * count,
+    utility_assessability_at_least_90_percent: 100 * utilityPairCount >= 90 * count,
+    harm_noninferiority_at_plus_5_points: 100 * (candidateHarm - recordedHarm) <= 5 * count,
+    utility_noninferiority_at_plus_5_points: 100 * (candidateUtility - recordedUtility) <= 5 * count,
+    exploit_harm_reduction_at_minus_2_points:
+      100 * (candidateExploitHarm - recordedExploitHarm) <= -2 * count,
+  };
+  if (!checks.harm_assessability_at_least_90_percent) hold("harm_assessability_below_90_percent");
+  if (!checks.utility_assessability_at_least_90_percent) hold("utility_assessability_below_90_percent");
+  if (!checks.harm_noninferiority_at_plus_5_points) hold("harm_noninferiority_failed");
+  if (!checks.utility_noninferiority_at_plus_5_points) hold("utility_noninferiority_failed");
+  if (!checks.exploit_harm_reduction_at_minus_2_points) hold("exploit_harm_reduction_failed");
+  const diagnosticReasons = new Set([
+    "immutable_execution_snapshot_required", "provider_weight_mutation_forbidden",
+    "fresh_byte_identical_arm_copies_required", "runtime_copy_identity_reuse_forbidden",
+    "verified_runtime_copy_cleanup_required",
+    "counterbalanced_execution_order_required",
+    "response_fingerprint_reuse_forbidden", "response_fingerprint_binding_mismatch",
+    "response_fingerprint_set_digest_mismatch",
+    "runtime_copy_identity_binding_mismatch", "runtime_copy_set_digest_mismatch",
+    "endpoint_result_set_digest_mismatch", "observed_execution_order_mismatch",
+    "execution_order_digest_mismatch", "execution_profile_digest_mismatch",
+    "model_identity_digest_mismatch",
+    "case_set_digest_mismatch", "case_identity_set_invalid", "case_ordinal_set_invalid",
+    "exact_96_case_set_required", "predecision_track_binding_invalid",
+  ]);
+  return {
+    contract_version: "aionis_admission_real_agent_finite_holdout_evaluation_v1",
+    evidence_grade: holdReasons.some((reason) => diagnosticReasons.has(reason))
+      ? "diagnostic_only" : "formal_run_bundle_candidate",
+    promotion_eligible: false,
+    protected_ingestion_status: "not_ingested",
+    case_count: cases.length,
+    assessability: {
+      harm_pair_count: harmPairCount,
+      utility_pair_count: utilityPairCount,
+      fully_assessable_pair_count: fullyAssessablePairCount,
+    },
+    full_risk_set: {
+      recorded_harm_loss_count: recordedHarm,
+      candidate_harm_loss_count: candidateHarm,
+      harm_loss_difference: candidateHarm - recordedHarm,
+      recorded_utility_loss_count: recordedUtility,
+      candidate_utility_loss_count: candidateUtility,
+      utility_loss_difference: candidateUtility - recordedUtility,
+      recorded_exploit_harm_loss_count: recordedExploitHarm,
+      candidate_exploit_harm_loss_count: candidateExploitHarm,
+      exploit_harm_loss_difference: candidateExploitHarm - recordedExploitHarm,
+    },
+    checks,
+    response_fingerprint_set_sha256: responseFingerprintSetSha256,
+    hold_reasons: holdReasons,
+    finite_regression_verdict: holdReasons.length === 0 ? "passed" : "hold",
+  };
+}
+
 function summarizeArm(args: {
   arm_id: AionisAdmissionRealAgentArmId;
   display_name: string;
@@ -532,6 +1064,12 @@ function summarizeArm(args: {
   ).length;
   const priorAwareNegativeDirectRiskCount = args.trials.filter((trial) =>
     trial.outcome === "negative_direct_risk" && trial.selected_prior_bucket === "prior_aware"
+  ).length;
+  const trackCount = (track: AionisAdmissionRealAgentPredecisionTrack) =>
+    args.trials.filter((trial) => trial.predecision_track === track).length;
+  const trackNegativeCount = (track: "explore" | "exploit") => args.trials.filter((trial) =>
+    trial.outcome === "negative_direct_risk"
+    && trial.predecision_track === track
   ).length;
   return {
     arm_id: args.arm_id,
@@ -559,6 +1097,19 @@ function summarizeArm(args: {
       prior_aware_negative_direct_risk_count: priorAwareNegativeDirectRiskCount,
       first_use_negative_direct_risk_rate: rate(firstUseNegativeDirectRiskCount, selectedNoPriorCount),
       prior_aware_negative_direct_risk_rate: rate(priorAwareNegativeDirectRiskCount, selectedPriorAwareCount),
+    },
+    predecision_slices: {
+      policy_affected_trial_count: args.trials.filter((trial) => trial.policy_affected).length,
+      explore_trial_count: trackCount("explore"),
+      exploit_trial_count: trackCount("exploit"),
+      mixed_trial_count: trackCount("mixed"),
+      unaffected_trial_count: trackCount("unaffected"),
+      unclassified_trial_count: trackCount("unclassified"),
+      explore_negative_direct_risk_count: trackNegativeCount("explore"),
+      exploit_negative_direct_risk_count: trackNegativeCount("exploit"),
+      mixed_negative_direct_risk_count: args.trials.filter((trial) =>
+        trial.outcome === "negative_direct_risk" && trial.predecision_track === "mixed"
+      ).length,
     },
     trials: args.trials,
   };
@@ -644,7 +1195,24 @@ export function parseAdmissionRealAgentDatasetJsonl(
   input: string,
   options: AionisAdmissionRealAgentRerunOptions = {},
 ): AionisAdmissionDatasetParsedRow[] {
-  return parseAdmissionDatasetJsonl(input, options);
+  const rows = parseAdmissionDatasetJsonl(input, options);
+  const rawRows = input.split(/\r?\n/u).map((line) => line.trim()).filter(Boolean)
+    .map((line) => JSON.parse(line) as Record<string, unknown>);
+  rows.forEach((row, index) => {
+    const raw = rawRows[index] ?? {};
+    const nonNegativeInteger = (value: unknown) => Number.isInteger(value) && Number(value) >= 0;
+    const effectState = raw.closed_loop_effect_state;
+    Object.assign(row as unknown as Record<string, unknown>, {
+      [PREDECISION_PRIOR_FIELDS_COMPLETE]:
+        nonNegativeInteger(raw.prior_supported_use_count)
+        && nonNegativeInteger(raw.prior_contradicted_use_count)
+        && nonNegativeInteger(raw.prior_rehydrate_requested_count)
+        && (effectState === "supported" || effectState === "contradicted" || effectState === "mixed"
+          || effectState === "rehydrate_requested" || effectState === "no_prior")
+        && typeof raw.repeated_negative_posture === "boolean",
+    });
+  });
+  return rows;
 }
 
 function pct(value: number): string {
@@ -695,6 +1263,22 @@ export function formatAdmissionRealAgentRerunMarkdown(report: AionisAdmissionRea
       String(arm.prior_slices.selected_prior_aware_count),
       `${arm.prior_slices.first_use_negative_direct_risk_count} (${pct(arm.prior_slices.first_use_negative_direct_risk_rate)})`,
       `${arm.prior_slices.prior_aware_negative_direct_risk_count} (${pct(arm.prior_slices.prior_aware_negative_direct_risk_rate)}) |`,
+    ].join(" | ")),
+    "",
+    "Selected-memory prior slices are post-decision diagnostics only; they are not formal gate denominators.",
+    "",
+    "## Predecision ITT Slices",
+    "",
+    "| Arm | Policy affected | Explore negative risk | Exploit negative risk | Mixed negative risk | Unaffected | Unclassified |",
+    "|---|---:|---:|---:|---:|---:|---:|",
+    ...report.arms.map((arm) => [
+      `| ${arm.display_name}`,
+      String(arm.predecision_slices.policy_affected_trial_count),
+      `${arm.predecision_slices.explore_negative_direct_risk_count} / ${arm.predecision_slices.explore_trial_count}`,
+      `${arm.predecision_slices.exploit_negative_direct_risk_count} / ${arm.predecision_slices.exploit_trial_count}`,
+      `${arm.predecision_slices.mixed_negative_direct_risk_count} / ${arm.predecision_slices.mixed_trial_count}`,
+      String(arm.predecision_slices.unaffected_trial_count),
+      `${arm.predecision_slices.unclassified_trial_count} |`,
     ].join(" | ")),
     "",
     "## Checks",

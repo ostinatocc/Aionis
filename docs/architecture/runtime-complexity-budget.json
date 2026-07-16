@@ -1,10 +1,10 @@
 {
   "schema_version": "aionis_runtime_complexity_budget_v1",
-  "baseline_commit": "05ffc971ad5919fbd937b84734a916cb45a43897",
-  "intent": "Structural growth guard only; the exact Task 6.1 rebaseline adds protected measure replay and independent receipt roots, full measurement-time digests, receipt-to-episode run binding, fresh-effect expectation cardinality, episode/effect/feedback authority with historical effect replay downgrade, shared codecs, and SDK operation identity without changing route, environment-field, largest-file, or zero-cycle allowances.",
+  "baseline_commit": "c7f80409e45fec87fb2e6add11e309347be981bd",
+  "intent": "Structural growth guard only; the exact Task 8.1 rebaseline adds frozen policy-affected predecision slicing, strict exact-96-case paired finite-holdout contracts, fresh byte-identical Runtime-copy evidence bindings, counterbalanced planned and observed execution order, immutable profile and external-authority digests, full-risk-set missing-endpoint handling, and diagnostic/formal-candidate reporting without granting promotion authority or changing route, environment-field, largest-file, or zero-cycle allowances.",
   "thresholds": {
     "source_files": 319,
-    "source_lines": 156673,
+    "source_lines": 157256,
     "route_matrix_entries": 21,
     "env_schema_fields": 177,
     "import_cycles": 0,

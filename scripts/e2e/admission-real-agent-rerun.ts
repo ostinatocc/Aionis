@@ -1,21 +1,282 @@
 #!/usr/bin/env node
 import fs from "node:fs";
+import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import {
   buildAdmissionRealAgentPromptPack,
   buildAdmissionRealAgentRerunReport,
+  admissionRealAgentFiniteHoldoutResponseFingerprint,
+  admissionRealAgentFiniteHoldoutRuntimeCopyIdentity,
+  AIONIS_ADMISSION_REAL_AGENT_FINITE_HOLDOUT_CASE_COUNT,
   formatAdmissionRealAgentRerunMarkdown,
   normalizeAdmissionRealAgentDecision,
   parseAdmissionRealAgentDatasetJsonl,
   prepareAdmissionRealAgentGroups,
   scoreAdmissionRealAgentDecision,
   type AionisAdmissionRealAgentArmId,
+  type AionisAdmissionRealAgentFiniteHoldoutCase,
+  type AionisAdmissionRealAgentPredecisionTrack,
   type AionisAdmissionRealAgentScoredTrial,
 } from "../../src/memory/admission-real-agent-rerun.js";
 import type { AionisAdmissionCandidatePolicyId } from "../../src/memory/admission-candidate-policy-evaluator.js";
 import type { AionisAdmissionDatasetHoldoutSplitBy } from "../../src/memory/admission-dataset-holdout.js";
+import {
+  createLiteRuntimeDatabase,
+  type LiteRuntimeDatabase,
+} from "../../src/store/lite-runtime-database.js";
+import {
+  restoreLiteRuntimeDatabase,
+  verifyLiteRuntimeDatabase,
+} from "../../src/store/lite-runtime-data-operations.js";
 import { requireLlmConfig, type LlmConfig } from "./runtime-agent-loop.ts";
+
+export type AionisAdmissionRealAgentRuntimeArm = "recorded" | "candidate";
+
+export type AionisAdmissionRealAgentRuntimeArmExecution<T> = Readonly<{
+  result: T;
+  runtime_copy_identity_sha256: string;
+  starting_runtime_snapshot_sha256: string;
+  ending_runtime_snapshot_sha256: string;
+  runtime_copy_destroyed: true;
+}>;
+
+export type AionisAdmissionRealAgentFreshRuntimePairResult<T> = Readonly<{
+  source_runtime_snapshot_sha256: string;
+  database_instance_id: string;
+  execution_order: readonly [AionisAdmissionRealAgentRuntimeArm, AionisAdmissionRealAgentRuntimeArm];
+  recorded: AionisAdmissionRealAgentRuntimeArmExecution<T>;
+  candidate: AionisAdmissionRealAgentRuntimeArmExecution<T>;
+}>;
+
+export async function runAdmissionRealAgentFreshRuntimePair<T>(args: {
+  backupPath: string;
+  caseOrdinal: number;
+  caseIdentitySha256: string;
+  firstArm: AionisAdmissionRealAgentRuntimeArm;
+  workRoot?: string;
+  runArm(input: Readonly<{
+    arm: AionisAdmissionRealAgentRuntimeArm;
+    runtimeDatabase: LiteRuntimeDatabase;
+    runtimeCopyIdentitySha256: string;
+    startingRuntimeSnapshotSha256: string;
+  }>): Promise<T>;
+}): Promise<AionisAdmissionRealAgentFreshRuntimePairResult<T>> {
+  if (!Number.isInteger(args.caseOrdinal) || args.caseOrdinal < 0 || args.caseOrdinal >= 96) {
+    throw new Error("finite_holdout_case_ordinal_invalid");
+  }
+  if (!/^[0-9a-f]{64}$/u.test(args.caseIdentitySha256)) {
+    throw new Error("finite_holdout_case_identity_invalid");
+  }
+  if (args.firstArm !== "recorded" && args.firstArm !== "candidate") {
+    throw new Error("finite_holdout_first_arm_invalid");
+  }
+  const workRoot = path.resolve(args.workRoot ?? os.tmpdir());
+  fs.mkdirSync(workRoot, { recursive: true });
+  const pairDirectory = fs.mkdtempSync(path.join(workRoot, "aionis-admission-runtime-pair-"));
+  const paths = {
+    recorded: path.join(pairDirectory, "recorded.sqlite"),
+    candidate: path.join(pairDirectory, "candidate.sqlite"),
+  } as const;
+  const order = args.firstArm === "recorded"
+    ? ["recorded", "candidate"] as const
+    : ["candidate", "recorded"] as const;
+  let completed: Omit<AionisAdmissionRealAgentFreshRuntimePairResult<T>, "recorded" | "candidate"> & {
+    recorded: Omit<AionisAdmissionRealAgentRuntimeArmExecution<T>, "runtime_copy_destroyed">;
+    candidate: Omit<AionisAdmissionRealAgentRuntimeArmExecution<T>, "runtime_copy_destroyed">;
+  } | null = null;
+  try {
+    const restored = {
+      recorded: await restoreLiteRuntimeDatabase({ backupPath: args.backupPath, destinationPath: paths.recorded }),
+      candidate: await restoreLiteRuntimeDatabase({ backupPath: args.backupPath, destinationPath: paths.candidate }),
+    };
+    const recordedManifest = restored.recorded.source_manifest;
+    const candidateManifest = restored.candidate.source_manifest;
+    if (recordedManifest?.contract_version !== "aionis_lite_runtime_backup_manifest_v2"
+      || candidateManifest?.contract_version !== "aionis_lite_runtime_backup_manifest_v2") {
+      throw new Error("finite_holdout_manifest_bound_v2_backup_required");
+    }
+    const sourceSha256 = recordedManifest.sha256;
+    const databaseInstanceId = recordedManifest.database_instance_id;
+    if (!databaseInstanceId
+      || candidateManifest.sha256 !== sourceSha256
+      || candidateManifest.database_instance_id !== databaseInstanceId
+      || restored.recorded.verification.sha256 !== sourceSha256
+      || restored.candidate.verification.sha256 !== sourceSha256) {
+      throw new Error("finite_holdout_runtime_pair_snapshot_mismatch");
+    }
+    const armResults = {} as Record<AionisAdmissionRealAgentRuntimeArm,
+      Omit<AionisAdmissionRealAgentRuntimeArmExecution<T>, "runtime_copy_destroyed">>;
+    for (const arm of order) {
+      const runtimeCopyIdentity = admissionRealAgentFiniteHoldoutRuntimeCopyIdentity({
+        source_runtime_snapshot_sha256: sourceSha256,
+        case_ordinal: args.caseOrdinal,
+        case_identity_sha256: args.caseIdentitySha256,
+        arm,
+      });
+      const runtimeDatabase = createLiteRuntimeDatabase(paths[arm]);
+      let result: T;
+      try {
+        result = await args.runArm({
+          arm,
+          runtimeDatabase,
+          runtimeCopyIdentitySha256: runtimeCopyIdentity,
+          startingRuntimeSnapshotSha256: sourceSha256,
+        });
+      } finally {
+        await runtimeDatabase.close();
+      }
+      if (fs.existsSync(`${paths[arm]}-wal`) || fs.existsSync(`${paths[arm]}-shm`)) {
+        throw new Error(`finite_holdout_runtime_${arm}_not_quiescent`);
+      }
+      const ending = await verifyLiteRuntimeDatabase(paths[arm]);
+      if (!ending.ok || ending.database_instance_id !== databaseInstanceId) {
+        throw new Error(`finite_holdout_runtime_${arm}_ending_verification_failed`);
+      }
+      armResults[arm] = {
+        result,
+        runtime_copy_identity_sha256: runtimeCopyIdentity,
+        starting_runtime_snapshot_sha256: sourceSha256,
+        ending_runtime_snapshot_sha256: ending.sha256,
+      };
+    }
+    completed = {
+      source_runtime_snapshot_sha256: sourceSha256,
+      database_instance_id: databaseInstanceId,
+      execution_order: order,
+      recorded: armResults.recorded,
+      candidate: armResults.candidate,
+    };
+  } finally {
+    fs.rmSync(pairDirectory, { recursive: true, force: true });
+  }
+  if (!completed || fs.existsSync(pairDirectory)) {
+    throw new Error("finite_holdout_runtime_pair_cleanup_failed");
+  }
+  return {
+    ...completed,
+    recorded: { ...completed.recorded, runtime_copy_destroyed: true },
+    candidate: { ...completed.candidate, runtime_copy_destroyed: true },
+  };
+}
+
+export type AionisAdmissionRealAgentFiniteHoldoutUnit = Readonly<{
+  case_ordinal: number;
+  case_identity_sha256: string;
+  policy_affected: boolean;
+  predecision_track: AionisAdmissionRealAgentPredecisionTrack;
+  first_arm: AionisAdmissionRealAgentRuntimeArm;
+}>;
+
+export type AionisAdmissionRealAgentFiniteHoldoutObservedOutcome = Readonly<{
+  harm: boolean | null;
+  accepted_completed: boolean | null;
+  request_fingerprint_sha256: string;
+  response_payload_sha256: string;
+}>;
+
+export function validateAdmissionRealAgentFiniteHoldoutUnits(
+  input: readonly AionisAdmissionRealAgentFiniteHoldoutUnit[],
+): AionisAdmissionRealAgentFiniteHoldoutUnit[] {
+  const units = [...input].sort((left, right) => left.case_ordinal - right.case_ordinal);
+  const count = AIONIS_ADMISSION_REAL_AGENT_FINITE_HOLDOUT_CASE_COUNT;
+  if (units.length !== count || units.some((unit, index) => unit.case_ordinal !== index)
+    || units.some((unit) => !/^[0-9a-f]{64}$/u.test(unit.case_identity_sha256)
+      || typeof unit.policy_affected !== "boolean"
+      || (unit.policy_affected
+        ? unit.predecision_track !== "explore" && unit.predecision_track !== "exploit"
+        : unit.predecision_track !== "unaffected"))
+    || new Set(units.map((unit) => unit.case_identity_sha256)).size !== count
+    || units.filter((unit) => unit.first_arm === "recorded").length !== count / 2
+    || units.filter((unit) => unit.first_arm === "candidate").length !== count / 2) {
+    throw new Error("finite_holdout_exact_counterbalanced_96_unit_manifest_required");
+  }
+  return units;
+}
+
+export async function runAdmissionRealAgentFiniteHoldoutCase(args: {
+  backupPath: string;
+  unit: AionisAdmissionRealAgentFiniteHoldoutUnit;
+  executionProfileSha256: string;
+  workRoot?: string;
+  runArm(input: Readonly<{
+    arm: AionisAdmissionRealAgentRuntimeArm;
+    runtimeDatabase: LiteRuntimeDatabase;
+    runtimeCopyIdentitySha256: string;
+    startingRuntimeSnapshotSha256: string;
+  }>): Promise<AionisAdmissionRealAgentFiniteHoldoutObservedOutcome>;
+}): Promise<AionisAdmissionRealAgentFiniteHoldoutCase> {
+  if (!/^[0-9a-f]{64}$/u.test(args.executionProfileSha256)) {
+    throw new Error("finite_holdout_execution_profile_digest_invalid");
+  }
+  const pair = await runAdmissionRealAgentFreshRuntimePair({
+    backupPath: args.backupPath,
+    caseOrdinal: args.unit.case_ordinal,
+    caseIdentitySha256: args.unit.case_identity_sha256,
+    firstArm: args.unit.first_arm,
+    workRoot: args.workRoot,
+    runArm: args.runArm,
+  });
+  const arm = (name: AionisAdmissionRealAgentRuntimeArm) => {
+    const execution = pair[name];
+    if ((execution.result.harm !== null && typeof execution.result.harm !== "boolean")
+      || (execution.result.accepted_completed !== null
+        && typeof execution.result.accepted_completed !== "boolean")
+      || !/^[0-9a-f]{64}$/u.test(execution.result.request_fingerprint_sha256)
+      || !/^[0-9a-f]{64}$/u.test(execution.result.response_payload_sha256)) {
+      throw new Error(`finite_holdout_${name}_outcome_invalid`);
+    }
+    return {
+      ...execution.result,
+      runtime_copy_identity_sha256: execution.runtime_copy_identity_sha256,
+      starting_runtime_snapshot_sha256: execution.starting_runtime_snapshot_sha256,
+      ending_runtime_snapshot_sha256: execution.ending_runtime_snapshot_sha256,
+      runtime_copy_destroyed: execution.runtime_copy_destroyed,
+      response_fingerprint_sha256: admissionRealAgentFiniteHoldoutResponseFingerprint({
+        execution_profile_sha256: args.executionProfileSha256,
+        case_ordinal: args.unit.case_ordinal,
+        case_identity_sha256: args.unit.case_identity_sha256,
+        arm: name,
+        runtime_copy_identity_sha256: execution.runtime_copy_identity_sha256,
+        request_fingerprint_sha256: execution.result.request_fingerprint_sha256,
+        response_payload_sha256: execution.result.response_payload_sha256,
+      }),
+    };
+  };
+  return {
+    ...args.unit,
+    observed_first_arm: pair.execution_order[0],
+    recorded: arm("recorded"),
+    candidate: arm("candidate"),
+  };
+}
+
+export async function runAdmissionRealAgentFiniteHoldoutCaseSet(args: {
+  backupPath: string;
+  units: readonly AionisAdmissionRealAgentFiniteHoldoutUnit[];
+  executionProfileSha256: string;
+  workRoot?: string;
+  runArm(input: Readonly<{
+    unit: AionisAdmissionRealAgentFiniteHoldoutUnit;
+    arm: AionisAdmissionRealAgentRuntimeArm;
+    runtimeDatabase: LiteRuntimeDatabase;
+    runtimeCopyIdentitySha256: string;
+    startingRuntimeSnapshotSha256: string;
+  }>): Promise<AionisAdmissionRealAgentFiniteHoldoutObservedOutcome>;
+}): Promise<AionisAdmissionRealAgentFiniteHoldoutCase[]> {
+  const units = validateAdmissionRealAgentFiniteHoldoutUnits(args.units);
+  const cases: AionisAdmissionRealAgentFiniteHoldoutCase[] = [];
+  for (const unit of units) {
+    cases.push(await runAdmissionRealAgentFiniteHoldoutCase({
+      backupPath: args.backupPath,
+      unit,
+      executionProfileSha256: args.executionProfileSha256,
+      workRoot: args.workRoot,
+      runArm: (input) => args.runArm({ ...input, unit }),
+    }));
+  }
+  return cases;
+}
 
 type CliArgs = {
   input: string | null;
@@ -105,7 +366,8 @@ function parseArgs(argv: string[]): CliArgs {
       process.stdout.write([
         "Usage: npm run -s admission:real-agent-rerun -- --input rows.jsonl [--out-dir reports/admission]",
         "",
-        "Runs a real LLM Agent admission-policy rerun over exported admission dataset rows.",
+        "Runs a diagnostic real LLM Agent admission-policy rerun over exported admission dataset rows.",
+        "Formal 96-unit evidence uses the exported fresh-Runtime case-set runner and protected ingestion.",
         "",
         "Required env:",
         "  DEEPSEEK_API_KEY or AIONIS_AGENT_E2E_API_KEY or OPENROUTER_API_KEY",
@@ -243,6 +505,7 @@ async function callLlm(args: {
 async function runArmTrial(args: {
   llm: LlmConfig;
   armId: AionisAdmissionRealAgentArmId;
+  candidatePolicyId: AionisAdmissionCandidatePolicyId;
   groupId: string;
   rows: ReturnType<typeof prepareAdmissionRealAgentGroups>["groups"][number]["rows"];
 }): Promise<AionisAdmissionRealAgentScoredTrial> {
@@ -259,6 +522,7 @@ async function runArmTrial(args: {
   });
   return scoreAdmissionRealAgentDecision({
     arm_id: args.armId,
+    candidate_policy_id: args.candidatePolicyId,
     group_id: args.groupId,
     rows: args.rows,
     decision: response.decision,
@@ -287,19 +551,21 @@ async function main() {
   const recordedTrials: AionisAdmissionRealAgentScoredTrial[] = [];
   const candidateTrials: AionisAdmissionRealAgentScoredTrial[] = [];
 
-  for (const group of prepared.groups) {
-    recordedTrials.push(await runArmTrial({
-      llm,
-      armId: "recorded_policy_baseline",
-      groupId: group.group_id,
-      rows: group.rows,
-    }));
-    candidateTrials.push(await runArmTrial({
-      llm,
-      armId: prepared.candidate_policy_id,
-      groupId: group.group_id,
-      rows: group.rows,
-    }));
+  for (const [index, group] of prepared.groups.entries()) {
+    const armOrder: AionisAdmissionRealAgentArmId[] = index % 2 === 0
+      ? ["recorded_policy_baseline", prepared.candidate_policy_id]
+      : [prepared.candidate_policy_id, "recorded_policy_baseline"];
+    for (const armId of armOrder) {
+      const trial = await runArmTrial({
+        llm,
+        armId,
+        candidatePolicyId: prepared.candidate_policy_id,
+        groupId: group.group_id,
+        rows: group.rows,
+      });
+      if (armId === "recorded_policy_baseline") recordedTrials.push(trial);
+      else candidateTrials.push(trial);
+    }
   }
 
   const report = buildAdmissionRealAgentRerunReport({
