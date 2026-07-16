@@ -29,8 +29,14 @@ const MANIFEST_ROOT_CANDIDATES = process.env.AIONIS_MANIFEST_REPO
     ];
 const MANIFEST_ROOT = MANIFEST_ROOT_CANDIDATES.find((candidate) =>
   fs.existsSync(path.join(candidate, "package.json"))) ?? MANIFEST_ROOT_CANDIDATES[0];
-const MANIFEST_AVAILABLE = fs.existsSync(path.join(MANIFEST_ROOT, "dist", "resume.js"))
+const MANIFEST_AVAILABLE = fs.existsSync(path.join(MANIFEST_ROOT, "package.json"))
+  && fs.existsSync(path.join(MANIFEST_ROOT, "dist", "resume.js"))
   && fs.existsSync(path.join(MANIFEST_ROOT, "fixtures", "valid-minimal.aionis.md"));
+if (process.env.AIONIS_MANIFEST_REPO && !MANIFEST_AVAILABLE) {
+  throw new Error(
+    `AIONIS_MANIFEST_REPO points to an incomplete or unbuilt Manifest checkout: ${MANIFEST_ROOT}`,
+  );
+}
 const MANIFEST_SKIP = process.env.AIONIS_MANIFEST_REPO || MANIFEST_AVAILABLE
   ? false
   : "external AionisManifest checkout is not present in Runtime-only CI";

@@ -61,7 +61,9 @@ prints Runtime start and integration next steps.
 
 ## Docker
 
-Run the local-first Runtime in Docker:
+The checked-in development train targets
+`ghcr.io/ostinatocc/aionis:v0.3.10`, but that image is not published while the
+train remains `development`. Run the last published candidate in Docker:
 
 ```bash
 docker run --rm \

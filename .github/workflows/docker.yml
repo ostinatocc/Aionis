@@ -30,6 +30,7 @@ jobs:
     timeout-minutes: 45
     env:
       AIONIS_SDK_REPO: ${{ github.workspace }}/external/aionis-sdk
+      AIONIS_MANIFEST_REPO: ${{ github.workspace }}/external/AionisManifest
     outputs:
       publish_latest: ${{ steps.release-metadata.outputs.publish_latest }}
       runtime_tag: ${{ steps.release-metadata.outputs.runtime_tag }}
@@ -68,7 +69,7 @@ jobs:
             import fs from "node:fs";
             const train = JSON.parse(fs.readFileSync("release-train.json", "utf8"));
             const output = process.env.GITHUB_OUTPUT;
-            for (const key of ["cli", "create", "sdk", "mcp", "aifs", "claude_code", "substrate"]) {
+            for (const key of ["cli", "create", "sdk", "manifest", "mcp", "aifs", "claude_code", "substrate"]) {
               fs.appendFileSync(output, `${key}_ref=${train.packages[key].source_ref}\n`);
             }
             fs.appendFileSync(output, `runtime_tag=${train.runtime.source_tag}\n`);
@@ -96,6 +97,13 @@ jobs:
           repository: ostinatocc/aionis-sdk
           ref: ${{ steps.release-metadata.outputs.sdk_ref }}
           path: external/aionis-sdk
+
+      - name: Checkout standalone Manifest
+        uses: actions/checkout@v4
+        with:
+          repository: ostinatocc/AionisManifest
+          ref: ${{ steps.release-metadata.outputs.manifest_ref }}
+          path: external/AionisManifest
 
       - name: Checkout MCP package
         uses: actions/checkout@v4
@@ -174,6 +182,7 @@ jobs:
           AIONIS_RELEASE_CLI_REPO: ${{ github.workspace }}/external/aionis-cli
           AIONIS_RELEASE_CREATE_REPO: ${{ github.workspace }}/external/aionis-create
           AIONIS_RELEASE_SDK_REPO: ${{ github.workspace }}/external/aionis-sdk
+          AIONIS_RELEASE_MANIFEST_REPO: ${{ github.workspace }}/external/AionisManifest
           AIONIS_RELEASE_MCP_REPO: ${{ github.workspace }}/external/aionis-mcp
           AIONIS_RELEASE_AIFS_REPO: ${{ github.workspace }}/external/aionis-aifs
           AIONIS_RELEASE_CLAUDE_CODE_REPO: ${{ github.workspace }}/external/aionis-claude-code
@@ -187,6 +196,13 @@ jobs:
           npm run -s sdk:check
           npm run -s complexity:check
           node --test scripts/ci/release-version-docs.test.mjs
+
+      - name: Verify standalone Manifest
+        working-directory: external/AionisManifest
+        run: |
+          npm ci --ignore-scripts
+          npm run -s verify
+          npm pack --dry-run --ignore-scripts
 
       - name: Pack exact SDK, MCP, and installer artifacts
         id: package-artifacts

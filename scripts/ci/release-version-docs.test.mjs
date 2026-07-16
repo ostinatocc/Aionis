@@ -10,6 +10,7 @@ const PACKAGE_NAMES = {
   cli: "aionis",
   create: "@aionis/create",
   sdk: "@aionis/sdk",
+  manifest: "@aionis/manifest",
   mcp: "@aionis/mcp",
   aifs: "@aionis/aifs",
   claude_code: "@aionis/claude-code",

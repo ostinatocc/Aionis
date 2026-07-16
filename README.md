@@ -43,13 +43,15 @@ rehydrated later, and why each decision was made.
 npx aionis setup
 ```
 
-Current candidate: **Runtime v0.3.9 / SDK v0.3.18** (Local Runtime Public Beta).
-It is intended for a single self-hosted Runtime process with same-host Agent
+Current main development: **Runtime v0.3.10 / SDK v0.3.18 / Manifest v0.1.1**.
+The last published Runtime candidate remains v0.3.9; the v0.3.10 source tag and
+Docker image do not exist while the train is marked `development`. It is
+intended for a single self-hosted Runtime process with same-host Agent
 clients. The TypeScript SDK, HTTP API, MCP bridge, AIFS file surface, Memory
 Firewall, Agent Flight Recorder, optional Zvec candidate retrieval, and
 Substrate evidence sidecar are available for beta integration and evaluation.
 
-This candidate is not a GA managed service and does not claim multi-instance
+This product line is not a GA managed service and does not claim multi-instance
 high availability. Lite keeps SQLite as authority; its in-process ANN is rebuilt
 from committed SQLite vectors after restart. Deployments that run several
 Runtime processes need a shared persistent ANN or an explicit cross-instance
@@ -70,6 +72,7 @@ Docs: [docs.aionis.work](https://docs.aionis.work)
 | Guided local setup | `aionis` | `npx aionis setup` | [ostinatocc/aionis-cli](https://github.com/ostinatocc/aionis-cli) |
 | Install the Runtime locally | `aionis` | `npx aionis setup` | [ostinatocc/aionis-cli](https://github.com/ostinatocc/aionis-cli) |
 | Integrate from a TypeScript host | `@aionis/sdk` | `npm install @aionis/sdk` | [ostinatocc/aionis-sdk](https://github.com/ostinatocc/aionis-sdk) |
+| Compile or resume a Manifest workflow | `@aionis/manifest` | `npm install @aionis/manifest` | [ostinatocc/AionisManifest](https://github.com/ostinatocc/AionisManifest) |
 | Connect any MCP client | `@aionis/mcp` | `npx @aionis/mcp@latest --base-url http://127.0.0.1:3001` | [ostinatocc/aionis-mcp](https://github.com/ostinatocc/aionis-mcp) |
 | Mirror governed context into files | `@aionis/aifs` | `npx aionis setup --with-aifs` | [ostinatocc/aionis-aifs](https://github.com/ostinatocc/aionis-aifs) |
 | Give Claude Code automatic memory hooks | Claude Code plugin | `/plugin marketplace add https://github.com/ostinatocc/aionis-claude-code` | [ostinatocc/aionis-claude-code](https://github.com/ostinatocc/aionis-claude-code) |
@@ -102,7 +105,9 @@ This enables Zvec as a persisted candidate index while keeping SQLite as the
 Runtime fact source. Aionis still performs final scope, lifecycle, authority,
 admission, and rehydrate governance after candidates are loaded.
 
-Docker users can run the Runtime directly:
+The v0.3.10 development target is
+`ghcr.io/ostinatocc/aionis:v0.3.10`; it is not a pullable-artifact claim yet.
+Docker users can run the last published candidate directly:
 
 ```bash
 docker run --rm \
@@ -1035,7 +1040,7 @@ Internal architecture notes live in:
 2. [docs/ARCHITECTURE_BOUNDARY.md](docs/ARCHITECTURE_BOUNDARY.md)
 3. [docs/AIONIS_CAPABILITY_DECISION_MATRIX.md](docs/AIONIS_CAPABILITY_DECISION_MATRIX.md)
 
-Deployment notes: this Public Beta candidate is optimized for one local Runtime
+Deployment notes: this Public Beta product line is optimized for one local Runtime
 process and same-host Agent clients. Server settings add API-key/JWT auth and
 request controls for bounded remote evaluation, but are not a claim of a
 managed, multi-tenant, multi-instance HA service.
