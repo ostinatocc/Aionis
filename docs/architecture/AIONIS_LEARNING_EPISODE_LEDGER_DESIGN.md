@@ -3588,6 +3588,72 @@ remains fail-closed. Task 8.2D certifies factual ingestion coverage only;
 Task 8.2E combines that fact with the acceptance archive and exclusively owns
 `release_verdict`.
 
+**Implementation checkpoint (2026-07-17, Task 8.2D-2):** Runtime now performs
+the live-v4 reconstruction without granting signing authority. The formal
+reader requires an active Runtime transaction, pins its AsyncLocal transaction
+identity at entry and exit, and accepts only the exact current
+`write_projection` v4 schema. It streams the frozen 22-table authority manifest
+and the complete external-operation scope in primary-key order. SQLite values
+are classified with `typeof`; TEXT and INTEGER are read through raw BLOB bytes;
+TEXT must survive fatal UTF-8 round-trip, INTEGER must be canonical decimal and
+safe, and REAL is rejected. A non-TEXT scope value with the same bytes as
+`learning_external_authority_v1` is an integrity failure rather than an omitted
+operation.
+
+The database projector accepts only tenant plus confirmatory-attempt identity
+and rederives the revision, candidate/gate policies, four registered series,
+status, coverage facts, and result tuples. It uses exact typed full-row digests
+for revision, evidence artifact, and Runtime operation rows; parses the exact
+canonical C-3 receipt bytes; reuses the normal-lifecycle resolver for results;
+and runs the complete ledger-integrity replay in the same transaction. Its
+ledger verification `checked_at` is the deterministic maximum of the revision,
+attempt, and relevant database terminal-fact times, never caller time. The only
+accepted branch vectors are complete result, abnormal claimed termination,
+pre-claim hold, and a truly absent current-snapshot series. A normal termination
+without its artifact/ingest/current-head triple is rejected as incomplete.
+
+The replay witness freezes the exact 25-table v4 verifier key set rather than
+an open count map. Protected plus legacy event counts must equal the episode
+event table count; control-job totals must equal the control-job table count;
+and the terminal job subclasses cannot exceed that total. The restricted exact
+reader exposes only materialized rows. Its operation scan uses a fixed internal
+visitor and returns at most the three registered-series operations, so no caller
+callback can commit, reopen, or mutate the transaction between streamed rows.
+The declared database-lineage instance ID is also checked against the live
+Runtime identity row from that same transaction.
+
+The 22-table head is the frozen append-only learning-authority commitment, not
+a claim to hash every physical table in the SQLite file. The replay-only
+`lite_learning_namespace_leases`, `lite_learning_control_jobs`, and
+`lite_runtime_authority_identity` tables are outside that 22-table manifest;
+the identity row is separately bound by the live lineage check, while the
+mutable lease/job tables remain covered by replay and, at D3, the verified
+checkpointed whole-main-file digest. No standalone D2 head may be described as
+a whole-physical-database commitment.
+
+The returned contract is explicitly
+`unsigned_d2_database_projection_draft_v1` with `signing_eligible=false`.
+It contains neither physical database lineage, DB-binding receipt, final
+authority head, hold-bundle digest, signature, nor release verdict. In
+particular, `unstarted` is only a same-snapshot fact; it becomes terminal only
+under D3's launcher-held writer fence. The draft names the D3 capabilities still
+required for coverage finality, tracked hold bundles, physical lineage, DB
+binding, and a same-transaction full authority head. D3 must rerun/consume these
+facts inside its opaque launcher capability and must never accept a caller-made
+plain draft as signer input. The external-head CLI therefore remains
+fail-closed.
+
+Three D3 prerequisites are intentionally still absent and must not be
+simulated with existing APIs. First, the current protected-database pin opens
+the canonical path itself; D3 requires a launcher-to-attestor inherited-FD
+capability that verifies descriptor identity and lifetime without rebuilding
+authority from an argv path. Second, no private signer channel exists yet.
+Third, result archives do not provide verified tracked termination/pre-claim
+hold bundles; D3 must define and verify those Git/archive closures and carry
+their digests only through opaque capabilities. D3 invokes the D2 projector
+under those live capabilities and the launcher-held writer fence; it never
+accepts a serialized D2 draft as input.
+
 For an external kind, ingestion re-resolves the reservation, its sole ticket
 consumption, sole claim, sole supervisor binding, and sole session termination
 in the same tenant. The

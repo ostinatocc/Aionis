@@ -10,12 +10,15 @@ import test from "node:test";
 import stableStringify from "fast-json-stable-stringify";
 
 import {
+  LEARNING_EXTERNAL_INGESTION_SEMANTIC_RULES_V1,
+  LEARNING_EXTERNAL_INGESTION_LEDGER_REPLAY_TABLE_NAMES_V1,
   LEARNING_EXTERNAL_ATTESTATION_ROLE_SPECS,
   LEARNING_RUNTIME_AUTHORITY_HEAD_V1_HASH_DOMAINS,
   LEARNING_RUNTIME_AUTHORITY_HEAD_V1_OPERATION_SPEC,
   LEARNING_RUNTIME_AUTHORITY_HEAD_V1_TABLE_SPECS,
   LearningExternalIngestionAttestationBodyV1Schema,
   LearningExternalIngestionAttestationEnvelopeV1Schema,
+  LearningExternalIngestionLedgerVerificationV1Schema,
   LearningExternalIngestionProjectionV1Schema,
   LearningExternalRequiredSeriesStatusV1Schema,
   LearningExternalTerminalCoverageIndexV1Schema,
@@ -24,8 +27,12 @@ import {
   encodeLearningRuntimeAuthorityTypedValue,
   encodeLearningRuntimeAuthorityU64BE,
   learningExternalIngestionAttestationDigest,
+  learningExternalIngestionLedgerVerificationDigest,
+  learningExternalIngestionLedgerVerificationJson,
   learningExternalIngestionProjectionDigest,
+  learningExternalIngestionRevisionRowDigestV1,
   learningExternalRequiredSeriesStatusDigest,
+  learningExternalTerminalCoverageFinalizedAtFromDatabaseFacts,
   learningExternalTerminalCoverageIndexDigest,
   learningRuntimeAuthorityExternalOperationClosureDigest,
   learningRuntimeAuthorityFrame,
@@ -34,6 +41,7 @@ import {
   learningRuntimeAuthorityTableRowsDigest,
   learningRuntimeAuthorityHeadTableManifestDigest,
   parseCanonicalLearningExternalIngestionAttestationJson,
+  parseCanonicalLearningExternalIngestionLedgerVerificationJson,
   parseCanonicalLearningExternalIngestionProjectionJson,
   parseCanonicalLearningExternalRequiredSeriesStatusJson,
   parseCanonicalLearningExternalTerminalCoverageIndexJson,
@@ -44,7 +52,10 @@ import {
   ExternalExecutionPolicyV1Schema,
   externalExecutionPolicyDigest,
 } from "../../src/memory/learning-episode-ledger.js";
-import { LITE_LEARNING_LEDGER_REQUIRED_COLUMNS } from "../../src/store/lite-learning-episode-ledger.js";
+import {
+  LITE_LEARNING_LEDGER_REQUIRED_COLUMNS,
+  LITE_LEARNING_LEDGER_REQUIRED_TABLE_NAMES,
+} from "../../src/store/lite-learning-episode-ledger.js";
 
 function rawEd25519PublicKeyBase64(publicKey: KeyObject): string {
   const spki = Buffer.from(publicKey.export({ format: "der", type: "spki" }));
@@ -492,6 +503,47 @@ const INTEGER_AUTHORITY_PRIMARY_KEYS = new Set([
   "lite_learning_gate_decisions.row_id",
 ]);
 
+const EXPECTED_LEDGER_REPLAY_TABLES = [
+  "lite_learning_authorization_nonces",
+  "lite_learning_collection_principal_bindings",
+  "lite_learning_confirmatory_attempts",
+  "lite_learning_control_jobs",
+  "lite_learning_episode_events",
+  "lite_learning_evidence_artifacts",
+  "lite_learning_experiment_closures",
+  "lite_learning_experiment_revisions",
+  "lite_learning_exposure_items",
+  "lite_learning_external_holdout_members",
+  "lite_learning_external_preclaim_holds",
+  "lite_learning_external_run_claims",
+  "lite_learning_external_run_reservations",
+  "lite_learning_external_session_terminations",
+  "lite_learning_external_supervisor_bindings",
+  "lite_learning_external_ticket_consumptions",
+  "lite_learning_feedback_attributions",
+  "lite_learning_gate_artifact_memberships",
+  "lite_learning_gate_decisions",
+  "lite_learning_gate_look_reservations",
+  "lite_learning_host_use_receipts",
+  "lite_learning_namespace_leases",
+  "lite_learning_policy_versions",
+  "lite_learning_randomization_pairs",
+  "lite_runtime_authority_identity",
+] as const;
+
+function ledgerReplayTableCounts(): Record<string, number> {
+  return Object.fromEntries(EXPECTED_LEDGER_REPLAY_TABLES.map((table) => [
+    table,
+    table === "lite_learning_episode_events"
+      ? 17
+      : table === "lite_learning_control_jobs"
+        ? 5
+      : table === "lite_learning_evidence_artifacts"
+        ? 3
+        : 0,
+  ]));
+}
+
 test("D1 authority-head manifest freezes all 22 learning authority tables and the external operation selector", () => {
   assert.equal(LEARNING_RUNTIME_AUTHORITY_HEAD_V1_TABLE_SPECS.length, 22);
   assert.deepEqual(
@@ -548,6 +600,226 @@ test("D1 authority-head manifest freezes all 22 learning authority tables and th
     "3d0d57cb9e6ba9908fa650a78dbacb92d5b4ab3766b36e36471959db3c8b1d16",
   );
   assert.doesNotThrow(() => LearningRuntimeAuthorityHeadV1Schema.parse(authorityHead()));
+});
+
+test("D2 semantic freeze canonicalizes the complete v4 ledger verification receipt", () => {
+  assert.equal(EXPECTED_LEDGER_REPLAY_TABLES.length, 25);
+  assert.deepEqual(
+    LEARNING_EXTERNAL_INGESTION_LEDGER_REPLAY_TABLE_NAMES_V1,
+    EXPECTED_LEDGER_REPLAY_TABLES,
+  );
+  assert.deepEqual(
+    LITE_LEARNING_LEDGER_REQUIRED_TABLE_NAMES,
+    EXPECTED_LEDGER_REPLAY_TABLES,
+  );
+  const receipt = {
+    contract_version: "aionis_learning_external_ingestion_ledger_verification_v1" as const,
+    schema_component: "write_projection" as const,
+    schema_version: 4 as const,
+    database_instance_id: DATABASE_LINEAGE.database_instance_id,
+    checked_at: "2026-07-17T02:03:04.005Z",
+    ledger_verifier_id: "aionis_lite_learning_ledger_replay" as const,
+    ledger_verifier_version: 1 as const,
+    replay: {
+      verifier_id: "aionis_lite_learning_ledger_replay" as const,
+      verifier_version: 1 as const,
+      table_counts: ledgerReplayTableCounts(),
+      protected_event_count: 11,
+      legacy_event_count: 6,
+      promotion_eligible_exposure_count: 7,
+      control_job_count: 5,
+      control_job_dead_letter_count: 1,
+      control_job_expired_lease_count: 2,
+    },
+  };
+  const parsed = LearningExternalIngestionLedgerVerificationV1Schema.parse(receipt);
+  const canonical = learningExternalIngestionLedgerVerificationJson(parsed);
+  assert.equal(canonical, stableStringify(parsed));
+  assert.deepEqual(
+    parseCanonicalLearningExternalIngestionLedgerVerificationJson(canonical),
+    parsed,
+  );
+  assert.equal(
+    learningExternalIngestionLedgerVerificationDigest(parsed),
+    "88acb300ead6611ef754176b9c6d3fcb19629fd6c4d7fbbec4e5be45b1fa7d00",
+  );
+  assert.throws(
+    () => parseCanonicalLearningExternalIngestionLedgerVerificationJson(JSON.stringify(parsed)),
+    /noncanonical_json/u,
+  );
+
+  const rejected = [
+    { ...clone(receipt), replay: { ...clone(receipt.replay), protected_event_count: -1 } },
+    {
+      ...clone(receipt),
+      replay: {
+        ...clone(receipt.replay),
+        table_counts: {
+          ...ledgerReplayTableCounts(),
+          lite_learning_episode_events: Number.MAX_SAFE_INTEGER + 1,
+        },
+      },
+    },
+    { ...clone(receipt), checked_at: "2026-07-17T02:03:04Z" },
+    {
+      ...clone(receipt),
+      replay: { ...clone(receipt.replay), verifier_id: "another_verifier" },
+    },
+    {
+      ...clone(receipt),
+      replay: { ...clone(receipt.replay), protected_event_count: 10 },
+    },
+    {
+      ...clone(receipt),
+      replay: { ...clone(receipt.replay), control_job_count: 4 },
+    },
+    {
+      ...clone(receipt),
+      replay: {
+        ...clone(receipt.replay),
+        control_job_dead_letter_count: 4,
+        control_job_expired_lease_count: 2,
+      },
+    },
+    {
+      ...clone(receipt),
+      replay: { ...clone(receipt.replay), promotion_eligible_exposure_count: 12 },
+    },
+    { ...clone(receipt), unknown_field: true },
+  ];
+  for (const value of rejected) {
+    assert.throws(() => LearningExternalIngestionLedgerVerificationV1Schema.parse(value));
+  }
+
+  const missingKey = clone(receipt);
+  delete (missingKey.replay.table_counts as Record<string, number>)
+    .lite_learning_control_jobs;
+  assert.throws(
+    () => LearningExternalIngestionLedgerVerificationV1Schema.parse(missingKey),
+  );
+
+  const extraKey = clone(receipt);
+  (extraKey.replay.table_counts as Record<string, number>)
+    .lite_learning_future_table = 0;
+  assert.throws(
+    () => LearningExternalIngestionLedgerVerificationV1Schema.parse(extraKey),
+  );
+
+  const substitutedFakeKey = clone(receipt);
+  const substitutedCounts = substitutedFakeKey.replay.table_counts as Record<string, number>;
+  delete substitutedCounts.lite_learning_namespace_leases;
+  substitutedCounts.lite_learning_namespace_lease = 0;
+  assert.equal(Object.keys(substitutedCounts).length, 25);
+  assert.throws(
+    () => LearningExternalIngestionLedgerVerificationV1Schema.parse(substitutedFakeKey),
+  );
+});
+
+test("D2 semantic freeze defines revision_row_sha256 as the typed full revision authority row", () => {
+  const row = authorityRow("lite_learning_experiment_revisions", {
+    tenant_id: { storage_class: "text", value: Buffer.from("tenant-attestation") },
+    experiment_id: { storage_class: "text", value: Buffer.from("experiment-attestation") },
+    experiment_revision: { storage_class: "integer", value: 7 },
+  });
+  assert.equal(
+    learningExternalIngestionRevisionRowDigestV1(row),
+    "8ae33a4387029db9c4d0a2c2d4e51e53319f80bc71fc084b2d58d90d8c88bd89",
+  );
+  assert.equal(
+    learningExternalIngestionRevisionRowDigestV1(row),
+    learningExternalIngestionRevisionRowDigestV1(clone(row)),
+  );
+  const wrongPrimaryKeyStorage = clone(row);
+  wrongPrimaryKeyStorage.experiment_revision = {
+    storage_class: "text",
+    value: Buffer.from("7"),
+  };
+  assert.throws(
+    () => learningExternalIngestionRevisionRowDigestV1(wrongPrimaryKeyStorage),
+    /primary_key_storage_class_mismatch/u,
+  );
+  const missingColumn = clone(row);
+  delete missingColumn.profile_id;
+  assert.throws(
+    () => learningExternalIngestionRevisionRowDigestV1(missingColumn),
+    /row_columns_mismatch/u,
+  );
+});
+
+test("D2 semantic freeze derives coverage finalized_at only from canonical DB fact times", () => {
+  const input = {
+    revision_created_at: "2026-07-17T02:03:04.001Z",
+    confirmatory_attempt_created_at: "2026-07-17T02:03:04.002Z",
+    terminal_facts: [
+      {
+        role: "offline_paired" as const,
+        branch_kind: "result" as const,
+        ingest_operation_created_at: "2026-07-17T02:03:04.006Z",
+      },
+      {
+        role: "production_shadow" as const,
+        branch_kind: "termination_hold" as const,
+        terminated_at: "2026-07-17T02:03:04.008Z",
+      },
+      {
+        role: "tool_e2e" as const,
+        branch_kind: "preclaim_hold" as const,
+        held_at: "2026-07-17T02:03:04.007Z",
+      },
+    ],
+  };
+  assert.equal(
+    learningExternalTerminalCoverageFinalizedAtFromDatabaseFacts(input),
+    "2026-07-17T02:03:04.008Z",
+  );
+  assert.equal(
+    learningExternalTerminalCoverageFinalizedAtFromDatabaseFacts({
+      revision_created_at: "2026-07-17T02:03:04.001Z",
+      confirmatory_attempt_created_at: "2026-07-17T02:03:04.002Z",
+      terminal_facts: [],
+    }),
+    "2026-07-17T02:03:04.002Z",
+  );
+  assert.throws(() => learningExternalTerminalCoverageFinalizedAtFromDatabaseFacts({
+    ...clone(input),
+    terminal_facts: [input.terminal_facts[1], input.terminal_facts[0]],
+  }), /fixed external role order/u);
+  assert.throws(() => learningExternalTerminalCoverageFinalizedAtFromDatabaseFacts({
+    ...clone(input),
+    terminal_facts: [input.terminal_facts[0], input.terminal_facts[0]],
+  }), /fixed external role order/u);
+  assert.throws(() => learningExternalTerminalCoverageFinalizedAtFromDatabaseFacts({
+    ...clone(input),
+    revision_created_at: "2026-07-17T02:03:04Z",
+  }));
+  assert.throws(() => learningExternalTerminalCoverageFinalizedAtFromDatabaseFacts({
+    ...clone(input),
+    terminal_facts: [...input.terminal_facts, input.terminal_facts[2]],
+  }));
+});
+
+test("D2 semantic rules keep unsigned DB drafts separate from D3 and E claims", () => {
+  assert.ok(Object.isFrozen(LEARNING_EXTERNAL_INGESTION_SEMANTIC_RULES_V1));
+  assert.deepEqual(LEARNING_EXTERNAL_INGESTION_SEMANTIC_RULES_V1, {
+    contract_version: "aionis_learning_external_ingestion_semantic_rules_v1",
+    d2_output_authority: "unsigned_draft_not_signable",
+    revision_row_sha256:
+      "typed_full_lite_learning_experiment_revisions_authority_row_sha256_v1",
+    ledger_verification_sha256:
+      "canonical_aionis_learning_external_ingestion_ledger_verification_v1_sha256",
+    coverage_finalized_at:
+      "canonical_max_of_revision_attempt_and_db_terminal_fact_times_v1",
+    coverage_finality: "d3_launcher_write_fence_capability_required",
+    termination_hold_bundle_sha256:
+      "d3_verified_tracked_bundle_capability_required",
+    preclaim_hold_bundle_sha256:
+      "d3_verified_tracked_bundle_capability_required",
+    raw_caller_hold_bundle_digest: "forbidden",
+    physical_database_lineage: "d3_launcher_database_binding_capability_required",
+    database_binding_receipt_sha256:
+      "d3_launcher_database_binding_capability_required",
+    signature_authority: "d3_private_signer_only_after_all_claims_verified",
+  });
 });
 
 test("D1 typed SQLite encoder freezes exact values, framing, and domain separation", () => {

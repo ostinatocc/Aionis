@@ -7,6 +7,29 @@ export type SqliteStatement = {
   all<T = any>(...params: any[]): T[];
 };
 
+/**
+ * The streaming surface implemented by node:sqlite's StatementSync. It is
+ * intentionally separate from SqliteStatement so small, hand-written database
+ * substitutes used by callers do not gain new structural requirements.
+ */
+export type SqliteStreamingStatement = SqliteStatement & {
+  iterate<T = any>(...params: any[]): IterableIterator<T>;
+  setReadBigInts(enabled: boolean): void;
+};
+
+/** Fail closed when a formal reader is not backed by node:sqlite streaming APIs. */
+export function requireSqliteStreamingStatement(
+  statement: SqliteStatement,
+  label = "sqlite_statement",
+): SqliteStreamingStatement {
+  const candidate = statement as Partial<SqliteStreamingStatement>;
+  if (typeof candidate.iterate !== "function"
+    || typeof candidate.setReadBigInts !== "function") {
+    throw new Error(`sqlite_streaming_statement_required:${label}`);
+  }
+  return candidate as SqliteStreamingStatement;
+}
+
 export type SqliteDatabase = {
   exec(sql: string): unknown;
   prepare<T = any>(sql: string): SqliteStatement;

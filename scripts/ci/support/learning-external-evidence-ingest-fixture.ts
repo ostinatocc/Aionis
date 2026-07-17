@@ -126,6 +126,28 @@ export type LearningExternalEvidenceIngestFixture = Readonly<{
   publicRunAuthorityPath: string;
   recordedAt: string;
   serviceInput: LiteLearningExternalEvidenceServiceInput;
+  appendRealProjectorToolBranch(args: Readonly<{
+    database: LiteRuntimeDatabase;
+    branchKind:
+      | "preclaim_hold"
+      | "termination_hold_no_binding"
+      | "termination_hold_with_binding";
+  }>): Promise<LearningExternalProjectorToolBranchResult>;
+}>;
+
+export type LearningExternalProjectorToolBranchResult = Readonly<{
+  branchKind:
+    | "preclaim_hold"
+    | "termination_hold_no_binding"
+    | "termination_hold_with_binding";
+  recordedAt: string;
+  reservationId: string;
+  ticketConsumptionId: string;
+  preclaimHoldId: string | null;
+  claimId: string | null;
+  supervisorBindingId: string | null;
+  sessionTerminationId: string | null;
+  terminalFactSha256: string;
 }>;
 
 function sha256(value: string | Uint8Array): string {
@@ -317,7 +339,11 @@ export async function createLearningExternalEvidenceIngestFixture(): Promise<
       },
     };
     const productionRole = externalPolicy.roles.production_shadow;
+    const toolRole = externalPolicy.roles.tool_e2e;
     const baseProfile = createConfirmatoryProfile();
+    const baseExternalInputs = createConfirmatoryExternalInputs();
+    const toolEvidenceSeriesId = baseProfile.experiment.required_evidence_series.tool_e2e;
+    const toolRunId = baseExternalInputs.tool_e2e.planned_run_id;
     const candidate = registry.resolveCandidatePolicy(
       baseProfile.experiment.candidate_policy_id,
       baseProfile.experiment.candidate_policy_version,
@@ -358,12 +384,45 @@ export async function createLearningExternalEvidenceIngestFixture(): Promise<
       expected_runner_principal_sha256: productionRole.runner_principal_sha256,
       run_id: RUN_ID,
     });
+    const toolHarnessBundleSha256 = sha256("harness:external-projector-tool");
+    const toolSourceSnapshotSha256 = sha256("source:external-projector-tool");
+    const toolExecutionProfileSha256 = sha256("profile:external-projector-tool");
+    const toolModelIdentitySha256 = sha256("model:external-projector-tool");
+    const toolManifestSha256 = sha256("tool-manifest:external-projector-tool");
+    const toolImmutableInputManifest = canonical({
+      contract_version: "aionis_learning_external_immutable_input_manifest_v1",
+      tenant_id: CONFIRMATORY_TENANT_ID,
+      artifact_kind: "tool_e2e_gate",
+      evidence_series_id: toolEvidenceSeriesId,
+      task_family: CONFIRMATORY_TASK_FAMILY,
+      applicable_experiment_id: CONFIRMATORY_EXPERIMENT_ID,
+      applicable_experiment_revision: CONFIRMATORY_EXPERIMENT_REVISION,
+      candidate_policy_id: candidate.policy_id,
+      candidate_policy_version: candidate.policy_version,
+      candidate_policy_implementation_sha256: candidate.implementation_contract_sha256,
+      candidate_policy_config_sha256: candidate.policy_config_sha256,
+      gate_policy_id: gate.policy_id,
+      gate_policy_version: gate.policy_version,
+      gate_policy_config_sha256: gate.policy_config_sha256,
+      harness_bundle_sha256: toolHarnessBundleSha256,
+      source_snapshot_sha256: toolSourceSnapshotSha256,
+      execution_profile_sha256: toolExecutionProfileSha256,
+      model_identity_sha256: toolModelIdentitySha256,
+      expected_runner_principal_sha256: toolRole.runner_principal_sha256,
+      run_id: toolRunId,
+      tool_manifest_sha256: toolManifestSha256,
+    });
     const externalInputs = {
-      ...createConfirmatoryExternalInputs(),
+      ...baseExternalInputs,
       production_shadow: {
         immutable_input_manifest_sha256: immutableInputManifest.sha256,
         retry_policy_sha256: retryPolicy.sha256,
         planned_run_id: RUN_ID,
+      },
+      tool_e2e: {
+        immutable_input_manifest_sha256: toolImmutableInputManifest.sha256,
+        retry_policy_sha256: retryPolicy.sha256,
+        planned_run_id: toolRunId,
       },
     };
     const profile = {
@@ -1162,6 +1221,332 @@ export async function createLearningExternalEvidenceIngestFixture(): Promise<
       applicableExperimentId: CONFIRMATORY_EXPERIMENT_ID,
       applicableExperimentRevision: CONFIRMATORY_EXPERIMENT_REVISION,
     };
+    const appendRealProjectorToolBranch = async (args: Readonly<{
+      database: LiteRuntimeDatabase;
+      branchKind:
+        | "preclaim_hold"
+        | "termination_hold_no_binding"
+        | "termination_hold_with_binding";
+    }>): Promise<LearningExternalProjectorToolBranchResult> => {
+      const branchLedger = createLiteLearningEpisodeLedgerAccess(args.database);
+      if (await branchLedger.databaseInstanceId() !== databaseInstanceId) {
+        throw new Error("projector tool branch fixture database identity mismatch");
+      }
+      const suffix = args.branchKind.replaceAll("_", "-");
+      const operationAt = new Date().toISOString();
+      const runnerTicket = Buffer.alloc(
+        32,
+        args.branchKind === "preclaim_hold"
+          ? 0x51
+          : args.branchKind === "termination_hold_no_binding" ? 0x52 : 0x53,
+      );
+      const reservationBase = authorityRow("lite_learning_external_run_reservations", {
+        tenant_id: CONFIRMATORY_TENANT_ID,
+        reservation_id: `reservation-projector-${suffix}`,
+        artifact_kind: "tool_e2e_gate",
+        evidence_series_id: toolEvidenceSeriesId,
+        task_family: CONFIRMATORY_TASK_FAMILY,
+        candidate_policy_id: revision.candidate_policy_id,
+        candidate_policy_version: revision.candidate_policy_version,
+        candidate_policy_implementation_sha256:
+          revision.candidate_policy_implementation_sha256,
+        candidate_policy_config_sha256: revision.candidate_policy_config_sha256,
+        applicable_experiment_id: revision.experiment_id,
+        applicable_experiment_revision: revision.experiment_revision,
+        gate_policy_id: revision.gate_policy_id,
+        gate_policy_version: revision.gate_policy_version,
+        gate_policy_config_sha256: revision.gate_policy_config_sha256,
+        applicability_manifest_sha256: applicabilityManifestSha256,
+        harness_bundle_sha256: toolHarnessBundleSha256,
+        source_snapshot_sha256: toolSourceSnapshotSha256,
+        case_set_sha256: null,
+        holdout_membership_projection_sha256: null,
+        sealed_holdout_ref_sha256: null,
+        sealed_holdout_ciphertext_sha256: null,
+        execution_profile_sha256: toolExecutionProfileSha256,
+        model_identity_sha256: toolModelIdentitySha256,
+        immutable_model_snapshot_sha256: null,
+        tool_manifest_sha256: toolManifestSha256,
+        execution_order_sha256: null,
+        retry_policy_sha256: retryPolicy.sha256,
+        retry_policy_json: retryPolicy.json,
+        immutable_input_manifest_sha256: toolImmutableInputManifest.sha256,
+        immutable_input_manifest_json: toolImmutableInputManifest.json,
+        expected_runner_principal_sha256: toolRole.runner_principal_sha256,
+        credential_broker_policy_sha256: toolRole.broker_policy_sha256,
+        service_launcher_policy_sha256: toolRole.service_launcher_policy_sha256,
+        service_launcher_binary_sha256: toolRole.service_launcher_binary_sha256,
+        service_launcher_key_id: toolRole.service_launcher_key_id,
+        supervisor_executable_sha256: toolRole.supervisor_executable_sha256,
+        supervisor_argv_policy_sha256: toolRole.supervisor_argv_policy_sha256,
+        supervisor_sandbox_policy_sha256: toolRole.supervisor_sandbox_policy_sha256,
+        credential_session_class: toolRole.credential_session_class,
+        run_id: toolRunId,
+        reserve_operation_id: `operation-reserve-projector-${suffix}`,
+        runner_ticket_sha256: sha256(runnerTicket),
+        reservation_sha256: "0".repeat(64),
+        reserved_at: operationAt,
+      });
+      const reservation = {
+        ...reservationBase,
+        reservation_sha256: learningExternalRunReservationDigest(reservationBase),
+      } satisfies LiteLearningAuthorityRow;
+      const toolBrokerAuthority = {
+        broker_service_identity: LEARNING_EXTERNAL_BROKER_SERVICE_IDENTITY,
+        broker_policy_sha256: toolRole.broker_policy_sha256,
+        broker_binary_sha256: toolRole.broker_binary_sha256,
+        broker_public_key_sha256: toolRole.broker_public_key_sha256,
+        broker_key_id: toolRole.broker_key_id,
+      };
+      const reservationAuthorityRequestSha256 = sha256(stableStringify({
+        contract_version: "aionis_learning_external_reservation_authority_request_v1",
+        reservation,
+        holdout_member_sha256s: [],
+        runner_ticket_sha256: reservation.runner_ticket_sha256,
+      }));
+      const reservationAuthorization = signReceipt({
+        contract_version:
+          "aionis_learning_external_run_reservation_authorization_receipt_v1" as const,
+        tenant_id: CONFIRMATORY_TENANT_ID,
+        database_instance_id: databaseInstanceId,
+        reservation_id: String(reservation.reservation_id),
+        artifact_kind: "tool_e2e_gate" as const,
+        evidence_series_id: toolEvidenceSeriesId,
+        external_role: "tool_e2e" as const,
+        applicable_experiment_id: revision.experiment_id,
+        applicable_experiment_revision: revision.experiment_revision,
+        run_id: toolRunId,
+        expected_runner_principal_sha256: toolRole.runner_principal_sha256,
+        reserve_operation_id: String(reservation.reserve_operation_id),
+        reservation_sha256: String(reservation.reservation_sha256),
+        runner_ticket_sha256: String(reservation.runner_ticket_sha256),
+        authority_request_sha256: reservationAuthorityRequestSha256,
+        ...toolBrokerAuthority,
+        authorized_at: operationAt,
+        authorization_expires_at: addSeconds(operationAt, 60),
+      }, brokerKeys.privateKey);
+      await args.database.transaction.run(async () => {
+        await branchLedger.reserveExternalRun({
+          reservation,
+          runnerTicket,
+          authorization: reservationAuthorization,
+        });
+      });
+
+      const consumptionBase = authorityRow("lite_learning_external_ticket_consumptions", {
+        tenant_id: CONFIRMATORY_TENANT_ID,
+        consumption_id: `consumption-projector-${suffix}`,
+        reservation_id: reservation.reservation_id,
+        runner_ticket_sha256: reservation.runner_ticket_sha256,
+        runner_principal_sha256: toolRole.runner_principal_sha256,
+        broker_process_nonce_sha256: sha256(`broker-process:projector:${suffix}`),
+        consume_operation_id: `operation-consume-projector-${suffix}`,
+        consumed_at: operationAt,
+        consumption_sha256: "0".repeat(64),
+      });
+      const consumption = {
+        ...consumptionBase,
+        consumption_sha256: learningExternalTicketConsumptionDigest(consumptionBase),
+      } satisfies LiteLearningAuthorityRow;
+      const consumptionAuthorityRequestSha256 = sha256(stableStringify({
+        contract_version: "aionis_learning_external_ticket_consumption_authority_request_v1",
+        consumption,
+        reservation_sha256: reservation.reservation_sha256,
+        runner_ticket_sha256: consumption.runner_ticket_sha256,
+      }));
+      const consumptionAuthorization = signReceipt({
+        contract_version:
+          "aionis_learning_external_ticket_consumption_authorization_receipt_v1" as const,
+        tenant_id: CONFIRMATORY_TENANT_ID,
+        database_instance_id: databaseInstanceId,
+        reservation_id: String(reservation.reservation_id),
+        consumption_id: String(consumption.consumption_id),
+        artifact_kind: "tool_e2e_gate" as const,
+        evidence_series_id: toolEvidenceSeriesId,
+        external_role: "tool_e2e" as const,
+        applicable_experiment_id: revision.experiment_id,
+        applicable_experiment_revision: revision.experiment_revision,
+        run_id: toolRunId,
+        consume_operation_id: String(consumption.consume_operation_id),
+        reservation_sha256: String(reservation.reservation_sha256),
+        consumption_sha256: String(consumption.consumption_sha256),
+        runner_ticket_sha256: String(consumption.runner_ticket_sha256),
+        runner_principal_sha256: String(consumption.runner_principal_sha256),
+        broker_process_nonce_sha256: String(consumption.broker_process_nonce_sha256),
+        authority_request_sha256: consumptionAuthorityRequestSha256,
+        ...toolBrokerAuthority,
+        authorized_at: operationAt,
+        authorization_expires_at: addSeconds(operationAt, 60),
+      }, brokerKeys.privateKey);
+      await args.database.transaction.run(async () => {
+        await branchLedger.consumeExternalTicket({
+          consumption,
+          runnerTicket,
+          authorization: consumptionAuthorization,
+        });
+      });
+
+      if (args.branchKind === "preclaim_hold") {
+        const holdReceipt = signReceipt({
+          contract_version: "aionis_learning_external_preclaim_hold_receipt_v1" as const,
+          tenant_id: CONFIRMATORY_TENANT_ID,
+          reservation_id: String(reservation.reservation_id),
+          ticket_consumption_id: String(consumption.consumption_id),
+          hold_id: `hold-projector-${suffix}`,
+          ticket_consumption_sha256: String(consumption.consumption_sha256),
+          hold_reason: "preclaim_timeout" as const,
+          triggering_terminal_fact_sha256: null,
+          zero_effects_proof_sha256: sha256(`zero-effects:projector:${suffix}`),
+          journal_phase: "consumed_unclaimed" as const,
+          ...toolBrokerAuthority,
+          held_at: operationAt,
+        }, brokerKeys.privateKey);
+        const holdResult = await args.database.transaction.run(async () =>
+          await branchLedger.recordExternalPreclaimHold({ receipt: holdReceipt }));
+        return Object.freeze({
+          branchKind: args.branchKind,
+          recordedAt: operationAt,
+          reservationId: String(reservation.reservation_id),
+          ticketConsumptionId: String(consumption.consumption_id),
+          preclaimHoldId: String(holdResult.hold.hold_id),
+          claimId: null,
+          supervisorBindingId: null,
+          sessionTerminationId: null,
+          terminalFactSha256: String(holdResult.hold.hold_sha256),
+        });
+      }
+
+      const claimBody = {
+        contract_version: "aionis_learning_external_claim_receipt_v1" as const,
+        tenant_id: CONFIRMATORY_TENANT_ID,
+        reservation_id: String(reservation.reservation_id),
+        ticket_consumption_id: String(consumption.consumption_id),
+        claim_id: `claim-projector-${suffix}`,
+        ticket_consumption_sha256: String(consumption.consumption_sha256),
+        runner_ticket_sha256: String(reservation.runner_ticket_sha256),
+        runner_principal_sha256: toolRole.runner_principal_sha256,
+        runner_execution_nonce_sha256: sha256(`runner-execution:projector:${suffix}`),
+        credential_scope_sha256: toolRole.credential_scope_sha256,
+        credential_session_class: toolRole.credential_session_class,
+        credential_session_id_sha256: sha256(`credential-session:projector:${suffix}`),
+        supervisor_bind_expires_at: addSeconds(operationAt, toolRole.supervisor_bind_ttl_seconds),
+        credential_session_expires_at: addSeconds(
+          operationAt,
+          toolRole.credential_session_hard_ttl_seconds,
+        ),
+        credential_session_heartbeat_seconds: toolRole.credential_session_heartbeat_seconds,
+        credential_session_max_calls: toolRole.credential_session_max_calls,
+        per_call_capability_ttl_seconds: toolRole.per_call_capability_ttl_seconds,
+        post_quiesce_finalize_ttl_seconds: toolRole.post_quiesce_finalize_ttl_seconds,
+        ...toolBrokerAuthority,
+        claimed_at: operationAt,
+      };
+      const claimReceipt = signReceipt(claimBody, brokerKeys.privateKey);
+      await args.database.transaction.run(async () => {
+        await branchLedger.claimExternalRun({ receipt: claimReceipt });
+      });
+
+      let supervisorBindingId: string | null = null;
+      if (args.branchKind === "termination_hold_with_binding") {
+        supervisorBindingId = `binding-projector-${suffix}`;
+        const launcherBody = {
+          contract_version: "aionis_learning_external_launcher_spawn_receipt_v1" as const,
+          tenant_id: CONFIRMATORY_TENANT_ID,
+          reservation_id: String(reservation.reservation_id),
+          ticket_consumption_id: String(consumption.consumption_id),
+          claim_id: claimBody.claim_id,
+          credential_session_id_sha256: claimBody.credential_session_id_sha256,
+          broker_challenge_sha256: sha256(`broker-challenge:projector:${suffix}`),
+          runner_principal_sha256: toolRole.runner_principal_sha256,
+          runner_uid: 501,
+          runner_gid: 20,
+          supervisor_pid: 4343,
+          supervisor_process_start_identity_sha256:
+            sha256(`process-start:projector:${suffix}`),
+          supervisor_cgroup_identity_sha256: sha256(`cgroup:projector:${suffix}`),
+          supervisor_service_job_identity_sha256: sha256(`service-job:projector:${suffix}`),
+          supervisor_process_identity_sha256: sha256(`process:projector:${suffix}`),
+          supervisor_executable_sha256: toolRole.supervisor_executable_sha256,
+          supervisor_argv_policy_sha256: toolRole.supervisor_argv_policy_sha256,
+          supervisor_argv_sha256: sha256(`argv:projector:${suffix}`),
+          inherited_channel_sha256: sha256(`inherited-channel:projector:${suffix}`),
+          broker_channel_fingerprint_sha256: sha256(`broker-channel:projector:${suffix}`),
+          supervisor_channel_fingerprint_sha256:
+            sha256(`supervisor-channel:projector:${suffix}`),
+          service_launcher_policy_sha256: toolRole.service_launcher_policy_sha256,
+          service_launcher_binary_sha256: toolRole.service_launcher_binary_sha256,
+          service_launcher_public_key_sha256: launcherPublicKeySha256,
+          service_launcher_key_id: toolRole.service_launcher_key_id,
+          supervisor_sandbox_policy_sha256: toolRole.supervisor_sandbox_policy_sha256,
+          spawned_at: operationAt,
+        };
+        const launcherReceipt = signReceipt(launcherBody, launcherKeys.privateKey);
+        const bindingReceipt = signReceipt({
+          contract_version:
+            "aionis_learning_external_broker_supervisor_binding_receipt_v1" as const,
+          tenant_id: CONFIRMATORY_TENANT_ID,
+          reservation_id: String(reservation.reservation_id),
+          ticket_consumption_id: String(consumption.consumption_id),
+          binding_id: supervisorBindingId,
+          claim_id: claimBody.claim_id,
+          credential_session_id_sha256: claimBody.credential_session_id_sha256,
+          runner_principal_sha256: toolRole.runner_principal_sha256,
+          supervisor_process_identity_sha256: launcherBody.supervisor_process_identity_sha256,
+          supervisor_executable_sha256: launcherBody.supervisor_executable_sha256,
+          supervisor_argv_policy_sha256: launcherBody.supervisor_argv_policy_sha256,
+          supervisor_argv_sha256: launcherBody.supervisor_argv_sha256,
+          inherited_channel_sha256: launcherBody.inherited_channel_sha256,
+          service_launcher_receipt_sha256: learningExternalReceiptDigest(launcherReceipt),
+          service_launcher_receipt: launcherReceipt,
+          service_launcher_policy_sha256: launcherBody.service_launcher_policy_sha256,
+          service_launcher_binary_sha256: launcherBody.service_launcher_binary_sha256,
+          service_launcher_public_key_sha256: launcherBody.service_launcher_public_key_sha256,
+          service_launcher_key_id: launcherBody.service_launcher_key_id,
+          supervisor_sandbox_policy_sha256: launcherBody.supervisor_sandbox_policy_sha256,
+          ...toolBrokerAuthority,
+          bound_at: operationAt,
+        }, brokerKeys.privateKey);
+        await args.database.transaction.run(async () => {
+          await branchLedger.bindExternalSupervisor({ receipt: bindingReceipt });
+        });
+      }
+
+      const terminationReason = args.branchKind === "termination_hold_with_binding"
+        ? "runner_crash" as const
+        : "launch_failure" as const;
+      const terminationReceipt = signReceipt({
+        contract_version:
+          "aionis_learning_external_session_termination_receipt_v1" as const,
+        tenant_id: CONFIRMATORY_TENANT_ID,
+        reservation_id: String(reservation.reservation_id),
+        ticket_consumption_id: String(consumption.consumption_id),
+        termination_id: `termination-projector-${suffix}`,
+        claim_id: claimBody.claim_id,
+        supervisor_binding_id: supervisorBindingId,
+        credential_session_id_sha256: claimBody.credential_session_id_sha256,
+        termination_reason: terminationReason,
+        broker_quiesce_receipt_sha256: null,
+        broker_quiesce_receipt: null,
+        runner_output_manifest_sha256: null,
+        terminal_run_manifest_sha256: null,
+        attempt_chain_sha256: sha256(`attempt-chain:projector:${suffix}`),
+        ...toolBrokerAuthority,
+        terminated_at: operationAt,
+      }, brokerKeys.privateKey);
+      const terminationResult = await args.database.transaction.run(async () =>
+        await branchLedger.terminateExternalSession({ receipt: terminationReceipt }));
+      return Object.freeze({
+        branchKind: args.branchKind,
+        recordedAt: operationAt,
+        reservationId: String(reservation.reservation_id),
+        ticketConsumptionId: String(consumption.consumption_id),
+        preclaimHoldId: null,
+        claimId: claimBody.claim_id,
+        supervisorBindingId,
+        sessionTerminationId: String(terminationResult.termination.termination_id),
+        terminalFactSha256: String(terminationResult.termination.termination_sha256),
+      });
+    };
     succeeded = true;
     return Object.freeze({
       rootDirectory,
@@ -1171,6 +1556,7 @@ export async function createLearningExternalEvidenceIngestFixture(): Promise<
       publicRunAuthorityPath,
       recordedAt: addSeconds(operationAt, 6),
       serviceInput: Object.freeze(serviceInput),
+      appendRealProjectorToolBranch,
     });
   } finally {
     if (!runtimeClosed) {

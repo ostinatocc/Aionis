@@ -144,6 +144,219 @@ export type LearningExternalAttestationRoleV1 = z.infer<
   typeof LearningExternalAttestationRoleV1Schema
 >;
 
+const LEARNING_EXTERNAL_INGESTION_LEDGER_REPLAY_TABLE_COUNT_SHAPE_V1 =
+  Object.freeze({
+    lite_learning_authorization_nonces: NonNegativeSafeIntegerSchema,
+    lite_learning_collection_principal_bindings: NonNegativeSafeIntegerSchema,
+    lite_learning_confirmatory_attempts: NonNegativeSafeIntegerSchema,
+    lite_learning_control_jobs: NonNegativeSafeIntegerSchema,
+    lite_learning_episode_events: NonNegativeSafeIntegerSchema,
+    lite_learning_evidence_artifacts: NonNegativeSafeIntegerSchema,
+    lite_learning_experiment_closures: NonNegativeSafeIntegerSchema,
+    lite_learning_experiment_revisions: NonNegativeSafeIntegerSchema,
+    lite_learning_exposure_items: NonNegativeSafeIntegerSchema,
+    lite_learning_external_holdout_members: NonNegativeSafeIntegerSchema,
+    lite_learning_external_preclaim_holds: NonNegativeSafeIntegerSchema,
+    lite_learning_external_run_claims: NonNegativeSafeIntegerSchema,
+    lite_learning_external_run_reservations: NonNegativeSafeIntegerSchema,
+    lite_learning_external_session_terminations: NonNegativeSafeIntegerSchema,
+    lite_learning_external_supervisor_bindings: NonNegativeSafeIntegerSchema,
+    lite_learning_external_ticket_consumptions: NonNegativeSafeIntegerSchema,
+    lite_learning_feedback_attributions: NonNegativeSafeIntegerSchema,
+    lite_learning_gate_artifact_memberships: NonNegativeSafeIntegerSchema,
+    lite_learning_gate_decisions: NonNegativeSafeIntegerSchema,
+    lite_learning_gate_look_reservations: NonNegativeSafeIntegerSchema,
+    lite_learning_host_use_receipts: NonNegativeSafeIntegerSchema,
+    lite_learning_namespace_leases: NonNegativeSafeIntegerSchema,
+    lite_learning_policy_versions: NonNegativeSafeIntegerSchema,
+    lite_learning_randomization_pairs: NonNegativeSafeIntegerSchema,
+    lite_runtime_authority_identity: NonNegativeSafeIntegerSchema,
+  });
+
+export const LEARNING_EXTERNAL_INGESTION_LEDGER_REPLAY_TABLE_NAMES_V1 =
+  Object.freeze(Object.keys(
+    LEARNING_EXTERNAL_INGESTION_LEDGER_REPLAY_TABLE_COUNT_SHAPE_V1,
+  ));
+
+export const LearningExternalIngestionLedgerReplayTableCountsV1Schema = z.object(
+  LEARNING_EXTERNAL_INGESTION_LEDGER_REPLAY_TABLE_COUNT_SHAPE_V1,
+).strict();
+
+const LearningExternalIngestionLedgerReplayV1Schema = z.object({
+  verifier_id: z.literal("aionis_lite_learning_ledger_replay"),
+  verifier_version: z.literal(1),
+  table_counts: LearningExternalIngestionLedgerReplayTableCountsV1Schema,
+  protected_event_count: NonNegativeSafeIntegerSchema,
+  legacy_event_count: NonNegativeSafeIntegerSchema,
+  promotion_eligible_exposure_count: NonNegativeSafeIntegerSchema,
+  control_job_count: NonNegativeSafeIntegerSchema,
+  control_job_dead_letter_count: NonNegativeSafeIntegerSchema,
+  control_job_expired_lease_count: NonNegativeSafeIntegerSchema,
+}).strict().superRefine((value, context) => {
+  const eventRowCount = value.table_counts.lite_learning_episode_events;
+  if (BigInt(value.protected_event_count) + BigInt(value.legacy_event_count)
+    !== BigInt(eventRowCount)) {
+    addBindingIssue(
+      context,
+      ["table_counts", "lite_learning_episode_events"],
+      "Episode table count must equal protected plus legacy replay event counts",
+    );
+  }
+  if (value.promotion_eligible_exposure_count > value.protected_event_count) {
+    addBindingIssue(
+      context,
+      ["promotion_eligible_exposure_count"],
+      "Promotion-eligible exposure count cannot exceed protected replay events",
+    );
+  }
+  const controlJobRowCount = value.table_counts.lite_learning_control_jobs;
+  if (value.control_job_count !== controlJobRowCount) {
+    addBindingIssue(
+      context,
+      ["table_counts", "lite_learning_control_jobs"],
+      "Control-job table count must equal the replay control-job count",
+    );
+  }
+  if (BigInt(value.control_job_dead_letter_count)
+    + BigInt(value.control_job_expired_lease_count) > BigInt(value.control_job_count)) {
+    addBindingIssue(
+      context,
+      ["control_job_dead_letter_count"],
+      "Dead-letter and expired-lease job classes cannot exceed all control jobs",
+    );
+  }
+});
+
+export const LearningExternalIngestionLedgerVerificationV1Schema = z.object({
+  contract_version: z.literal(
+    "aionis_learning_external_ingestion_ledger_verification_v1",
+  ),
+  schema_component: z.literal("write_projection"),
+  schema_version: z.literal(4),
+  database_instance_id: DigestSha256Schema,
+  checked_at: LearningExternalCanonicalUtcMillisSchema,
+  ledger_verifier_id: z.literal("aionis_lite_learning_ledger_replay"),
+  ledger_verifier_version: z.literal(1),
+  replay: LearningExternalIngestionLedgerReplayV1Schema,
+}).strict().superRefine((value, context) => {
+  if (value.ledger_verifier_id !== value.replay.verifier_id) {
+    addBindingIssue(
+      context,
+      ["ledger_verifier_id"],
+      "Ledger verification and replay verifier identifiers must agree",
+    );
+  }
+  if (value.ledger_verifier_version !== value.replay.verifier_version) {
+    addBindingIssue(
+      context,
+      ["ledger_verifier_version"],
+      "Ledger verification and replay verifier versions must agree",
+    );
+  }
+});
+
+export type LearningExternalIngestionLedgerVerificationV1 = z.infer<
+  typeof LearningExternalIngestionLedgerVerificationV1Schema
+>;
+
+export function learningExternalIngestionLedgerVerificationJson(value: unknown): string {
+  return canonicalJson(LearningExternalIngestionLedgerVerificationV1Schema, value);
+}
+
+export function learningExternalIngestionLedgerVerificationDigest(value: unknown): string {
+  return createHash("sha256")
+    .update(learningExternalIngestionLedgerVerificationJson(value))
+    .digest("hex");
+}
+
+export function parseCanonicalLearningExternalIngestionLedgerVerificationJson(
+  raw: string | Uint8Array,
+): LearningExternalIngestionLedgerVerificationV1 {
+  return parseCanonicalJson({
+    contractName: "learning_external_ingestion_ledger_verification",
+    maxBytes: MAX_CANONICAL_CONTRACT_BYTES,
+    raw,
+    schema: LearningExternalIngestionLedgerVerificationV1Schema,
+  });
+}
+
+const LearningExternalCoverageTerminalFactTimeV1Schema = z.discriminatedUnion(
+  "branch_kind",
+  [
+    z.object({
+      role: LearningExternalAttestationRoleV1Schema,
+      branch_kind: z.literal("result"),
+      ingest_operation_created_at: LearningExternalCanonicalUtcMillisSchema,
+    }).strict(),
+    z.object({
+      role: LearningExternalAttestationRoleV1Schema,
+      branch_kind: z.literal("termination_hold"),
+      terminated_at: LearningExternalCanonicalUtcMillisSchema,
+    }).strict(),
+    z.object({
+      role: LearningExternalAttestationRoleV1Schema,
+      branch_kind: z.literal("preclaim_hold"),
+      held_at: LearningExternalCanonicalUtcMillisSchema,
+    }).strict(),
+  ],
+);
+
+const LearningExternalCoverageFinalizedAtInputV1Schema = z.object({
+  revision_created_at: LearningExternalCanonicalUtcMillisSchema,
+  confirmatory_attempt_created_at: LearningExternalCanonicalUtcMillisSchema,
+  terminal_facts: z.array(LearningExternalCoverageTerminalFactTimeV1Schema).max(3),
+}).strict().superRefine((value, context) => {
+  let previousRoleIndex = -1;
+  for (const [index, fact] of value.terminal_facts.entries()) {
+    const roleIndex = LEARNING_EXTERNAL_ATTESTATION_ROLE_ORDER.indexOf(fact.role);
+    if (roleIndex <= previousRoleIndex) {
+      addBindingIssue(
+        context,
+        ["terminal_facts", index, "role"],
+        "Terminal facts must be unique and use the fixed external role order",
+      );
+    }
+    previousRoleIndex = roleIndex;
+  }
+});
+
+export function learningExternalTerminalCoverageFinalizedAtFromDatabaseFacts(
+  value: unknown,
+): string {
+  const parsed = LearningExternalCoverageFinalizedAtInputV1Schema.parse(value);
+  const times = [
+    parsed.revision_created_at,
+    parsed.confirmatory_attempt_created_at,
+    ...parsed.terminal_facts.map((fact) => {
+      if (fact.branch_kind === "result") return fact.ingest_operation_created_at;
+      if (fact.branch_kind === "termination_hold") return fact.terminated_at;
+      return fact.held_at;
+    }),
+  ];
+  return times.reduce((latest, candidate) => candidate > latest ? candidate : latest);
+}
+
+export const LEARNING_EXTERNAL_INGESTION_SEMANTIC_RULES_V1 = Object.freeze({
+  contract_version: "aionis_learning_external_ingestion_semantic_rules_v1",
+  d2_output_authority: "unsigned_draft_not_signable",
+  revision_row_sha256:
+    "typed_full_lite_learning_experiment_revisions_authority_row_sha256_v1",
+  ledger_verification_sha256:
+    "canonical_aionis_learning_external_ingestion_ledger_verification_v1_sha256",
+  coverage_finalized_at:
+    "canonical_max_of_revision_attempt_and_db_terminal_fact_times_v1",
+  coverage_finality: "d3_launcher_write_fence_capability_required",
+  termination_hold_bundle_sha256:
+    "d3_verified_tracked_bundle_capability_required",
+  preclaim_hold_bundle_sha256:
+    "d3_verified_tracked_bundle_capability_required",
+  raw_caller_hold_bundle_digest: "forbidden",
+  physical_database_lineage: "d3_launcher_database_binding_capability_required",
+  database_binding_receipt_sha256:
+    "d3_launcher_database_binding_capability_required",
+  signature_authority: "d3_private_signer_only_after_all_claims_verified",
+} as const);
+
 const LearningExternalAttestationArtifactKindV1Schema = z.enum([
   "offline_paired_rerun",
   "production_shadow_gate",
@@ -266,7 +479,7 @@ export function parseCanonicalLearningExternalRequiredSeriesStatusJson(
   });
 }
 
-const TerminalCoverageResultBranchV1Schema = z.object({
+export const TerminalCoverageResultBranchV1Schema = z.object({
   ...RequiredSeriesIdentityShape,
   branch_kind: z.literal("result"),
   artifact_status: LearningExternalResultStatusV1Schema,
@@ -286,7 +499,7 @@ const TerminalCoverageResultBranchV1Schema = z.object({
   current_series_head_count: z.literal(1),
 }).strict();
 
-const TerminalCoverageTerminationHoldBranchV1Schema = z.object({
+export const TerminalCoverageTerminationHoldBranchV1Schema = z.object({
   ...RequiredSeriesIdentityShape,
   branch_kind: z.literal("termination_hold"),
   reservation_id: BoundedIdSchema,
@@ -302,7 +515,7 @@ const TerminalCoverageTerminationHoldBranchV1Schema = z.object({
   current_series_head_count: z.literal(0),
 }).strict();
 
-const TerminalCoveragePreclaimHoldBranchV1Schema = z.object({
+export const TerminalCoveragePreclaimHoldBranchV1Schema = z.object({
   ...RequiredSeriesIdentityShape,
   branch_kind: z.literal("preclaim_hold"),
   reservation_id: BoundedIdSchema,
@@ -320,7 +533,7 @@ const TerminalCoveragePreclaimHoldBranchV1Schema = z.object({
   current_series_head_count: z.literal(0),
 }).strict();
 
-const TerminalCoverageUnstartedBranchV1Schema = z.object({
+export const TerminalCoverageUnstartedBranchV1Schema = z.object({
   ...RequiredSeriesIdentityShape,
   branch_kind: z.literal("unstarted"),
   reservation_count: z.literal(0),
@@ -1089,6 +1302,18 @@ export function learningRuntimeAuthorityRowV1(args: Readonly<{
   };
 }
 
+/**
+ * The D2 registered-revision binding is the typed full authority-row digest,
+ * including the immutable three-column primary key. It is deliberately not a
+ * generic JSON digest and cannot be redirected to another authority table.
+ */
+export function learningExternalIngestionRevisionRowDigestV1(row: unknown): string {
+  return learningRuntimeAuthorityRowV1({
+    table: "lite_learning_experiment_revisions",
+    row,
+  }).authority_row_sha256;
+}
+
 export type LearningRuntimeAuthorityTableRowsDigestV1 = Readonly<{
   row_count: number;
   rows_sha256: string;
@@ -1447,7 +1672,7 @@ export function learningRuntimeAuthorityHeadDigest(value: unknown): string {
   return assertLearningRuntimeAuthorityHeadV1(value).authority_head_sha256;
 }
 
-const RegisteredRevisionDigestsV1Schema = z.object({
+export const RegisteredRevisionDigestsV1Schema = z.object({
   revision_row_sha256: DigestSha256Schema,
   profile_rule_sha256: DigestSha256Schema,
   experiment_config_sha256: DigestSha256Schema,
@@ -1463,7 +1688,7 @@ const RegisteredRevisionDigestsV1Schema = z.object({
   external_execution_policy_sha256: DigestSha256Schema,
 }).strict();
 
-const RegisteredEvidenceSeriesV1Schema = z.object({
+export const RegisteredEvidenceSeriesV1Schema = z.object({
   offline_paired: BoundedIdSchema,
   production_shadow: BoundedIdSchema,
   tool_e2e: BoundedIdSchema,
@@ -1474,7 +1699,7 @@ const RegisteredEvidenceSeriesV1Schema = z.object({
   }
 });
 
-const ResultTupleV1Schema = z.object({
+export const ResultTupleV1Schema = z.object({
   role: LearningExternalAttestationRoleV1Schema,
   artifact_kind: LearningExternalAttestationArtifactKindV1Schema,
   evidence_series_id: BoundedIdSchema,

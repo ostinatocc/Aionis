@@ -2494,6 +2494,49 @@ ends at a signed factual aggregate; Task 8.2E alone may interpret that aggregate
 with the archived acceptance root and produce a release verdict. No D1 contract
 contains `release_verdict`.
 
+**Implementation checkpoint (2026-07-17, Task 8.2D-2):** D2 now has the real
+same-snapshot database reconstruction layer, but still no signer or enabled
+external-head command. The fixed-manifest reader requires current v4 and one
+unchanged active Runtime transaction, reads TEXT/INTEGER from raw SQLite bytes,
+rejects invalid UTF-8, REAL/unsafe integers, and same-byte non-TEXT external
+scope aliases, and streams the 22 authority tables plus the entire external
+operation closure into the D1 authority head.
+
+The projector is anchored only by tenant and confirmatory-attempt ID. It
+rederives revision/policy/series bindings, classifies only the four exact
+external branch vectors, parses canonical C-3 ingest receipts, binds full typed
+revision/artifact/operation rows and the live series head, and runs the complete
+ledger replay with a database-derived deterministic cutoff. Its output is an
+explicit unsigned DB-only draft. Hold-bundle digests, physical lineage,
+DB-binding receipt, final authority head, signature, and release verdict are not
+accepted as D2 inputs and are not emitted as D2 authority. An `unstarted` role
+is not terminal until D3 holds the writer fence. D3 must therefore supply opaque
+launcher DB-binding, coverage-final, tracked-hold-bundle, same-transaction head,
+and private-signer capabilities; its signer must not accept a plain D2 draft.
+
+The D2 replay receipt now freezes all 25 actual v4 verifier tables and rejects
+missing, extra, pseudo-table, unsafe, or internally inconsistent counts. The
+database-lineage instance ID must equal the live Runtime identity row. The only
+streaming operation visitor is fixed inside the reader; no exported caller
+callback can rotate a SQL transaction during the scan.
+
+The 22-table head commits the frozen append-only authority set plus every
+operation in the external scope; it is not a hash of every SQLite table. The
+three replay tables outside that manifest are namespace leases, control jobs,
+and Runtime authority identity. Replay validates the first two, the live
+lineage check binds the identity row, and D3's checkpointed whole-main-file
+digest must close the remaining physical-database boundary.
+
+Before D3 may enable signing, it must add three capabilities that do not exist
+in the current Runtime: (1) a launcher-issued inherited-FD database capability
+whose descriptor identity/lifetime is verified directly rather than reopened
+from `--db`; (2) a private launcher-to-attestor signer channel; and (3) formal
+tracked termination/pre-claim hold-bundle schemas, Git/archive readers, and
+opaque verified-digest capabilities. Existing path pinning, an ordinary signing
+function, or a caller-provided hold digest cannot substitute for any of them.
+D3 must invoke D2 reconstruction inside its live protected transaction and must
+never deserialize a D2 draft supplied by another process.
+
 Extend the production gate to consume the ledger-derived current-shadow export
 and the tool gate to consume a strict external `run-manifest.json`; both reports
 must bind task family, source/applicable revision, candidate/gate configuration
