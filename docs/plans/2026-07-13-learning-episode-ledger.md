@@ -2399,12 +2399,68 @@ The former blanket external-row rejection was removed only after this verifier
 was wired. Generic `insertAuthorityFact` remains closed for all evidence rows,
 and this checkpoint does not add the public `ingest` CLI.
 
-Task 8.2C-3 still owns the raw outer run-bundle archive/member-byte verifier,
-independent `run_bundle_archive_sha256` recomputation, canonical CLI/archive
-reader, Git `HEAD` tracking proof for the requested bundle commit, and real
-cross-process concurrency/crash tests. C-2 protects the claimed archive digest
-and commit inside SQLite; it does not yet promote a caller path or claim into
-filesystem/Git authority.
+**Implementation checkpoint (2026-07-17, Task 8.2C-3):** The caller-path gap is
+now closed. A deterministic length-prefixed binary envelope carries the exact
+canonical run-bundle manifest followed by raw members in manifest order. The
+verifier never extracts a path, streams the outer archive and every member in
+fixed-size chunks, independently recomputes `run_bundle_archive_sha256`, and
+fully parses only the six bounded structured roles. It rejects noncanonical
+JSON/UTF-8, path aliases, missing/extra/duplicate/reordered members, truncation,
+trailing bytes, length or digest drift, and any structured member that differs
+from the signed public-authority copy. A module-owned WeakMap proof binds the
+raw archive digest/length, canonical manifest digest, public-authority digest,
+and evidence-binding digest; a same-shaped caller object has no authority.
+
+The secure reader pins the archive and independent public-authority equality
+witness with `O_NOFOLLOW | O_NONBLOCK`, verifies owner/mode/link count and
+nanosecond file identity before and after streaming, and keeps both descriptors
+open through the database transaction. It fixes one Git `HEAD`, verifies the
+repository object format, regular `100644` tree entries, and the actual Git blob
+OID computed from the pinned bytes. `bundle_commit_id` is the latest ancestor
+commit that changed either tracked file; both blob OIDs must be identical at
+that commit and at the fixed head, so an unrelated later commit does not break
+exact replay. Worktree/git-dir/common-dir, `HEAD`, refs, and objects must also be
+owner-controlled and ACL-safe before and after resolution; alternates, grafts,
+local config includes, redirected control paths, or delegated writers fail
+closed. Linked worktrees and native SHA-1/SHA-256 repositories are covered. The
+formal input is a dedicated quiescent evidence repository with an 8,192-path,
+16-level metadata traversal ceiling. A second opaque prepared capability binds
+this Git proof to the specific archive proof by object identity.
+
+The store's fresh and replay paths now require that prepared capability and
+recheck every proof/request/public/manifest/archive/commit binding internally;
+CLI-only validation cannot be bypassed by another in-process caller. The
+production service completes archive/Git work before opening SQLite, pins an
+already-existing current Runtime database and trusted WAL/SHM boundary, then
+acquires `BEGIN IMMEDIATE` with bounded busy retry. A private issuer yields an
+opaque capability bound to the exact protected database and current transaction
+identity; the general ledger exposes no ingest method, and an architecture gate
+keeps the wrapper/factory composition service-only. Only under that writer lock
+does it create the ledger access, run the full integrity/live-lifecycle replay,
+derive first-ingest audit time, and append the artifact plus protected operation.
+It never migrates, initializes, or uses a concurrent read connection. Any
+failure after the transaction runner returns is reported as committed and
+retry-safe instead of being mistaken for a rollback.
+
+`scripts/learning-evidence.ts ingest` is the internal formal operator entry.
+It accepts only the documented identity plus absolute database, archive,
+public-authority, and output paths; the database/sidecar/input/output collision
+matrix is checked before service entry and again after commit, using the
+database realpath for all three SQLite sidecars. Receipt output uses a
+service-owned `0600` temp, complete owner/root ancestor and ACL checks, file and
+directory fsync, and a hard-link no-replace publish. A pre-existing output is
+accepted only when it is a safe single-link `0600` regular file with
+byte-identical canonical receipt content. An interrupted two-link publish is
+recovered only from the unique marker temp with the same inode, owner, mode,
+ACL, length, and bytes, followed by unlink and directory fsync. If SQLite
+committed but output publication or service cleanup failed, the command reports
+`committed=true` and requires the same operation ID; retry replays the first
+receipt and audit time byte-for-byte. Real filesystem/Git and file-backed WAL
+tests cover proof forgery, dirty/untracked inputs, symlink/hardlink/FIFO and ACL
+boundaries, writer contention, process death before/after commit and during
+receipt publication, output conflict recovery, and reopen after the evidence
+repository is removed. Aggregate attestation and release-verdict authority
+remain owned by the later Task 8.2D/E batches.
 
 Extend the production gate to consume the ledger-derived current-shadow export
 and the tool gate to consume a strict external `run-manifest.json`; both reports

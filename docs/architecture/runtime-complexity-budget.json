@@ -1,13 +1,13 @@
 {
   "schema_version": "aionis_runtime_complexity_budget_v1",
-  "baseline_commit": "790b66253d1b2e33f42844e9eafe04c0c22576bd",
-  "intent": "Structural growth guard only; the Task 8.2C-2 rebaseline adds the signed public-run authority and protected external-evidence store kernel: revision-anchored service-launch, broker-health, and terminal-drain envelopes; an acyclic full lifecycle archive; reuse of the live protected lifecycle verifier; atomic evidence plus learning_evidence_ingest_v1 operation insertion; real artifact/series-head row-ID projection; exact retry; and bidirectional reopen replay. Generic evidence insertion and the public CLI remain closed; raw outer run-bundle member-byte verification, Git HEAD tracking, cross-process concurrency, aggregate attestation, and release verdict authority remain for later batches. It adds two source modules and no route, environment field, or import cycle.",
+  "baseline_commit": "c4bac80478d42aebcc3f660a8bf2268d3b4364e5",
+  "intent": "Structural growth guard only; the Task 8.2C-3 rebaseline closes the external-evidence caller-path gap with a streaming raw archive/member-byte verifier, independent outer digest recomputation, module-owned archive proof, pinned canonical public-authority equality witness, Git HEAD/blob and stable bundle-commit proof plus bounded Git metadata/ACL trust, a trusted existing-database/sidecar boundary, proof-gated store fresh and exact-replay paths with a service-only protected transaction capability, bounded writer contention, the internal formal ingest CLI, and crash-recoverable no-replace durable receipt recovery. Generic evidence insertion remains closed; aggregate attestation and release-verdict authority remain for later batches. It adds six source modules and no route, environment field, or import cycle.",
   "thresholds": {
-    "source_files": 327,
-    "source_lines": 168454,
+    "source_files": 333,
+    "source_lines": 173255,
     "route_matrix_entries": 21,
     "env_schema_fields": 177,
     "import_cycles": 0,
-    "largest_file_lines": 7513
+    "largest_file_lines": 7505
   }
 }

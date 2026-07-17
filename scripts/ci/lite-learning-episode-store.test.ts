@@ -86,6 +86,9 @@ import {
   learningExternalPublicRunAuthorityPayloadDigest,
 } from "../../src/memory/learning-external-public-authority.ts";
 import {
+  LEARNING_EXTERNAL_EVIDENCE_ARCHIVE_V1_MAGIC,
+} from "../../src/memory/learning-external-evidence-archive.ts";
+import {
   LearningExternalAttemptChainV1Schema,
   LearningExternalEvidenceBindingV1Schema,
   LearningExternalEvidenceIngestRequestV1Schema,
@@ -105,8 +108,25 @@ import {
 } from "../../src/memory/learning-external-evidence.ts";
 import { resolveLiteLearningExternalNormalLifecycleSnapshot } from
   "../../src/store/lite-learning-external-authority.ts";
-import { LiteLearningExternalEvidenceIngestOperationReceiptV1Schema } from
+import {
+  createLiteLearningExternalEvidenceIngestionAccess,
+  LiteLearningExternalEvidenceIngestOperationReceiptV1Schema,
+} from
   "../../src/store/lite-learning-external-evidence-ingestion.ts";
+import { ingestLiteLearningExternalEvidence } from
+  "../../src/store/lite-learning-external-evidence-service.ts";
+import {
+  closePreparedLiteLearningExternalEvidenceArchive,
+  inspectPreparedLiteLearningExternalEvidenceArchive,
+  prepareLiteLearningExternalEvidenceArchive,
+  type PreparedLiteLearningExternalEvidenceArchive,
+} from "../../src/store/lite-learning-external-evidence-archive-reader.ts";
+import {
+  closeLiteRuntimeProtectedAuthorityDatabasePin,
+  pinLiteRuntimeProtectedAuthorityDatabase,
+  runLiteRuntimeProtectedAuthorityTransaction,
+  type LiteRuntimeProtectedAuthorityTransactionCapability,
+} from "../../src/store/lite-runtime-protected-authority-database.ts";
 import {
   LEARNING_COLLECTION_SOURCE_POLICY_STRICT_VALIDATION_CONTRACT,
   LearningExperimentProvisionReceiptV1Schema,
@@ -268,8 +288,43 @@ function legacyV3ActiveLeaseTriggerWithExteriorFormatting(): string {
     .replace("\nEND;", "\nend;");
 }
 
-function sha256(value: string): string {
+function sha256(value: string | Uint8Array): string {
   return createHash("sha256").update(value).digest("hex");
+}
+
+function encodeExternalEvidenceArchive(
+  runBundle: ReturnType<typeof LearningExternalEvidenceRunBundleV1Schema.parse>,
+  memberBytes: ReadonlyMap<string, Uint8Array>,
+): Buffer {
+  const manifestBytes = Buffer.from(stableStringify(runBundle), "utf8");
+  const uint16 = (value: number): Buffer => {
+    const bytes = Buffer.alloc(2);
+    bytes.writeUInt16BE(value);
+    return bytes;
+  };
+  const uint32 = (value: number): Buffer => {
+    const bytes = Buffer.alloc(4);
+    bytes.writeUInt32BE(value);
+    return bytes;
+  };
+  const uint64 = (value: number): Buffer => {
+    const bytes = Buffer.alloc(8);
+    bytes.writeBigUInt64BE(BigInt(value));
+    return bytes;
+  };
+  const parts: Buffer[] = [
+    Buffer.from(LEARNING_EXTERNAL_EVIDENCE_ARCHIVE_V1_MAGIC, "ascii"),
+    uint32(manifestBytes.byteLength),
+    manifestBytes,
+    uint32(runBundle.members.length),
+  ];
+  for (const member of runBundle.members) {
+    const bytes = memberBytes.get(member.path);
+    assert.ok(bytes, `missing archive member bytes: ${member.path}`);
+    const pathBytes = Buffer.from(member.path, "utf8");
+    parts.push(uint16(pathBytes.byteLength), pathBytes, uint64(bytes.byteLength), Buffer.from(bytes));
+  }
+  return Buffer.concat(parts);
 }
 
 function canonicalJson(value: unknown): { json: string; sha256: string } {
@@ -6076,18 +6131,19 @@ test("feedback and effect rows stay atomic while legal control blockers fail lea
 
 test("protected external lifecycle verifies frozen Ed25519 authority and survives reopen", async () => {
   const temp = tempDatabase("external-protected-lifecycle");
-  const database = createLiteRuntimeDatabase(temp.path);
+  let database = createLiteRuntimeDatabase(temp.path);
   let databaseClosed = false;
   let writeStore: ReturnType<typeof createLiteWriteStoreFromDatabase> | null = null;
   let reopenedDatabase: ReturnType<typeof createLiteRuntimeDatabase> | null = null;
   let reopenedWriteStore: ReturnType<typeof createLiteWriteStoreFromDatabase> | null = null;
+  let preparedEvidence: PreparedLiteLearningExternalEvidenceArchive | null = null;
   try {
     const keyring = storeCloseKeyring();
     writeStore = createLiteWriteStoreFromDatabase(database, {
       annProjectionEnabled: false,
       authorityReceiptKeyring: keyring,
     });
-    const ledger = createLiteLearningEpisodeLedgerAccess(database, {
+    let ledger = createLiteLearningEpisodeLedgerAccess(database, {
       authorityReceiptKeyring: keyring,
     });
     const brokerKeys = generateKeyPairSync("ed25519");
@@ -7089,7 +7145,8 @@ test("protected external lifecycle verifies frozen Ed25519 authority and survive
     assert.equal(bindingReplay.replayed, true);
 
     const evidenceScopeSetSha256 = sha256("evidence-scope-set:normal");
-    const sourceBundleSha256 = sha256("source-bundle:normal");
+    const sourceBundleBytes = Buffer.from("source-bundle:normal", "utf8");
+    const sourceBundleSha256 = sha256(sourceBundleBytes);
     const sourceCommitId = sha256("source-commit:normal");
     const evidenceBinding = LearningExternalEvidenceBindingV1Schema.parse({
       contract_version: "aionis_learning_external_evidence_binding_v1",
@@ -7567,9 +7624,9 @@ test("protected external lifecycle verifies frozen Ed25519 authority and survive
           sha256: runnerOutputManifestSha256,
         },
         {
-          path: "source-bundle.json",
+          path: "source-bundle.bin",
           role: "source_bundle",
-          byte_length: 4_096,
+          byte_length: sourceBundleBytes.byteLength,
           sha256: sourceBundleSha256,
         },
         {
@@ -7582,13 +7639,57 @@ test("protected external lifecycle verifies frozen Ed25519 authority and survive
       committed_at: runBundleCommittedAt,
     });
     const runBundleManifestSha256 = learningExternalEvidenceRunBundleDigest(runBundle);
-    const runBundleArchiveSha256 = sha256(stableStringify({
-      contract_version: "aionis_learning_external_evidence_run_bundle_archive_v1",
-      public_run_authority: publicRunAuthority,
-      run_bundle: runBundle,
-    }));
+    const canonicalBytes = (value: unknown): Buffer =>
+      Buffer.from(stableStringify(value), "utf8");
+    const archiveBytes = encodeExternalEvidenceArchive(runBundle, new Map([
+      ["attempt-chain.json", canonicalBytes(attemptChain)],
+      ["lifecycle-authority-projection.json",
+        canonicalBytes(normalLifecycle.lifecycleAuthorityProjection)],
+      ["public-run-authority.json", canonicalBytes(publicRunAuthority)],
+      ["report.json", canonicalBytes(evidenceReport)],
+      ["runner-output-manifest.json", canonicalBytes(runnerOutputManifest)],
+      ["source-bundle.bin", sourceBundleBytes],
+      ["terminal-run-manifest.json", canonicalBytes(terminalRunManifest)],
+    ]));
+    const evidenceRepositoryPath = path.join(temp.directory, "external-evidence-repository");
+    fs.mkdirSync(evidenceRepositoryPath, { mode: 0o700 });
+    const evidenceRepository = fs.realpathSync.native(evidenceRepositoryPath);
+    const archivePath = path.join(evidenceRepository, "run-bundle.aionis");
+    const publicRunAuthorityPath = path.join(
+      evidenceRepository,
+      "public-run-authority.json",
+    );
+    fs.writeFileSync(archivePath, archiveBytes, { mode: 0o600 });
+    fs.writeFileSync(publicRunAuthorityPath, canonicalBytes(publicRunAuthority), {
+      mode: 0o600,
+    });
+    const runEvidenceGit = (...args: string[]): void => {
+      const result = spawnSync("/usr/bin/git", args, {
+        cwd: evidenceRepository,
+        encoding: "utf8",
+      });
+      assert.equal(
+        result.status,
+        0,
+        `git ${args.join(" ")} failed: ${result.stderr}`,
+      );
+    };
+    runEvidenceGit("init", "-q");
+    runEvidenceGit("config", "user.name", "Aionis CI");
+    runEvidenceGit("config", "user.email", "aionis-ci@example.invalid");
+    runEvidenceGit("add", "--", "run-bundle.aionis", "public-run-authority.json");
+    runEvidenceGit("commit", "-q", "-m", "add external evidence bundle");
+    preparedEvidence = prepareLiteLearningExternalEvidenceArchive({
+      archivePath,
+      publicRunAuthorityPath,
+    });
+    const preparedTracking = inspectPreparedLiteLearningExternalEvidenceArchive(
+      preparedEvidence,
+    ).tracking;
+    const runBundleArchiveSha256 = sha256(archiveBytes);
+    assert.equal(preparedTracking.raw_archive_sha256, runBundleArchiveSha256);
     const normalEvidenceIngestOperationId = "operation-ingest-external-normal";
-    const normalEvidenceBundleCommitId = sha256("bundle-commit:normal").slice(0, 40);
+    const normalEvidenceBundleCommitId = preparedTracking.bundle_commit_id;
     const ingestRequest = LearningExternalEvidenceIngestRequestV1Schema.parse({
       contract_version: "aionis_learning_external_evidence_ingest_request_v1",
       tenant_id: "tenant-a",
@@ -7606,24 +7707,84 @@ test("protected external lifecycle verifies frozen Ed25519 authority and survive
       bundle_commit_id: normalEvidenceBundleCommitId,
     });
     const evidenceIngestRecordedAt = addSeconds(operationAt, 6);
-    const evidenceIngest = await database.transaction.run(async () =>
-      await ledger.ingestExternalEvidence({
+    assert.equal("ingestExternalEvidence" in ledger, false);
+    const unprotectedIngestion = createLiteLearningExternalEvidenceIngestionAccess({
+      database,
+    });
+    const forgedTransactionCapability = Object.freeze(Object.create(null)) as
+      LiteRuntimeProtectedAuthorityTransactionCapability;
+    await assert.rejects(
+      database.transaction.run(async () =>
+        await unprotectedIngestion.ingestExternalEvidence({
         request: ingestRequest,
-        publicRunAuthority,
-        runBundle,
+        preparedArchive: preparedEvidence!,
+        protectedTransactionCapability: forgedTransactionCapability,
         recordedAt: evidenceIngestRecordedAt,
-      }));
+      })),
+      /transaction capability is invalid/u,
+    );
+    const ordinaryDatabasePin = pinLiteRuntimeProtectedAuthorityDatabase(temp.path);
+    try {
+      await assert.rejects(
+        runLiteRuntimeProtectedAuthorityTransaction(
+          ordinaryDatabasePin,
+          database,
+          async () => undefined,
+        ),
+        /database instance opened by its pin/u,
+      );
+    } finally {
+      closeLiteRuntimeProtectedAuthorityDatabasePin(ordinaryDatabasePin);
+    }
+    assert.equal(Number((database.db.prepare(
+      "SELECT COUNT(*) AS count FROM lite_learning_evidence_artifacts",
+    ).get() as { count: number }).count), 0);
+    assert.equal(Number((database.db.prepare(
+      `SELECT COUNT(*) AS count FROM lite_runtime_write_operations
+       WHERE scope = 'learning_external_authority_v1'
+         AND operation_kind = 'learning_evidence_ingest_v1'`,
+    ).get() as { count: number }).count), 0);
+
+    closePreparedLiteLearningExternalEvidenceArchive(preparedEvidence);
+    preparedEvidence = null;
+    await writeStore.close();
+    writeStore = null;
+    await database.close();
+    databaseClosed = true;
+    const protectedServiceInput = {
+      databasePath: temp.path,
+      archivePath,
+      publicRunAuthorityPath,
+      tenantId: "tenant-a",
+      actorId: "external-evidence-ingester",
+      operationId: normalEvidenceIngestOperationId,
+      artifactKind: "production_shadow_gate" as const,
+      evidenceSeriesId: String(reservation.evidence_series_id),
+      taskFamily: String(reservation.task_family),
+      applicableExperimentId: String(reservation.applicable_experiment_id),
+      applicableExperimentRevision: Number(reservation.applicable_experiment_revision),
+    };
+    const evidenceIngest = await ingestLiteLearningExternalEvidence(
+      protectedServiceInput,
+      { now: () => new Date(evidenceIngestRecordedAt) },
+    );
     assert.equal(evidenceIngest.replayed, false);
-    const evidenceIngestReplay = await database.transaction.run(async () =>
-      await ledger.ingestExternalEvidence({
-        request: ingestRequest,
-        publicRunAuthority,
-        runBundle,
-        recordedAt: addSeconds(evidenceIngestRecordedAt, 60),
-      }));
+    const evidenceIngestReplay = await ingestLiteLearningExternalEvidence(
+      protectedServiceInput,
+      { now: () => new Date(addSeconds(evidenceIngestRecordedAt, 60)) },
+    );
     assert.equal(evidenceIngestReplay.replayed, true);
     assert.deepEqual(evidenceIngestReplay.artifact, evidenceIngest.artifact);
     assert.equal(evidenceIngestReplay.receipt.recorded_at, evidenceIngestRecordedAt);
+    database = createLiteRuntimeDatabase(temp.path);
+    databaseClosed = false;
+    writeStore = createLiteWriteStoreFromDatabase(database, {
+      annProjectionEnabled: false,
+      authorityReceiptKeyring: keyring,
+    });
+    ledger = createLiteLearningEpisodeLedgerAccess(database, {
+      authorityReceiptKeyring: keyring,
+    });
     const mismatchedProjection = {
       ...evidenceIngest.receipt.post_transaction_projection,
       reservation_id: "reservation-external-projection-tamper",
@@ -7651,6 +7812,11 @@ test("protected external lifecycle verifies frozen Ed25519 authority and survive
     assert.equal(persistedIngestOperation.commit_id, normalEvidenceBundleCommitId);
 
     const toolTicket = Buffer.alloc(32, 0x42);
+    // Preparing and ingesting the protected Git-backed archive above can take
+    // longer than one authorization window under full-suite contention.  The
+    // held run is a separate broker operation, so freeze its timestamps when
+    // that operation actually begins instead of reusing the earlier run time.
+    const heldOperationAt = new Date().toISOString();
     const heldReservation = buildReservation({
       artifactKind: "tool_e2e_gate",
       evidenceSeriesId: "tool",
@@ -7661,14 +7827,14 @@ test("protected external lifecycle verifies frozen Ed25519 authority and survive
       runnerTicket: toolTicket,
       suffix: "held",
       toolManifestSha256,
-      reservedAt: operationAt,
+      reservedAt: heldOperationAt,
     });
     const heldConsumption = buildConsumption({
       consumptionId: "consumption-external-held",
       reservation: heldReservation,
       role: toolRole,
       operationId: "operation-consume-external-held",
-      consumedAt: operationAt,
+      consumedAt: heldOperationAt,
       suffix: "held",
     });
     const heldReserveAuthorization = reservationAuthorization({
@@ -7708,7 +7874,7 @@ test("protected external lifecycle verifies frozen Ed25519 authority and survive
       zero_effects_proof_sha256: sha256("zero-effects:held"),
       journal_phase: "closing_reserved_run" as const,
       ...brokerAuthority(toolRole),
-      held_at: operationAt,
+      held_at: heldOperationAt,
     };
     const holdReceipt = signReceipt(holdBody, brokerKeys.privateKey);
     const invalidHoldReceipt = signReceipt(holdBody, launcherKeys.privateKey);
@@ -7947,6 +8113,21 @@ test("protected external lifecycle verifies frozen Ed25519 authority and survive
     writeStore = null;
     await database.close();
     databaseClosed = true;
+    const protectedServiceReplay = await ingestLiteLearningExternalEvidence({
+      databasePath: temp.path,
+      archivePath,
+      publicRunAuthorityPath,
+      tenantId: "tenant-a",
+      actorId: "external-evidence-ingester",
+      operationId: normalEvidenceIngestOperationId,
+      artifactKind: "production_shadow_gate",
+      evidenceSeriesId: String(reservation.evidence_series_id),
+      taskFamily: String(reservation.task_family),
+      applicableExperimentId: String(reservation.applicable_experiment_id),
+      applicableExperimentRevision: Number(reservation.applicable_experiment_revision),
+    });
+    assert.equal(protectedServiceReplay.replayed, true);
+    assert.equal(protectedServiceReplay.receiptJson, persistedIngestOperation.receipt_json);
     reopenedDatabase = createLiteRuntimeDatabase(temp.path);
     reopenedWriteStore = createLiteWriteStoreFromDatabase(reopenedDatabase, {
       annProjectionEnabled: false,
@@ -7957,6 +8138,9 @@ test("protected external lifecycle verifies frozen Ed25519 authority and survive
     });
     await reopenedLedger.verifyIntegrity();
   } finally {
+    if (preparedEvidence !== null) {
+      closePreparedLiteLearningExternalEvidenceArchive(preparedEvidence);
+    }
     await reopenedWriteStore?.close();
     await reopenedDatabase?.close();
     await writeStore?.close();

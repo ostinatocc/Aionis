@@ -82,8 +82,6 @@ import {
 } from "./lite-learning-external-authority.js";
 import {
   assertLiteLearningExternalEvidenceIngestionIntegrity,
-  createLiteLearningExternalEvidenceIngestionAccess,
-  type LiteLearningExternalEvidenceIngestionAccess,
 } from "./lite-learning-external-evidence-ingestion.js";
 export {
   learningActivationScheduleDigest, learningCollectionPrincipalBindingDigest,
@@ -6500,8 +6498,7 @@ const liteLearningMeasurementAuthority = createLiteLearningMeasurementAuthority(
 });
 const validateEffectMeasurement = liteLearningMeasurementAuthority.validateEffectMeasurement;
 export const buildLiteMeasurementEffectEventRow = liteLearningMeasurementAuthority.buildEffectEventRow;
-export type LiteLearningEpisodeLedgerAccess = LiteLearningExternalAuthorityAccess
-  & LiteLearningExternalEvidenceIngestionAccess & {
+export type LiteLearningEpisodeLedgerAccess = LiteLearningExternalAuthorityAccess & {
   transactionRunner(): SqliteTransactionRunner;
   resolveFeedbackSource(args: { tenantId: string; scope: string; guideTraceId: string }): Promise<ReturnType<typeof resolveLiteLearningFeedbackSource>>;
   resolveMeasurementEpisodePair(args: {
@@ -6662,14 +6659,9 @@ export function createLiteLearningEpisodeLedgerAccess(
   const { db, readDb, transaction } = database;
   assertLiteLearningEpisodeLedgerIntegrity(db, new Date().toISOString(), options);
   const externalAuthority = createLiteLearningExternalAuthorityAccess({ db, transaction });
-  const externalEvidenceIngestion = createLiteLearningExternalEvidenceIngestionAccess({
-    db,
-    transaction,
-  });
 
   return {
     ...externalAuthority,
-    ...externalEvidenceIngestion,
     transactionRunner() {
       return transaction;
     },

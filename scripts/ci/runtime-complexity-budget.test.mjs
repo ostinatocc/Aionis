@@ -9,14 +9,14 @@ import { fileURLToPath } from "node:url";
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..", "..");
 const COLLECTOR = path.join(ROOT, "scripts", "ci", "runtime-complexity-budget.mjs");
 const BUDGET = path.join(ROOT, "docs", "architecture", "runtime-complexity-budget.json");
-const EXPECTED_BASELINE_COMMIT = "790b66253d1b2e33f42844e9eafe04c0c22576bd";
+const EXPECTED_BASELINE_COMMIT = "c4bac80478d42aebcc3f660a8bf2268d3b4364e5";
 const EXPECTED_THRESHOLDS = {
-  source_files: 327,
-  source_lines: 168454,
+  source_files: 333,
+  source_lines: 173255,
   route_matrix_entries: 21,
   env_schema_fields: 177,
   import_cycles: 0,
-  largest_file_lines: 7513,
+  largest_file_lines: 7505,
 };
 
 function runCollector(args = []) {
@@ -66,12 +66,21 @@ function assertBudgetMetadata(budget) {
   assert.equal(budget.baseline_commit, EXPECTED_BASELINE_COMMIT);
   assert.equal(typeof budget.intent, "string");
   assert.equal(budget.intent, budget.intent.trim());
-  assert.match(budget.intent, /Task 8\.2C-2 rebaseline/);
-  assert.match(budget.intent, /signed public-run authority and protected external-evidence store kernel/);
-  assert.match(budget.intent, /Generic evidence insertion and the public CLI remain closed/);
-  assert.match(budget.intent, /raw outer run-bundle member-byte verification.*remain for later batches/);
-  assert.match(budget.intent, /adds two source modules and no route, environment field, or import cycle/);
+  assert.match(budget.intent, /Task 8\.2C-3 rebaseline/);
+  assert.match(budget.intent, /streaming raw archive\/member-byte verifier/);
+  assert.match(budget.intent, /Git HEAD\/blob and stable bundle-commit proof/);
+  assert.match(budget.intent, /internal formal ingest CLI/);
+  assert.match(budget.intent, /aggregate attestation and release-verdict authority remain for later batches/);
+  assert.match(budget.intent, /adds six source modules and no route, environment field, or import cycle/);
   assert.deepEqual(budget.thresholds, EXPECTED_THRESHOLDS);
+}
+
+function typescriptSources(directory) {
+  return fs.readdirSync(directory, { withFileTypes: true }).flatMap((entry) => {
+    const absolutePath = path.join(directory, entry.name);
+    if (entry.isDirectory()) return typescriptSources(absolutePath);
+    return entry.isFile() && entry.name.endsWith(".ts") ? [absolutePath] : [];
+  });
 }
 
 test("runtime complexity collector emits deterministic workspace-source metrics", () => {
@@ -118,6 +127,37 @@ test("runtime source imports remain acyclic", () => {
 
   const budget = JSON.parse(fs.readFileSync(BUDGET, "utf8"));
   assert.equal(budget.thresholds.import_cycles, 0);
+});
+
+test("external evidence mutation authority composes only in the protected service", () => {
+  const sourceRoot = path.join(ROOT, "src");
+  const service = path.join(sourceRoot, "store", "lite-learning-external-evidence-service.ts");
+  const definitions = new Set([
+    path.join(sourceRoot, "store", "lite-learning-external-evidence-ingestion.ts"),
+    path.join(sourceRoot, "store", "lite-runtime-protected-authority-database.ts"),
+  ]);
+  const authorityNames = [
+    "createLiteLearningExternalEvidenceIngestionAccess",
+    "runLiteRuntimeProtectedAuthorityTransaction",
+  ];
+  for (const absolutePath of typescriptSources(sourceRoot)) {
+    if (absolutePath === service || definitions.has(absolutePath)) continue;
+    const source = fs.readFileSync(absolutePath, "utf8");
+    for (const authorityName of authorityNames) {
+      assert.equal(
+        source.includes(authorityName),
+        false,
+        `${path.relative(ROOT, absolutePath)} must not compose ${authorityName}`,
+      );
+    }
+  }
+  const serviceSource = fs.readFileSync(service, "utf8");
+  for (const authorityName of authorityNames) assert.match(serviceSource, new RegExp(authorityName));
+  const generalLedger = fs.readFileSync(
+    path.join(sourceRoot, "store", "lite-learning-episode-ledger.ts"),
+    "utf8",
+  );
+  assert.equal(generalLedger.includes("ingestExternalEvidence"), false);
 });
 
 test("runtime complexity collector writes the same deterministic report", () => {

@@ -15,6 +15,8 @@ export type SqliteTransactionRunner = {
   read<T>(fn: () => Promise<T> | T): Promise<T>;
   afterCommit(fn: () => Promise<void>): Promise<void>;
   inTransaction(): boolean;
+  /** Opaque identity for the current AsyncLocal transaction owner. */
+  currentTransactionIdentity(): symbol | null;
 };
 
 export type SqliteTransactionPhase = "after_begin" | "before_commit" | "after_commit" | "before_rollback";
@@ -157,6 +159,11 @@ export function createSqliteTransactionRunner(args: {
     inTransaction(): boolean {
       const current = storage.getStore();
       return !!current && activeOwner === current.owner;
+    },
+
+    currentTransactionIdentity(): symbol | null {
+      const current = storage.getStore();
+      return current && activeOwner === current.owner ? current.owner : null;
     },
   };
 }

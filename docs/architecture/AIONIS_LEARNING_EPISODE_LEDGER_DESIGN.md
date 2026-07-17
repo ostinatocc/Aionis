@@ -3490,15 +3490,70 @@ real artifact/series-head row IDs, and the protected receipt for every external
 artifact, rejects an artifact without an ingest operation, an operation without
 an artifact, duplicate mappings, and any mutated live lifecycle. Only after
 that verifier was installed was the blanket reopen rejection removed. The
-generic authority-fact path remains unable to insert any evidence artifact,
-and no public CLI ingest command exists in this checkpoint.
+generic authority-fact path remains unable to insert any evidence artifact.
 
-Task 8.2C-3 retains the raw outer run-bundle archive/member-byte verifier and
-independent recomputation of `run_bundle_archive_sha256`, the CLI/archive
-reader, proof that the requested bundle commit is tracked at Git `HEAD`, and
-real cross-process contention/crash tests. C-2 records those archive/commit
-claims in the protected receipt but does not treat the caller's path, digest,
-or commit as independently verified filesystem/Git authority.
+**Implementation checkpoint (2026-07-17, Task 8.2C-3):** Runtime now promotes
+raw archive bytes and Git tracking into authority without trusting a caller
+digest or commit claim. The outer format is a deterministic binary envelope:
+fixed magic, bounded canonical manifest length and bytes, bounded member count,
+then path/length/raw bytes in manifest order. Verification streams archive and
+member hashes, buffers only the six bounded canonical structured roles, never
+extracts paths, and rejects path aliases, reordered/duplicate/missing/extra
+members, truncation/trailing bytes, and any byte/digest/public-copy mismatch.
+The result carries a module-private WeakMap proof over exact archive SHA/length,
+manifest SHA, public-authority SHA, and evidence-binding SHA.
+
+The filesystem/Git reader holds `O_NOFOLLOW | O_NONBLOCK` descriptors for both
+the archive and the independent canonical public-authority equality witness.
+It rechecks device/inode/size/owner/mode/link-count/mtime/ctime, computes the Git
+blob OID from those pinned bytes, and requires regular `100644` entries at one
+fixed `HEAD`. The stable bundle commit is the most recent ancestor that changed
+either evidence file; both blob OIDs must be unchanged from that commit through
+the fixed head. This preserves exact replay after unrelated repository commits.
+Its opaque capability is bound to the exact archive proof by object identity.
+The same boundary now verifies the worktree, Git directory/common directory,
+`HEAD`, refs, and object store as owner-controlled, non-delegated filesystem
+authority, including linked worktrees, macOS/Linux ACLs, and stable metadata
+before and after Git resolution. Alternate object stores, legacy grafts, local
+`include`/`includeIf` configuration, symlinks, and group/other-writable control
+paths fail closed. Native SHA-1 and SHA-256 repositories are tested. Formal
+evidence therefore uses a dedicated, quiescent repository; metadata traversal
+is bounded to 8,192 paths and depth 16 rather than allowing an unbounded scan.
+
+The store accepts neither caller-supplied public/run-bundle objects nor a
+same-shaped proof: fresh and replay require the prepared capability and compare
+all raw/public/manifest/evidence/request/commit bindings internally. The formal
+service validates archive/Git before SQLite, pins an existing owner-controlled
+current database plus trusted sidecars, and uses a protected existing-only
+connection. After `BEGIN IMMEDIATE`, and only then, a module-private issuer
+creates an opaque capability bound to that exact protected database, transaction
+runner, and AsyncLocal transaction identity. The general ledger exposes no
+external-ingest method; a source architecture gate permits the protected
+transaction wrapper and ingestion factory to compose only in this service.
+Under the lock it runs full integrity and live lifecycle validation, derives
+fresh audit time, and performs the artifact+operation savepoint. Bounded BEGIN
+retry converts real writer contention into fresh-versus-exact-replay semantics
+rather than a second decision path. Once the transaction runner returns, later
+serialization or resource-cleanup failure is explicitly classified as
+`committed=true` and requires retry with the same operation ID.
+
+The internal `learning-evidence.ts ingest` operator performs strict arguments
+and a database/sidecar/archive/public/output collision matrix twice around the
+transaction. Database sidecars are derived from the canonical database realpath,
+so a symlink spelling cannot hide a real `-wal`, `-shm`, or `-journal` collision.
+It publishes the persisted canonical receipt with a `0600` temp, file and
+directory fsync, and hard-link no-replace; parent ancestors and parent/temp/
+destination ACLs are fail-closed, and an existing output is valid only when
+safe and byte-identical. If SIGKILL lands after the destination link but before
+temp unlink, the next retry accepts only one marker temp with the same inode,
+UID, `0600` mode, two-link count, ACL, length, and exact bytes, then unlinks it
+and fsyncs the directory before returning exact replay. A post-commit output or
+service-finalization failure is explicitly recoverable with the same operation
+ID. Real Git/filesystem, WAL contention, hard process-death at database and
+receipt-publication phases, exact replay, output conflict, and archive-independent
+reopen tests guard these boundaries. This remains an internal operator command,
+not an SDK or package entrypoint; aggregate attestation and release-verdict
+authority are later layers.
 
 For an external kind, ingestion re-resolves the reservation, its sole ticket
 consumption, sole claim, sole supervisor binding, and sole session termination

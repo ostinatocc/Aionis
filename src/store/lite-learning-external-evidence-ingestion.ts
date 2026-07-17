@@ -6,6 +6,9 @@ import { z } from "zod";
 import { LearningExternalCanonicalUtcMillisSchema } from
   "../memory/learning-external-authority.js";
 import {
+  readLearningExternalEvidenceArchiveProofV1,
+} from "../memory/learning-external-evidence-archive.js";
+import {
   LearningExternalEvidenceIngestRequestV1Schema,
   LearningExternalEvidenceRunBundleV1Schema,
   learningExternalEvidenceArtifactId,
@@ -25,11 +28,20 @@ import {
 import type { LiteLearningAuthorityRow } from
   "./lite-learning-confirmatory-authority.js";
 import {
+  assertPreparedLiteLearningExternalEvidenceArchivePinned,
+  inspectPreparedLiteLearningExternalEvidenceArchive,
+  type PreparedLiteLearningExternalEvidenceArchive,
+} from "./lite-learning-external-evidence-archive-reader.js";
+import {
   resolveLiteLearningExternalNormalLifecycleSnapshot,
   type LiteLearningExternalNormalLifecycleSnapshot,
 } from "./lite-learning-external-authority.js";
+import type { LiteRuntimeDatabase } from "./lite-runtime-database.js";
+import {
+  assertLiteRuntimeProtectedAuthorityTransactionCapability,
+  type LiteRuntimeProtectedAuthorityTransactionCapability,
+} from "./lite-runtime-protected-authority-database.js";
 import type { SqliteDatabase } from "./sqlite.js";
-import type { SqliteTransactionRunner } from "./sqlite-transaction-runner.js";
 
 const EXTERNAL_AUTHORITY_SCOPE = "learning_external_authority_v1" as const;
 const EXTERNAL_EVIDENCE_INGEST_OPERATION_KIND = "learning_evidence_ingest_v1" as const;
@@ -230,6 +242,14 @@ type LiteRuntimeWriteOperationRow = Readonly<{
 
 export type LiteLearningExternalEvidenceIngestInput = Readonly<{
   request: LearningExternalEvidenceIngestRequestV1;
+  preparedArchive: PreparedLiteLearningExternalEvidenceArchive;
+  protectedTransactionCapability:
+    LiteRuntimeProtectedAuthorityTransactionCapability;
+  recordedAt: string;
+}>;
+
+type LiteLearningExternalEvidenceCanonicalInput = Readonly<{
+  request: LearningExternalEvidenceIngestRequestV1;
   publicRunAuthority: LearningExternalPublicRunAuthorityV1;
   runBundle: LearningExternalEvidenceRunBundleV1;
   recordedAt: string;
@@ -379,6 +399,99 @@ function assertRequestBindings(args: {
   }
 }
 
+function canonicalInputFromPreparedArchive(
+  input: LiteLearningExternalEvidenceIngestInput,
+): LiteLearningExternalEvidenceCanonicalInput {
+  assertPreparedLiteLearningExternalEvidenceArchivePinned(
+    input.preparedArchive,
+    { verifyHead: false },
+  );
+  const inspected = inspectPreparedLiteLearningExternalEvidenceArchive(
+    input.preparedArchive,
+  );
+  const archive = inspected.archiveValidation;
+  const tracking = inspected.tracking;
+  const proof = readLearningExternalEvidenceArchiveProofV1(archive.proof);
+  const request = LearningExternalEvidenceIngestRequestV1Schema.parse(input.request);
+  const publicRunAuthority = LearningExternalPublicRunAuthorityV1Schema.parse(
+    archive.publicRunAuthority,
+  );
+  const runBundle = LearningExternalEvidenceRunBundleV1Schema.parse(
+    archive.contracts.runBundle,
+  );
+  const contracts = validateLearningExternalEvidenceContractSetV1({
+    lifecycleAuthorityProjection: archive.contracts.lifecycleAuthorityProjection,
+    report: archive.contracts.report,
+    attemptChain: archive.contracts.attemptChain,
+    runnerOutputManifest: archive.contracts.runnerOutputManifest,
+    terminalRunManifest: archive.contracts.terminalRunManifest,
+    publicRunAuthoritySha256: learningExternalPublicRunAuthorityDigest(
+      publicRunAuthority,
+    ),
+    runBundle,
+  });
+  assertCanonicalEqual("archive.contracts", contracts, archive.contracts);
+
+  const publicRunAuthoritySha256 = learningExternalPublicRunAuthorityDigest(
+    publicRunAuthority,
+  );
+  const runBundleManifestSha256 = learningExternalEvidenceRunBundleDigest(runBundle);
+  const publicMember = runBundle.members.find(
+    (member) => member.role === "public_run_authority",
+  );
+  const publicRunAuthorityByteLength = Buffer.byteLength(
+    stableStringify(publicRunAuthority),
+    "utf8",
+  );
+  const bindings: ReadonlyArray<readonly [unknown, unknown, string]> = [
+    [archive.rawArchiveSha256, proof.raw_archive_sha256, "archive.raw_sha256"],
+    [archive.rawArchiveByteLength, proof.raw_archive_byte_length, "archive.raw_byte_length"],
+    [archive.runBundleManifestSha256,
+      proof.run_bundle_manifest_sha256, "archive.manifest_sha256"],
+    [publicRunAuthoritySha256,
+      proof.public_run_authority_sha256, "archive.public_run_authority_sha256"],
+    [runBundleManifestSha256,
+      proof.run_bundle_manifest_sha256, "archive.run_bundle_manifest_sha256"],
+    [runBundle.evidence_binding_sha256,
+      proof.evidence_binding_sha256, "archive.evidence_binding_sha256"],
+    [tracking.raw_archive_sha256,
+      proof.raw_archive_sha256, "tracking.raw_archive_sha256"],
+    [tracking.raw_archive_byte_length,
+      proof.raw_archive_byte_length, "tracking.raw_archive_byte_length"],
+    [tracking.public_run_authority_sha256,
+      proof.public_run_authority_sha256, "tracking.public_run_authority_sha256"],
+    [tracking.public_run_authority_byte_length,
+      publicRunAuthorityByteLength, "tracking.public_run_authority_byte_length"],
+    [tracking.run_bundle_manifest_sha256,
+      proof.run_bundle_manifest_sha256, "tracking.run_bundle_manifest_sha256"],
+    [tracking.evidence_binding_sha256,
+      proof.evidence_binding_sha256, "tracking.evidence_binding_sha256"],
+    [publicMember?.sha256,
+      proof.public_run_authority_sha256, "archive.public_member_sha256"],
+    [publicMember?.byte_length,
+      publicRunAuthorityByteLength, "archive.public_member_byte_length"],
+    [request.public_run_authority_sha256,
+      proof.public_run_authority_sha256, "request.public_run_authority_sha256"],
+    [request.run_bundle_manifest_sha256,
+      proof.run_bundle_manifest_sha256, "request.run_bundle_manifest_sha256"],
+    [request.run_bundle_archive_sha256,
+      proof.raw_archive_sha256, "request.run_bundle_archive_sha256"],
+    [request.bundle_commit_id,
+      tracking.bundle_commit_id, "request.bundle_commit_id"],
+  ];
+  for (const [actual, expected, label] of bindings) {
+    if (actual !== expected) {
+      throw new Error(`learning_external_evidence_ingest_mismatch:${label}`);
+    }
+  }
+  return {
+    request,
+    publicRunAuthority,
+    runBundle,
+    recordedAt: LearningExternalCanonicalUtcMillisSchema.parse(input.recordedAt),
+  };
+}
+
 function buildArtifactRow(args: {
   request: LearningExternalEvidenceIngestRequestV1;
   recordedAt: string;
@@ -454,7 +567,7 @@ function buildArtifactRow(args: {
 
 export function validateLiteLearningExternalEvidenceIngestion(
   db: SqliteDatabase,
-  input: LiteLearningExternalEvidenceIngestInput,
+  input: LiteLearningExternalEvidenceCanonicalInput,
 ): LiteLearningExternalEvidenceIngestionValidation {
   const request = LearningExternalEvidenceIngestRequestV1Schema.parse(input.request);
   const publicRunAuthority = LearningExternalPublicRunAuthorityV1Schema.parse(
@@ -801,24 +914,29 @@ export type LiteLearningExternalEvidenceIngestionAccess = Readonly<{
   }>>;
 }>;
 
+export type LiteLearningExternalEvidenceIngestionPhase =
+  | "after_artifact_insert"
+  | "after_operation_insert";
+
 export function createLiteLearningExternalEvidenceIngestionAccess(args: Readonly<{
-  db: SqliteDatabase;
-  transaction: SqliteTransactionRunner;
+  database: LiteRuntimeDatabase;
+  /** @internal Process-crash testing only; formal operator paths never configure this. */
+  faultInjector?: (phase: LiteLearningExternalEvidenceIngestionPhase) => void;
 }>): LiteLearningExternalEvidenceIngestionAccess {
-  const { db, transaction } = args;
+  const { database, faultInjector } = args;
+  const { db, transaction } = database;
   return {
     async ingestExternalEvidence(input) {
-      if (!transaction.inTransaction()) {
-        throw new Error("external evidence ingestion requires the shared Runtime transaction");
-      }
-      const request = LearningExternalEvidenceIngestRequestV1Schema.parse(input.request);
+      assertLiteRuntimeProtectedAuthorityTransactionCapability(
+        input.protectedTransactionCapability,
+        database,
+      );
+      const canonicalInput = canonicalInputFromPreparedArchive(input);
+      const request = canonicalInput.request;
       const existingOperation = operationRow(db, request.tenant_id, request.operation_id);
       if (existingOperation) {
         const persistedReceipt = parseIngestReceipt(existingOperation.receipt_json);
-        const publicRunAuthority = LearningExternalPublicRunAuthorityV1Schema.parse(
-          input.publicRunAuthority,
-        );
-        const runBundle = LearningExternalEvidenceRunBundleV1Schema.parse(input.runBundle);
+        const { publicRunAuthority, runBundle } = canonicalInput;
         assertCanonicalEqual("replay.request", request, persistedReceipt.request);
         assertCanonicalEqual(
           "replay.public_run_authority",
@@ -837,6 +955,14 @@ export function createLiteLearningExternalEvidenceIngestionAccess(args: Readonly
         const expectedReceipt = buildPersistedIngestReceipt(validation, persisted);
         assertCanonicalEqual("replay.receipt", persistedReceipt, expectedReceipt);
         assertOperationRowMatchesReceipt(existingOperation, persistedReceipt);
+        assertPreparedLiteLearningExternalEvidenceArchivePinned(
+          input.preparedArchive,
+          { verifyHead: false },
+        );
+        assertLiteRuntimeProtectedAuthorityTransactionCapability(
+          input.protectedTransactionCapability,
+          database,
+        );
         return {
           artifact: persisted.row,
           receipt: persistedReceipt,
@@ -844,13 +970,15 @@ export function createLiteLearningExternalEvidenceIngestionAccess(args: Readonly
         };
       }
 
-      const validation = validateLiteLearningExternalEvidenceIngestion(db, input);
+      const validation = validateLiteLearningExternalEvidenceIngestion(db, canonicalInput);
       assertNoExistingExternalArtifactPrefix(db, validation.artifact);
-      return withSavepoint(db, () => {
+      const result = withSavepoint(db, () => {
         insertArtifact(db, validation.artifact);
+        faultInjector?.("after_artifact_insert");
         const persisted = assertPersistedArtifact(db, validation);
         const receipt = buildPersistedIngestReceipt(validation, persisted);
         insertOperation(db, receipt);
+        faultInjector?.("after_operation_insert");
         const operation = operationRow(
           db,
           validation.request.tenant_id,
@@ -864,6 +992,15 @@ export function createLiteLearningExternalEvidenceIngestionAccess(args: Readonly
           replayed: false,
         };
       });
+      assertPreparedLiteLearningExternalEvidenceArchivePinned(
+        input.preparedArchive,
+        { verifyHead: false },
+      );
+      assertLiteRuntimeProtectedAuthorityTransactionCapability(
+        input.protectedTransactionCapability,
+        database,
+      );
+      return result;
     },
   };
 }
