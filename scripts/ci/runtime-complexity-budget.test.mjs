@@ -9,10 +9,10 @@ import { fileURLToPath } from "node:url";
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..", "..");
 const COLLECTOR = path.join(ROOT, "scripts", "ci", "runtime-complexity-budget.mjs");
 const BUDGET = path.join(ROOT, "docs", "architecture", "runtime-complexity-budget.json");
-const EXPECTED_BASELINE_COMMIT = "0396da14bd7dbbed7dee627eedb82d9c82ec5755";
+const EXPECTED_BASELINE_COMMIT = "06568c0c95d6dddbd7698b71e75014fb0b83cb22";
 const EXPECTED_THRESHOLDS = {
-  source_files: 336,
-  source_lines: 177702,
+  source_files: 339,
+  source_lines: 179595,
   route_matrix_entries: 21,
   env_schema_fields: 177,
   import_cycles: 0,
@@ -66,13 +66,18 @@ function assertBudgetMetadata(budget) {
   assert.equal(budget.baseline_commit, EXPECTED_BASELINE_COMMIT);
   assert.equal(typeof budget.intent, "string");
   assert.equal(budget.intent, budget.intent.trim());
-  assert.match(budget.intent, /Task 8\.2D-2 rebaseline/);
-  assert.match(budget.intent, /exact current-v4 same-transaction SQLite reconstruction/);
-  assert.match(budget.intent, /streaming 22-table plus full external-operation authority head/);
-  assert.match(budget.intent, /explicitly unsigned DB-only external-ingestion draft/);
-  assert.match(budget.intent, /coverage-final writer fencing/);
-  assert.match(budget.intent, /release-verdict interpretation remain fail-closed/);
-  assert.match(budget.intent, /adds two source modules and no route, environment field, or import cycle/);
+  assert.match(budget.intent, /Task 8\.2D-3a\.1 rebaseline/);
+  assert.match(budget.intent, /strict launcher-side WAL checkpoint and retained SQLite writer fence/);
+  assert.match(budget.intent, /pathless fixed inherited-FD read-only snapshot boundary/);
+  assert.match(
+    budget.intent,
+    /revision-key-bound canonical launcher DB-binding cryptographic relation/,
+  );
+  assert.match(budget.intent, /explicit caller-supplied deployment-head and generation inputs/);
+  assert.match(budget.intent, /historical-policy predecessor verification/);
+  assert.match(budget.intent, /explicitly signing-ineligible/);
+  assert.match(budget.intent, /external-head CLI remains fail-closed/);
+  assert.match(budget.intent, /no route, environment field, largest-file growth, or import cycle/);
   assert.deepEqual(budget.thresholds, EXPECTED_THRESHOLDS);
 }
 

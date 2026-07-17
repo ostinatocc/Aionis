@@ -2537,6 +2537,66 @@ function, or a caller-provided hold digest cannot substitute for any of them.
 D3 must invoke D2 reconstruction inside its live protected transaction and must
 never deserialize a D2 draft supplied by another process.
 
+**Implementation checkpoint (2026-07-17, Task 8.2D-3a.1):** The first D3
+physical-database foundation is implemented without enabling attestation
+signing. A new launcher-side writer-fence capability keeps the existing generic
+path pin unchanged, requires WAL mode, consumes the structured
+`wal_checkpoint(TRUNCATE)` result, rejects any nonzero busy/log/checkpointed
+value or nonempty WAL, immediately acquires `BEGIN IMMEDIATE`, and holds that
+real SQLite writer lock through descriptor handoff. It freezes and repeatedly
+rechecks the main-file device, inode, owner, group, mode, link count, byte
+length, and positional whole-file SHA-256. Its inspection is explicitly
+`signing_eligible=false` and names the still-required deployment-slot lease,
+durable checkpoint generation, launcher receipt, and private signer channel;
+the checkpoint-to-BEGIN interval is not represented as safe without that outer
+lease.
+
+The attestor-side database boundary accepts no path or descriptor argument. It
+adopts exactly fixed inherited fd 3 once, proves that descriptor is O_RDONLY,
+revalidates O_RDONLY at every snapshot assertion, proves it is owner-controlled,
+non-writable, single-link, and stable, and opens SQLite only
+through Linux `/proc/self/fd/3` or macOS `/dev/fd/3` as `mode=ro&immutable=1`.
+Node versions before 22.15 fail closed. The read-only Runtime adapter permits
+one outermost deferred snapshot transaction, rejects reuse of a caller-owned
+transaction, binds its opaque transaction capability to the exact AsyncLocal
+owner plus a secret SQLite savepoint guard, and rejects raw transaction restart.
+It revokes the capability and closes SQLite but never closes borrowed
+process-lifetime fd 3. It rehashes before, during, and after the transaction and
+deliberately reports launcher provenance, writer fence, and WAL checkpoint as
+not yet established. Replacing the former filesystem path does not redirect the
+inherited object; the path replacement itself is not claimed as detected.
+
+A strict canonical launcher-signed database-binding receipt contract now binds
+the deployment slot, revision policy digest, database identity and physical
+lineage, positive checkpoint generation, zero-checkpoint facts,
+writer-fence inspection digest, distinct frozen launcher/attestor identities,
+and a first-anchor or successor chain. The pure verifier accepts no independent
+public key and verifies only with the launcher key frozen in the supplied
+external policy. It requires an exact expected generation supplied by its
+caller. Successors reverify the predecessor under an explicitly supplied
+historical policy, allowing one deployment-slot chain to cross policy and
+launcher-key rotation; they must match the supplied expected previous envelope
+digest, keep the same slot/database/device/inode, advance generation, and not
+move time backward. The frozen result is explicitly
+`cryptographic_relation_only` and `signing_eligible=false`. This pure verifier
+does not establish that policy, slot, generation, first anchor, chain head, or
+physical facts came from live authorities; the later D3 service must source
+them from same-snapshot and deployment-slot opaque capabilities.
+
+Real tests cover child-process fd handoff, writable/directory/hardlink/wrong
+SQLite descriptors, fd reuse, former-path replacement not redirecting the
+inherited object, in-transaction raw-file mutation, raw `ROLLBACK`/`COMMIT`
+transaction restart,
+caller-transaction reuse, WAL frames, active writer and old-reader checkpoint
+contention, retained writer exclusion, post-BEGIN failure cleanup, release and
+handoff-FD reuse, fixed canonical/signature/digest golden vectors, wrong
+signer/policy/slot/identity,
+cross-policy key rotation, chain forks, generation rollback, and
+burned-generation gaps. The external-head CLI remains fail-closed. Durable
+deployment-slot state and managed-writer quiesce, tracked hold bundles, live D2
+composition, private signing, and atomic publication remain subsequent D3
+batches.
+
 Extend the production gate to consume the ledger-derived current-shadow export
 and the tool gate to consume a strict external `run-manifest.json`; both reports
 must bind task family, source/applicable revision, candidate/gate configuration

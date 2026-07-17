@@ -3654,6 +3654,49 @@ their digests only through opaque capabilities. D3 invokes the D2 projector
 under those live capabilities and the launcher-held writer fence; it never
 accepts a serialized D2 draft as input.
 
+**Implementation checkpoint (2026-07-17, Task 8.2D-3a.1):** Runtime now has
+the first independent D3 physical-database boundaries, but no new signing
+authority. The launcher-side boundary strictly checks the structured truncate
+checkpoint result and zero WAL, acquires and retains a real `BEGIN IMMEDIATE`
+writer fence, opens an O_RDONLY main-file descriptor, and freezes/revalidates
+its complete filesystem identity, length, and positional SHA-256. It remains
+explicitly ineligible for signing until a deployment-slot lease, durable
+generation, launcher binding, and private signer capability surround it.
+
+The attestor-side boundary is pathless: a one-shot process adopts only fixed
+inherited fd 3 and opens `ro+immutable` SQLite through the platform descriptor
+namespace. It accepts no caller fd/path, verifies O_RDONLY plus full identity
+and hash, revalidates read-only access at every snapshot assertion, permits one
+outermost read snapshot with an opaque transaction owner
+and a secret SQLite savepoint guard, and detects descriptor reuse, permission,
+transaction restart, or byte changes. Replacing the former filesystem path does
+not redirect this inherited object; no claim is made that the path replacement
+itself is detected. The module closes SQLite and revokes its capabilities but
+never closes borrowed process-lifetime fd 3. It requires Node 22.15 or newer and
+records that launcher provenance, checkpoint, and writer-fence authority are
+not established by the descriptor alone.
+
+The canonical v1 database-binding receipt is signed by the distinct launcher
+key frozen in the external policy. It binds slot, policy, logical and physical
+database lineage, positive checkpoint generation, exact zero-checkpoint facts,
+writer-fence digest, launcher/attestor identities, issued time, and a
+first/successor chain intended for future durable deployment-slot state. The
+pure verifier requires an exact caller-supplied expected generation and chain
+head; it revalidates a predecessor with its explicitly supplied historical
+policy so one slot chain can cross policy and launcher-key rotation. It rejects
+branch substitution, device/inode drift, generation reuse/rollback, or time
+rollback. Its frozen result is explicitly `cryptographic_relation_only` and
+`signing_eligible=false`: it cannot prove that policy, slot, generation, anchor,
+chain head, or physical facts came from live authorities. D3 composition must
+carry those only through opaque same-snapshot and durable-slot capabilities.
+
+The child-FD, WAL, reader/writer race, descriptor mutation/reuse, transaction
+lifetime, signature/key/policy, and chain rollback tests are real filesystem,
+SQLite, Ed25519, and child-process tests. The production external-head command
+is still disabled. Deployment-slot durability/quiesce, tracked hold archives,
+same-snapshot D2/head composition, private signing, and durable publication are
+not claimed by this checkpoint.
+
 For an external kind, ingestion re-resolves the reservation, its sole ticket
 consumption, sole claim, sole supervisor binding, and sole session termination
 in the same tenant. The

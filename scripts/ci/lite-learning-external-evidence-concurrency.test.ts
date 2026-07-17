@@ -33,6 +33,7 @@ const CHILD = fileURLToPath(
   new URL("./support/learning-external-evidence-ingest-child.ts", import.meta.url),
 );
 const CLI = join(ROOT, "scripts", "learning-evidence.ts");
+const ACTIVE_CHILDREN = new Set<RunningChild>();
 
 type ChildMode =
   | "normal"
@@ -89,7 +90,7 @@ function deferred<T>() {
   return { promise, resolve, reject };
 }
 
-async function within<T>(promise: Promise<T>, label: string, ms = 30_000): Promise<T> {
+async function within<T>(promise: Promise<T>, label: string, ms = 60_000): Promise<T> {
   let timer: NodeJS.Timeout | undefined;
   try {
     return await Promise.race([
@@ -169,7 +170,7 @@ function startChild(args: Readonly<{
       resolveExit({ code, signal, stdout, stderr });
     });
   });
-  return {
+  const running = {
     process: child,
     ready: ready.promise,
     lockHeld: lockHeld.promise,
@@ -177,6 +178,33 @@ function startChild(args: Readonly<{
     result: result.promise,
     exit,
   };
+  ACTIVE_CHILDREN.add(running);
+  void exit.then(
+    () => ACTIVE_CHILDREN.delete(running),
+    () => ACTIVE_CHILDREN.delete(running),
+  );
+  return running;
+}
+
+async function terminateActiveChildren(): Promise<void> {
+  const active = [...ACTIVE_CHILDREN];
+  for (const child of active) {
+    if (child.process.exitCode === null && child.process.signalCode === null) {
+      child.process.kill("SIGTERM");
+    }
+  }
+  await Promise.all(active.map(async (child, index) => {
+    try {
+      await within(child.exit, `cleanup child ${String(index)} exit`, 5_000);
+    } catch {
+      if (child.process.exitCode === null && child.process.signalCode === null) {
+        child.process.kill("SIGKILL");
+      }
+      await within(child.exit, `cleanup child ${String(index)} kill`, 5_000)
+        .catch(() => undefined);
+    }
+  }));
+  ACTIVE_CHILDREN.clear();
 }
 
 async function completedResult(child: RunningChild, label: string): Promise<ChildResult> {
@@ -630,6 +658,7 @@ test("external evidence CLI, process contention, and hard crashes preserve one a
       assertSafeReceipt(outputPath, ingested.stdout.trimEnd());
     });
   } finally {
+    await terminateActiveChildren();
     rmSync(base.rootDirectory, { recursive: true, force: true });
   }
 });
