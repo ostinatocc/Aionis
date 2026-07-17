@@ -80,6 +80,34 @@ import {
   learningExternalReceiptDigest,
 } from "../../src/memory/learning-external-authority.ts";
 import {
+  LearningExternalPublicRunAuthorityV1Schema,
+  learningExternalBrokerServiceInstanceDigest,
+  learningExternalPublicRunAuthorityDigest,
+  learningExternalPublicRunAuthorityPayloadDigest,
+} from "../../src/memory/learning-external-public-authority.ts";
+import {
+  LearningExternalAttemptChainV1Schema,
+  LearningExternalEvidenceBindingV1Schema,
+  LearningExternalEvidenceIngestRequestV1Schema,
+  LearningExternalEvidenceReportV1Schema,
+  LearningExternalEvidenceRunBundleV1Schema,
+  LearningExternalRunnerOutputManifestV1Schema,
+  LearningExternalTerminalRunManifestV1Schema,
+  learningExternalAttemptChainDigest,
+  learningExternalEvidenceBindingDigest,
+  learningExternalEvidenceLifecycleAuthorityProjectionDigest,
+  learningExternalEvidenceReportDigest,
+  learningExternalEvidenceRunBundleDigest,
+  learningExternalEvidenceThresholdContractDigest,
+  learningExternalPreterminalPayloadSetDigest,
+  learningExternalRunnerOutputManifestDigest,
+  learningExternalTerminalRunManifestDigest,
+} from "../../src/memory/learning-external-evidence.ts";
+import { resolveLiteLearningExternalNormalLifecycleSnapshot } from
+  "../../src/store/lite-learning-external-authority.ts";
+import { LiteLearningExternalEvidenceIngestOperationReceiptV1Schema } from
+  "../../src/store/lite-learning-external-evidence-ingestion.ts";
+import {
   LEARNING_COLLECTION_SOURCE_POLICY_STRICT_VALIDATION_CONTRACT,
   LearningExperimentProvisionReceiptV1Schema,
   learningExperimentApplicabilityManifestDigest,
@@ -7060,8 +7088,161 @@ test("protected external lifecycle verifies frozen Ed25519 authority and survive
       await ledger.bindExternalSupervisor({ receipt: bindingReceipt }));
     assert.equal(bindingReplay.replayed, true);
 
-    const runnerOutputManifestSha256 = sha256("runner-output-manifest:normal");
-    const attemptChainSha256 = sha256("attempt-chain:normal");
+    const evidenceScopeSetSha256 = sha256("evidence-scope-set:normal");
+    const sourceBundleSha256 = sha256("source-bundle:normal");
+    const sourceCommitId = sha256("source-commit:normal");
+    const evidenceBinding = LearningExternalEvidenceBindingV1Schema.parse({
+      contract_version: "aionis_learning_external_evidence_binding_v1",
+      artifact_kind: "production_shadow_gate",
+      tenant_id: "tenant-a",
+      database_instance_id: databaseInstanceId,
+      evidence_series_id: reservation.evidence_series_id,
+      task_family: reservation.task_family,
+      applicable_experiment_id: reservation.applicable_experiment_id,
+      applicable_experiment_revision: reservation.applicable_experiment_revision,
+      candidate_policy_id: reservation.candidate_policy_id,
+      candidate_policy_version: reservation.candidate_policy_version,
+      candidate_policy_implementation_sha256:
+        reservation.candidate_policy_implementation_sha256,
+      candidate_policy_config_sha256: reservation.candidate_policy_config_sha256,
+      gate_policy_id: reservation.gate_policy_id,
+      gate_policy_version: reservation.gate_policy_version,
+      gate_policy_config_sha256: reservation.gate_policy_config_sha256,
+      applicability_manifest_sha256: reservation.applicability_manifest_sha256,
+      evidence_scope_set_sha256: evidenceScopeSetSha256,
+      immutable_input_manifest_sha256: reservation.immutable_input_manifest_sha256,
+      retry_policy_sha256: reservation.retry_policy_sha256,
+      harness_bundle_sha256: reservation.harness_bundle_sha256,
+      source_snapshot_sha256: reservation.source_snapshot_sha256,
+      run_id: reservation.run_id,
+    });
+    const evidenceBindingSha256 = learningExternalEvidenceBindingDigest(evidenceBinding);
+    const evidenceReport = LearningExternalEvidenceReportV1Schema.parse({
+      contract_version: "aionis_learning_external_evidence_report_v1",
+      evidence_binding_sha256: evidenceBindingSha256,
+      artifact_kind: "production_shadow_gate",
+      tenant_id: evidenceBinding.tenant_id,
+      database_instance_id: evidenceBinding.database_instance_id,
+      evidence_series_id: evidenceBinding.evidence_series_id,
+      task_family: evidenceBinding.task_family,
+      applicable_experiment_id: evidenceBinding.applicable_experiment_id,
+      applicable_experiment_revision: evidenceBinding.applicable_experiment_revision,
+      candidate_policy_id: evidenceBinding.candidate_policy_id,
+      candidate_policy_version: evidenceBinding.candidate_policy_version,
+      candidate_policy_implementation_sha256:
+        evidenceBinding.candidate_policy_implementation_sha256,
+      candidate_policy_config_sha256: evidenceBinding.candidate_policy_config_sha256,
+      gate_policy_id: evidenceBinding.gate_policy_id,
+      gate_policy_version: evidenceBinding.gate_policy_version,
+      gate_policy_config_sha256: evidenceBinding.gate_policy_config_sha256,
+      applicability_manifest_sha256: evidenceBinding.applicability_manifest_sha256,
+      evidence_scope_set_sha256: evidenceBinding.evidence_scope_set_sha256,
+      immutable_input_manifest_sha256: evidenceBinding.immutable_input_manifest_sha256,
+      retry_policy_sha256: evidenceBinding.retry_policy_sha256,
+      harness_bundle_sha256: evidenceBinding.harness_bundle_sha256,
+      source_snapshot_sha256: evidenceBinding.source_snapshot_sha256,
+      run_id: evidenceBinding.run_id,
+      artifact_status: "failed",
+      source_experiment_id: "source-experiment-normal",
+      source_experiment_revision: 1,
+      source_serving_phase: "shadow",
+      source_bundle_sha256: sourceBundleSha256,
+      collected_at: operationAt,
+      reason_codes: ["no_hard_boundary_upgrade"],
+      payload: {
+        contract_version: "aionis_learning_external_production_shadow_report_payload_v1",
+        evidence_status: "failed",
+        row_count: 1_000,
+        run_count: 10,
+        task_signature_count: 30,
+        scope_count: 5,
+        projection_present_count: 1_000,
+        source_row_set_sha256: sha256("source-row-set:normal"),
+        source_run_set_sha256: sha256("source-run-set:normal"),
+        shadow_projection_set_sha256: sha256("shadow-projection-set:normal"),
+        host_adapter_conformance_sha256: sha256("host-adapter-conformance:normal"),
+        fixed_threshold_contract_sha256: learningExternalEvidenceThresholdContractDigest(),
+        online_mode: "shadow",
+        shadow_projection_source_count: 1_000,
+        agent_prompt_included_count: 0,
+        runtime_mutation_count: 0,
+        hard_boundary_upgrade_count: 1,
+        selected_candidate_policy_id: String(reservation.candidate_policy_id),
+        recorded_hard_boundary_direct_use_count: 10,
+        candidate_hard_boundary_direct_use_count: 9,
+        recorded_negative_use_count: 10,
+        candidate_negative_use_count: 9,
+        recorded_positive_capture_count: 10,
+        candidate_positive_capture_count: 11,
+        recorded_calibration_score_micros: 500_000,
+        candidate_calibration_score_micros: 600_000,
+        changed_action_count: 1,
+      },
+    });
+    const evidenceReportSha256 = learningExternalEvidenceReportDigest(evidenceReport);
+    const attemptChain = LearningExternalAttemptChainV1Schema.parse({
+      contract_version: "aionis_learning_external_attempt_chain_v1",
+      evidence_binding_sha256: evidenceBindingSha256,
+      reservation_id: reservation.reservation_id,
+      ticket_consumption_id: consumption.consumption_id,
+      claim_id: claimBody.claim_id,
+      supervisor_binding_id: bindingBody.binding_id,
+      credential_session_max_calls: productionRole.credential_session_max_calls,
+      attempts: [],
+      sealed_at: operationAt,
+    });
+    const attemptChainSha256 = learningExternalAttemptChainDigest(attemptChain);
+    const preterminalPayloadSetSha256 = learningExternalPreterminalPayloadSetDigest({
+      contract_version: "aionis_learning_external_preterminal_payload_set_v1",
+      evidence_binding_sha256: evidenceBindingSha256,
+      report_sha256: evidenceReportSha256,
+      attempt_chain_sha256: attemptChainSha256,
+      source_bundle_sha256: sourceBundleSha256,
+      harness_bundle_sha256: reservation.harness_bundle_sha256,
+    });
+    const runnerOutputManifest = LearningExternalRunnerOutputManifestV1Schema.parse({
+      contract_version: "aionis_learning_external_runner_output_manifest_v1",
+      evidence_binding_sha256: evidenceBindingSha256,
+      artifact_kind: "production_shadow_gate",
+      artifact_status: "failed",
+      reservation_id: reservation.reservation_id,
+      ticket_consumption_id: consumption.consumption_id,
+      claim_id: claimBody.claim_id,
+      supervisor_binding_id: bindingBody.binding_id,
+      report_sha256: evidenceReportSha256,
+      attempt_chain_sha256: attemptChainSha256,
+      source_bundle_sha256: sourceBundleSha256,
+      harness_bundle_sha256: reservation.harness_bundle_sha256,
+      preterminal_payload_set_sha256: preterminalPayloadSetSha256,
+      source_ref: "evals/learning-episode-gate-v1/runs/production-normal",
+      source_commit_id: sourceCommitId,
+      collected_at: operationAt,
+    });
+    const runnerOutputManifestSha256 = learningExternalRunnerOutputManifestDigest(
+      runnerOutputManifest,
+    );
+    const terminalRunManifest = LearningExternalTerminalRunManifestV1Schema.parse({
+      contract_version: "aionis_learning_external_terminal_run_manifest_v1",
+      evidence_binding_sha256: evidenceBindingSha256,
+      artifact_kind: "production_shadow_gate",
+      artifact_status: "failed",
+      reservation_id: reservation.reservation_id,
+      ticket_consumption_id: consumption.consumption_id,
+      claim_id: claimBody.claim_id,
+      supervisor_binding_id: bindingBody.binding_id,
+      report_sha256: evidenceReportSha256,
+      attempt_chain_sha256: attemptChainSha256,
+      runner_output_manifest_sha256: runnerOutputManifestSha256,
+      source_bundle_sha256: sourceBundleSha256,
+      harness_bundle_sha256: reservation.harness_bundle_sha256,
+      preterminal_payload_set_sha256: preterminalPayloadSetSha256,
+      source_ref: runnerOutputManifest.source_ref,
+      source_commit_id: sourceCommitId,
+      finalized_at: operationAt,
+    });
+    const terminalRunManifestSha256 = learningExternalTerminalRunManifestDigest(
+      terminalRunManifest,
+    );
     const quiesceBody = {
       contract_version: "aionis_learning_external_clean_quiesce_receipt_v1" as const,
       tenant_id: "tenant-a",
@@ -7095,7 +7276,7 @@ test("protected external lifecycle verifies frozen Ed25519 authority and survive
       broker_quiesce_receipt_sha256: learningExternalReceiptDigest(quiesceReceipt),
       broker_quiesce_receipt: quiesceReceipt,
       runner_output_manifest_sha256: runnerOutputManifestSha256,
-      terminal_run_manifest_sha256: sha256("terminal-run-manifest:normal"),
+      terminal_run_manifest_sha256: terminalRunManifestSha256,
       attempt_chain_sha256: attemptChainSha256,
       ...brokerAuthority(productionRole),
       terminated_at: operationAt,
@@ -7150,6 +7331,324 @@ test("protected external lifecycle verifies frozen Ed25519 authority and survive
     const terminationReplay = await database.transaction.run(async () =>
       await ledger.terminateExternalSession({ receipt: terminationReceipt }));
     assert.equal(terminationReplay.replayed, true);
+
+    const normalLifecycle = resolveLiteLearningExternalNormalLifecycleSnapshot(database.db, {
+      tenantId: "tenant-a",
+      reservationId: String(reservation.reservation_id),
+      evidenceBindingSha256,
+    });
+    const brokerUid = 502;
+    const brokerGid = 20;
+    const brokerPid = 5252;
+    const brokerServiceInstanceIdentity = {
+      contract_version: "aionis_learning_external_broker_service_instance_identity_v1" as const,
+      tenant_id: "tenant-a",
+      database_instance_id: databaseInstanceId,
+      broker_service_identity: LEARNING_EXTERNAL_BROKER_SERVICE_IDENTITY,
+      broker_uid: brokerUid,
+      broker_gid: brokerGid,
+      broker_pid: brokerPid,
+      broker_process_start_identity_sha256: sha256("broker-process-start:normal"),
+      broker_cgroup_identity_sha256: sha256("broker-cgroup:normal"),
+      broker_service_job_identity_sha256: sha256("broker-service-job:normal"),
+      broker_socket_device_identity: "device-16777234",
+      broker_socket_inode: 104_729,
+    };
+    const brokerServiceInstanceSha256 = learningExternalBrokerServiceInstanceDigest(
+      brokerServiceInstanceIdentity,
+    );
+    const brokerServiceLaunchBody = {
+      contract_version: "aionis_learning_external_broker_service_launch_receipt_v1" as const,
+      tenant_id: "tenant-a",
+      database_instance_id: databaseInstanceId,
+      broker_service_identity: LEARNING_EXTERNAL_BROKER_SERVICE_IDENTITY,
+      broker_service_instance_sha256: brokerServiceInstanceSha256,
+      launched_broker_policy_sha256: productionRole.broker_policy_sha256,
+      launched_broker_binary_sha256: productionRole.broker_binary_sha256,
+      launched_broker_public_key_sha256: productionRole.broker_public_key_sha256,
+      launched_broker_key_id: productionRole.broker_key_id,
+      broker_uid: brokerUid,
+      broker_gid: brokerGid,
+      broker_pid: brokerPid,
+      broker_process_start_identity_sha256:
+        brokerServiceInstanceIdentity.broker_process_start_identity_sha256,
+      broker_cgroup_identity_sha256:
+        brokerServiceInstanceIdentity.broker_cgroup_identity_sha256,
+      broker_service_job_identity_sha256:
+        brokerServiceInstanceIdentity.broker_service_job_identity_sha256,
+      broker_socket_device_identity:
+        brokerServiceInstanceIdentity.broker_socket_device_identity,
+      broker_socket_inode: brokerServiceInstanceIdentity.broker_socket_inode,
+      broker_socket_identity_sha256: sha256("broker-socket:normal"),
+      broker_socket_mode: 0o600 as const,
+      broker_socket_owner_uid: brokerUid,
+      broker_socket_owner_gid: brokerGid,
+      private_state_root_acl_sha256: sha256("broker-private-state-acl:normal"),
+      terminal_fact_spool_acl_sha256: sha256("broker-terminal-spool-acl:normal"),
+      launcher_channel_fingerprint_sha256: sha256("broker-launcher-channel:normal"),
+      service_launcher_policy_sha256: productionRole.service_launcher_policy_sha256,
+      service_launcher_binary_sha256: productionRole.service_launcher_binary_sha256,
+      service_launcher_public_key_sha256: launcherPublicKeySha256,
+      service_launcher_key_id: productionRole.service_launcher_key_id,
+      launched_at: operationAt,
+    };
+    const brokerServiceLaunchReceipt = signReceipt(
+      brokerServiceLaunchBody,
+      launcherKeys.privateKey,
+    );
+    const brokerHealthBody = {
+      contract_version: "aionis_learning_external_broker_health_receipt_v1" as const,
+      tenant_id: "tenant-a",
+      database_instance_id: databaseInstanceId,
+      health_id: "broker-health-external-normal",
+      broker_service_instance_sha256: brokerServiceInstanceSha256,
+      challenge_sha256: sha256("broker-health-challenge:normal"),
+      service_launch_receipt_sha256: learningExternalReceiptDigest(
+        brokerServiceLaunchReceipt,
+      ),
+      service_launch_receipt: brokerServiceLaunchReceipt,
+      peer_credentials_enforced: true as const,
+      stdin_only_runner_ticket: true as const,
+      runner_ticket_prefetched_before_spawn: true as const,
+      runner_ticket_path_input_allowed: false as const,
+      caller_selected_output_path_authority: false as const,
+      private_state_root_owner_only: true as const,
+      terminal_fact_spool_owner_only: true as const,
+      unacknowledged_startup_recovery_count: 0 as const,
+      ...brokerAuthority(productionRole),
+      checked_at: operationAt,
+    };
+    const brokerHealthReceipt = signReceipt(brokerHealthBody, brokerKeys.privateKey);
+    const publicAuthorityAssembledAt = addSeconds(operationAt, 1);
+    const terminalFactAcknowledgedAt = addSeconds(operationAt, 2);
+    const terminalFactExportedAt = addSeconds(operationAt, 3);
+    const terminalFactDrainedAt = addSeconds(operationAt, 4);
+    const publicAuthorityPayload = {
+      contract_version: "aionis_learning_external_public_run_authority_payload_v1" as const,
+      tenant_id: "tenant-a",
+      database_instance_id: databaseInstanceId,
+      evidence_binding_sha256: evidenceBindingSha256,
+      artifact_kind: "production_shadow_gate" as const,
+      broker_health_receipt: brokerHealthReceipt,
+      reservation: {
+        row: normalLifecycle.reservation,
+        holdout_members: normalLifecycle.holdoutMembers,
+        operation: normalLifecycle.operations.reservation,
+      },
+      ticket_consumption: {
+        row: normalLifecycle.consumption,
+        operation: normalLifecycle.operations.consumption,
+      },
+      claim: {
+        row: normalLifecycle.claim,
+        operation: normalLifecycle.operations.claim,
+      },
+      supervisor_binding: {
+        row: normalLifecycle.binding,
+        operation: normalLifecycle.operations.binding,
+      },
+      session_termination: {
+        row: normalLifecycle.termination,
+        operation: normalLifecycle.operations.termination,
+      },
+      report: evidenceReport,
+      attempt_chain: attemptChain,
+      runner_output_manifest: runnerOutputManifest,
+      terminal_run_manifest: terminalRunManifest,
+      lifecycle_authority_projection: normalLifecycle.lifecycleAuthorityProjection,
+      assembled_at: publicAuthorityAssembledAt,
+    };
+    const publicAuthorityPayloadSha256 = learningExternalPublicRunAuthorityPayloadDigest(
+      publicAuthorityPayload,
+    );
+    const terminalFactDrainBody = {
+      contract_version: "aionis_learning_external_terminal_fact_drain_receipt_v1" as const,
+      tenant_id: "tenant-a",
+      database_instance_id: databaseInstanceId,
+      drain_id: "terminal-fact-drain-external-normal",
+      broker_service_instance_sha256: brokerServiceInstanceSha256,
+      broker_health_receipt_sha256: learningExternalReceiptDigest(brokerHealthReceipt),
+      entries: [{
+        fact_kind: "session_termination" as const,
+        tenant_id: "tenant-a",
+        reservation_id: String(normalLifecycle.reservation.reservation_id),
+        reservation_sha256: String(normalLifecycle.reservation.reservation_sha256),
+        export_subdirectory: String(normalLifecycle.reservation.reservation_sha256),
+        ticket_consumption_id: String(normalLifecycle.consumption.consumption_id),
+        broker_process_nonce_sha256: String(
+          normalLifecycle.consumption.broker_process_nonce_sha256,
+        ),
+        fact_id: String(normalLifecycle.termination.termination_id),
+        fact_sha256: String(normalLifecycle.termination.termination_sha256),
+        signed_receipt_sha256: String(
+          normalLifecycle.termination.broker_terminal_receipt_sha256,
+        ),
+        operation_id: normalLifecycle.operations.termination.operation_id,
+        operation_request_sha256: normalLifecycle.operations.termination.request_sha256,
+        authority_record_sha256:
+          normalLifecycle.operations.termination.authority_record_sha256,
+        public_run_authority_payload_sha256: publicAuthorityPayloadSha256,
+        acknowledged_at: terminalFactAcknowledgedAt,
+        exported_at: terminalFactExportedAt,
+      }],
+      ...brokerAuthority(productionRole),
+      drained_at: terminalFactDrainedAt,
+    };
+    const terminalFactDrainReceipt = signReceipt(
+      terminalFactDrainBody,
+      brokerKeys.privateKey,
+    );
+    const publicRunAuthority = LearningExternalPublicRunAuthorityV1Schema.parse({
+      contract_version: "aionis_learning_external_public_run_authority_v1",
+      payload: publicAuthorityPayload,
+      terminal_fact_drain_receipt: terminalFactDrainReceipt,
+    });
+    const publicRunAuthoritySha256 = learningExternalPublicRunAuthorityDigest(
+      publicRunAuthority,
+    );
+    const lifecycleAuthorityProjectionSha256 =
+      learningExternalEvidenceLifecycleAuthorityProjectionDigest(
+        normalLifecycle.lifecycleAuthorityProjection,
+      );
+    const canonicalByteLength = (value: unknown): number =>
+      Buffer.byteLength(stableStringify(value), "utf8");
+    const runBundleCommittedAt = addSeconds(operationAt, 5);
+    const runBundle = LearningExternalEvidenceRunBundleV1Schema.parse({
+      contract_version: "aionis_learning_external_evidence_run_bundle_v1",
+      evidence_binding_sha256: evidenceBindingSha256,
+      artifact_kind: "production_shadow_gate",
+      artifact_status: "failed",
+      lifecycle_authority_projection_sha256: lifecycleAuthorityProjectionSha256,
+      public_run_authority_sha256: publicRunAuthoritySha256,
+      reservation_id: normalLifecycle.reservation.reservation_id,
+      ticket_consumption_id: normalLifecycle.consumption.consumption_id,
+      claim_id: normalLifecycle.claim.claim_id,
+      supervisor_binding_id: normalLifecycle.binding.binding_id,
+      session_termination_id: normalLifecycle.termination.termination_id,
+      session_termination_sha256: normalLifecycle.termination.termination_sha256,
+      report_sha256: evidenceReportSha256,
+      attempt_chain_sha256: attemptChainSha256,
+      runner_output_manifest_sha256: runnerOutputManifestSha256,
+      terminal_run_manifest_sha256: terminalRunManifestSha256,
+      source_bundle_sha256: sourceBundleSha256,
+      harness_bundle_sha256: reservation.harness_bundle_sha256,
+      preterminal_payload_set_sha256: preterminalPayloadSetSha256,
+      source_ref: runnerOutputManifest.source_ref,
+      source_commit_id: sourceCommitId,
+      members: [
+        {
+          path: "attempt-chain.json",
+          role: "attempt_chain",
+          byte_length: canonicalByteLength(attemptChain),
+          sha256: attemptChainSha256,
+        },
+        {
+          path: "lifecycle-authority-projection.json",
+          role: "lifecycle_authority_projection",
+          byte_length: canonicalByteLength(normalLifecycle.lifecycleAuthorityProjection),
+          sha256: lifecycleAuthorityProjectionSha256,
+        },
+        {
+          path: "public-run-authority.json",
+          role: "public_run_authority",
+          byte_length: canonicalByteLength(publicRunAuthority),
+          sha256: publicRunAuthoritySha256,
+        },
+        {
+          path: "report.json",
+          role: "report",
+          byte_length: canonicalByteLength(evidenceReport),
+          sha256: evidenceReportSha256,
+        },
+        {
+          path: "runner-output-manifest.json",
+          role: "runner_output_manifest",
+          byte_length: canonicalByteLength(runnerOutputManifest),
+          sha256: runnerOutputManifestSha256,
+        },
+        {
+          path: "source-bundle.json",
+          role: "source_bundle",
+          byte_length: 4_096,
+          sha256: sourceBundleSha256,
+        },
+        {
+          path: "terminal-run-manifest.json",
+          role: "terminal_run_manifest",
+          byte_length: canonicalByteLength(terminalRunManifest),
+          sha256: terminalRunManifestSha256,
+        },
+      ],
+      committed_at: runBundleCommittedAt,
+    });
+    const runBundleManifestSha256 = learningExternalEvidenceRunBundleDigest(runBundle);
+    const runBundleArchiveSha256 = sha256(stableStringify({
+      contract_version: "aionis_learning_external_evidence_run_bundle_archive_v1",
+      public_run_authority: publicRunAuthority,
+      run_bundle: runBundle,
+    }));
+    const normalEvidenceIngestOperationId = "operation-ingest-external-normal";
+    const normalEvidenceBundleCommitId = sha256("bundle-commit:normal").slice(0, 40);
+    const ingestRequest = LearningExternalEvidenceIngestRequestV1Schema.parse({
+      contract_version: "aionis_learning_external_evidence_ingest_request_v1",
+      tenant_id: "tenant-a",
+      actor_id: "external-evidence-ingester",
+      operation_id: normalEvidenceIngestOperationId,
+      artifact_kind: "production_shadow_gate",
+      evidence_series_id: reservation.evidence_series_id,
+      task_family: reservation.task_family,
+      applicable_experiment_id: reservation.applicable_experiment_id,
+      applicable_experiment_revision: reservation.applicable_experiment_revision,
+      lifecycle_authority_projection_sha256: lifecycleAuthorityProjectionSha256,
+      public_run_authority_sha256: publicRunAuthoritySha256,
+      run_bundle_manifest_sha256: runBundleManifestSha256,
+      run_bundle_archive_sha256: runBundleArchiveSha256,
+      bundle_commit_id: normalEvidenceBundleCommitId,
+    });
+    const evidenceIngestRecordedAt = addSeconds(operationAt, 6);
+    const evidenceIngest = await database.transaction.run(async () =>
+      await ledger.ingestExternalEvidence({
+        request: ingestRequest,
+        publicRunAuthority,
+        runBundle,
+        recordedAt: evidenceIngestRecordedAt,
+      }));
+    assert.equal(evidenceIngest.replayed, false);
+    const evidenceIngestReplay = await database.transaction.run(async () =>
+      await ledger.ingestExternalEvidence({
+        request: ingestRequest,
+        publicRunAuthority,
+        runBundle,
+        recordedAt: addSeconds(evidenceIngestRecordedAt, 60),
+      }));
+    assert.equal(evidenceIngestReplay.replayed, true);
+    assert.deepEqual(evidenceIngestReplay.artifact, evidenceIngest.artifact);
+    assert.equal(evidenceIngestReplay.receipt.recorded_at, evidenceIngestRecordedAt);
+    const mismatchedProjection = {
+      ...evidenceIngest.receipt.post_transaction_projection,
+      reservation_id: "reservation-external-projection-tamper",
+    };
+    assert.throws(
+      () => LiteLearningExternalEvidenceIngestOperationReceiptV1Schema.parse({
+        ...evidenceIngest.receipt,
+        post_transaction_projection: mismatchedProjection,
+        post_transaction_projection_sha256: sha256(stableStringify(mismatchedProjection)),
+      }),
+      /projection\.reservation_id/u,
+    );
+    assert.equal(Number((database.db.prepare(
+      "SELECT COUNT(*) AS count FROM lite_learning_evidence_artifacts",
+    ).get() as { count: number }).count), 1);
+    const persistedIngestOperation = database.db.prepare(
+      `SELECT commit_id, receipt_json FROM lite_runtime_write_operations
+       WHERE tenant_id = ? AND scope = 'learning_external_authority_v1'
+         AND operation_kind = 'learning_evidence_ingest_v1' AND operation_id = ?`,
+    ).get("tenant-a", normalEvidenceIngestOperationId) as {
+      commit_id: string | null;
+      receipt_json: string;
+    } | undefined;
+    assert.ok(persistedIngestOperation);
+    assert.equal(persistedIngestOperation.commit_id, normalEvidenceBundleCommitId);
 
     const toolTicket = Buffer.alloc(32, 0x42);
     const heldReservation = buildReservation({
@@ -7342,6 +7841,13 @@ test("protected external lifecycle verifies frozen Ed25519 authority and survive
         triggeringTerminalFactSha256: productionTerminationSha256,
       }));
     assert.equal(closeReservedResult.replayed, false);
+    assert.equal(Number((database.db.prepare(
+      `SELECT COUNT(*) AS count FROM lite_learning_evidence_artifacts
+       WHERE tenant_id = ? AND external_run_reservation_id = ?`,
+    ).get("tenant-a", heldReservation.reservation_id) as { count: number }).count), 0);
+    assert.equal(Number((database.db.prepare(
+      "SELECT COUNT(*) AS count FROM lite_learning_evidence_artifacts",
+    ).get() as { count: number }).count), 1);
     await assert.rejects(
       database.transaction.run(async () => await ledger.consumeExternalTicket({
         consumption: heldConsumption,
@@ -7360,6 +7866,7 @@ test("protected external lifecycle verifies frozen Ed25519 authority and survive
     assert.deepEqual(
       Object.fromEntries(operationCounts.map((row) => [row.operation_kind, Number(row.count)])),
       {
+        learning_evidence_ingest_v1: 1,
         learning_external_preclaim_hold_v1: 1,
         learning_external_run_claim_v1: 1,
         learning_external_run_reservation_v1: 2,
@@ -7377,6 +7884,41 @@ test("protected external lifecycle verifies frozen Ed25519 authority and survive
       `DELETE FROM lite_runtime_write_operations
        WHERE scope = 'learning_external_authority_v1'`,
     ).run(), /learning_external_authority_operation_delete_forbidden/);
+    await ledger.verifyIntegrity();
+
+    const tamperedIngestReceipt = JSON.parse(persistedIngestOperation.receipt_json) as {
+      public_run_authority: {
+        terminal_fact_drain_receipt: { signature_base64: string };
+      };
+    };
+    tamperedIngestReceipt.public_run_authority.terminal_fact_drain_receipt.signature_base64 =
+      brokerServiceLaunchReceipt.signature_base64;
+    mutateAppendOnlyTable(database.db, "lite_runtime_write_operations", () => {
+      database.db.prepare(
+        `UPDATE lite_runtime_write_operations SET receipt_json = ?
+         WHERE tenant_id = ? AND scope = 'learning_external_authority_v1'
+           AND operation_kind = 'learning_evidence_ingest_v1' AND operation_id = ?`,
+      ).run(
+        stableStringify(tamperedIngestReceipt),
+        "tenant-a",
+        normalEvidenceIngestOperationId,
+      );
+    });
+    await assert.rejects(
+      ledger.verifyIntegrity(),
+      /external|evidence|ingest|authority|signature|digest/,
+    );
+    mutateAppendOnlyTable(database.db, "lite_runtime_write_operations", () => {
+      database.db.prepare(
+        `UPDATE lite_runtime_write_operations SET receipt_json = ?
+         WHERE tenant_id = ? AND scope = 'learning_external_authority_v1'
+           AND operation_kind = 'learning_evidence_ingest_v1' AND operation_id = ?`,
+      ).run(
+        persistedIngestOperation.receipt_json,
+        "tenant-a",
+        normalEvidenceIngestOperationId,
+      );
+    });
     await ledger.verifyIntegrity();
 
     const storedClaim = database.db.prepare(

@@ -3433,6 +3433,73 @@ prompts and provider traces. The raw bundle may remain in the eval archive, but
 its digest and immutable source reference are mandatory. Replaying a gate uses
 these persisted reports plus the cutoff-bounded online cohort.
 
+The first implemented pre-ingestion contract checkpoint is
+`aionis_learning_external_*_v1` in
+`src/memory/learning-external-evidence.ts`. It freezes an acyclic content graph:
+strict kind-specific report plus source/attempt facts, pre-terminal payload-set,
+runner-output manifest, terminal run-manifest, signed normal termination,
+live-DB lifecycle comparison projection, and finally the run-bundle manifest.
+Archive bytes, archive digest, and Git commit are outside that graph and are
+bound only by the later ingest request/operation receipt. Artifact identity
+therefore excludes materialization time, archive location/digest, Git commit,
+actor, and operation metadata. Offline reports retain per-arm missingness plus
+the both-arm and cross-endpoint overlap contingencies for the fixed 96-case
+set; pair coverage is therefore exact, while risk derives candidate-missing-
+as-loss versus recorded-missing-as-no-loss internally. Missing cases cannot be
+selectively removed. Production/tool runs whose only defect is incomplete
+authority remain canonical `inconclusive` results rather than becoming
+unparseable; any observed safety or outcome failure takes precedence as
+`failed`. Every report's status/reason codes are derived rather than
+caller-selected.
+
+**Implementation checkpoint (2026-07-17, Task 8.2C-2):** Runtime now has the
+self-contained public-authority and protected store boundary that C-1
+deliberately left absent. `learning-external-public-authority.ts` defines a
+strict signed service-launch receipt, broker-health receipt, and terminal-fact
+drain receipt. The acyclic public payload contains the complete reservation
+and holdout rows, ticket consumption, claim, supervisor binding, normal
+termination, their five protected operation receipts, and the five C-1 report/
+attempt/runner/terminal/lifecycle bodies. The drain signs a payload digest and
+the outer public-run authority then contains payload plus drain, so neither
+signature nor archive identity depends on a hash fixed point. Verification is
+anchored to the revision-frozen broker and service-launcher keys, policies,
+binaries, key IDs, and database lineage; digest-only launch, health, or drain
+claims are not authority.
+
+The store exports one normal-lifecycle snapshot resolver that reuses the
+existing reservation/consumption/claim/binding/termination signature and
+operation validators rather than duplicating trust logic. The dedicated
+external-evidence validator compares every public row, declared lifecycle ID,
+operation receipt, holdout member, and lifecycle projection exactly against
+that live snapshot, then runs the C-1 cross-contract validator. Inside the
+shared Runtime transaction, the protected writer appends the content-addressed
+evidence row, reads its real `row_id` and unique series-head row, builds the
+bounded post-transaction projection, and appends the
+`learning_evidence_ingest_v1` protected operation receipt in one savepoint.
+The operation stores the request's bundle commit in `commit_id` and persists
+the bounded complete public authority plus run-bundle manifest. An exact
+operation replay returns the first persisted row/receipt byte-for-byte and
+retains its original ingestion time; changed request, actor, public authority,
+run bundle, artifact identity, report digest, series, or lifecycle prefix is a
+conflict.
+
+The identical read-only validator is also wired into Runtime open, explicit
+integrity verification, backup, and restore through a bidirectional
+operation-to-artifact verifier. It reconstructs signatures, content identity,
+real artifact/series-head row IDs, and the protected receipt for every external
+artifact, rejects an artifact without an ingest operation, an operation without
+an artifact, duplicate mappings, and any mutated live lifecycle. Only after
+that verifier was installed was the blanket reopen rejection removed. The
+generic authority-fact path remains unable to insert any evidence artifact,
+and no public CLI ingest command exists in this checkpoint.
+
+Task 8.2C-3 retains the raw outer run-bundle archive/member-byte verifier and
+independent recomputation of `run_bundle_archive_sha256`, the CLI/archive
+reader, proof that the requested bundle commit is tracked at Git `HEAD`, and
+real cross-process contention/crash tests. C-2 records those archive/commit
+claims in the protected receipt but does not treat the caller's path, digest,
+or commit as independently verified filesystem/Git authority.
+
 For an external kind, ingestion re-resolves the reservation, its sole ticket
 consumption, sole claim, sole supervisor binding, and sole session termination
 in the same tenant. The

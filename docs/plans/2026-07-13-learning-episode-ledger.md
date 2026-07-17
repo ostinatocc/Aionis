@@ -2349,6 +2349,63 @@ advance only as the atomic checkpoint-1/2/3 reservation chain, with exact
 `look_index + 1` and proposal binding; generic ingestion cannot add or repair
 one. Gate replay never depends on a mutable path alone.
 
+**Implementation checkpoint (2026-07-17, Task 8.2C-1):** The first external-
+result batch intentionally stops before CLI or database mutation. It adds the
+strict pure contracts in `src/memory/learning-external-evidence.ts` for the
+three formal report kinds, exact offline missingness contingencies with
+deterministic fixed-risk and pair-coverage derivation, production-shadow and
+exact-40 tool facts, attempt chain, runner-output manifest, terminal manifest,
+live-DB lifecycle-authority comparison projection, run-bundle manifest,
+content identity, canonical JSON parsing, and cross-contract digest/time
+validation. Report status and reason codes are derived from bounded facts,
+with observed failures taking precedence over incomplete-only authority;
+`passed`, `failed`, and `inconclusive` are all representable terminal results.
+The content graph is deliberately acyclic: report/source/attempt facts form a
+pre-terminal payload-set digest, the runner-output manifest commits that set,
+the terminal manifest commits the runner output, and the signed termination
+commits the terminal manifest. Git/archive commit IDs are added only by the
+later ingest request and operation receipt, never inside bytes they identify.
+
+**Implementation checkpoint (2026-07-17, Task 8.2C-2):** The protected store
+kernel now closes the fail-closed gap left by C-1. The new public-run-authority
+contract carries the complete reservation/holdout, consumption, claim,
+supervisor-binding, and normal-termination rows; their five protected operation
+receipts; and the report, attempt chain, runner-output manifest, terminal
+manifest, and lifecycle projection. A registered service launcher signs the
+broker launch, the revision-frozen broker signs health and terminal-fact drain,
+and the acyclic outer authority binds the pre-drain payload without a digest
+fixed point. The validator verifies those signatures against the frozen
+launcher/broker policy, binary, key, and database lineage and compares every
+declared row, ID, operation, holdout member, and projection exactly with the
+live protected lifecycle.
+
+The dedicated store access accepts only the ingest request, complete public
+authority, run-bundle manifest, and fresh audit time; it does not accept
+caller-supplied lifecycle fragments. In one shared-transaction savepoint it
+appends the external evidence row, reads the actual artifact and unique
+series-head `row_id`, builds a bounded non-self-referential post-transaction
+projection, and appends `learning_evidence_ingest_v1` under the already
+append-only protected operation scope. The receipt persists the complete
+public authority and run-bundle manifest, binds the request/archive/commit,
+and stores `request.bundle_commit_id` in the operation `commit_id`. Exact retry
+returns the first row and receipt byte-for-byte and deliberately ignores a new
+retry wall clock; changing actor or any content/request binding conflicts.
+
+The same read-only validator runs at reopen/integrity/backup time and enforces
+a bidirectional operation-to-artifact mapping, exact content identity, live
+lifecycle signatures, and actual artifact/series-head row IDs. Artifact-only,
+operation-only, duplicate, stale-series, and mutated-prefix states fail closed.
+The former blanket external-row rejection was removed only after this verifier
+was wired. Generic `insertAuthorityFact` remains closed for all evidence rows,
+and this checkpoint does not add the public `ingest` CLI.
+
+Task 8.2C-3 still owns the raw outer run-bundle archive/member-byte verifier,
+independent `run_bundle_archive_sha256` recomputation, canonical CLI/archive
+reader, Git `HEAD` tracking proof for the requested bundle commit, and real
+cross-process concurrency/crash tests. C-2 protects the claimed archive digest
+and commit inside SQLite; it does not yet promote a caller path or claim into
+filesystem/Git authority.
+
 Extend the production gate to consume the ledger-derived current-shadow export
 and the tool gate to consume a strict external `run-manifest.json`; both reports
 must bind task family, source/applicable revision, candidate/gate configuration

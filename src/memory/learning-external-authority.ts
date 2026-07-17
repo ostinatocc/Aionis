@@ -685,21 +685,30 @@ function ed25519PublicKey(rawPublicKeyBase64: string): KeyObject {
   });
 }
 
-export function verifyLearningExternalReceipt<TBody extends Record<string, unknown>>(args: {
+export function learningExternalEd25519PublicKeyDigest(
+  rawPublicKeyBase64: string,
+): string {
+  const publicKeyBase64 = LearningExternalEd25519PublicKeyBase64Schema.parse(
+    rawPublicKeyBase64,
+  );
+  return sha256Bytes(Buffer.from(publicKeyBase64, "base64"));
+}
+
+export function verifyLearningExternalReceiptWithExplicitSigner<
+  TBody extends Record<string, unknown>,
+>(args: {
   bodySchema: z.ZodType<TBody>;
   envelope: unknown;
   expectedPublicKeyBase64: string;
+  expectedPublicKeySha256: string;
 }): LearningExternalSignedReceiptEnvelopeV1<TBody> {
   const rawEnvelope = LearningExternalSignedReceiptEnvelopeV1Schema.parse(args.envelope);
   const body = args.bodySchema.parse(rawEnvelope.body);
   const publicKeyBase64 = LearningExternalEd25519PublicKeyBase64Schema.parse(
     args.expectedPublicKeyBase64,
   );
-  const publicKeySha256 = sha256Bytes(Buffer.from(publicKeyBase64, "base64"));
-  const declaredPublicKeySha256 = "broker_public_key_sha256" in body
-    ? body.broker_public_key_sha256
-    : body.service_launcher_public_key_sha256;
-  if (declaredPublicKeySha256 !== publicKeySha256) {
+  const publicKeySha256 = learningExternalEd25519PublicKeyDigest(publicKeyBase64);
+  if (DigestSha256Schema.parse(args.expectedPublicKeySha256) !== publicKeySha256) {
     throw new Error("learning_external_receipt_public_key_mismatch");
   }
   const valid = verifySignature(
@@ -714,6 +723,24 @@ export function verifyLearningExternalReceipt<TBody extends Record<string, unkno
     signature_algorithm: rawEnvelope.signature_algorithm,
     signature_base64: rawEnvelope.signature_base64,
   };
+}
+
+export function verifyLearningExternalReceipt<TBody extends Record<string, unknown>>(args: {
+  bodySchema: z.ZodType<TBody>;
+  envelope: unknown;
+  expectedPublicKeyBase64: string;
+}): LearningExternalSignedReceiptEnvelopeV1<TBody> {
+  const rawEnvelope = LearningExternalSignedReceiptEnvelopeV1Schema.parse(args.envelope);
+  const body = args.bodySchema.parse(rawEnvelope.body);
+  const declaredPublicKeySha256 = "broker_public_key_sha256" in body
+    ? body.broker_public_key_sha256
+    : body.service_launcher_public_key_sha256;
+  return verifyLearningExternalReceiptWithExplicitSigner({
+    bodySchema: args.bodySchema,
+    envelope: rawEnvelope,
+    expectedPublicKeyBase64: args.expectedPublicKeyBase64,
+    expectedPublicKeySha256: DigestSha256Schema.parse(declaredPublicKeySha256),
+  });
 }
 
 function boundedCanonicalJsonSchema(maxUtf8Bytes: number) {

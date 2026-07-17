@@ -80,6 +80,11 @@ import {
   createLiteLearningExternalAuthorityAccess,
   type LiteLearningExternalAuthorityAccess,
 } from "./lite-learning-external-authority.js";
+import {
+  assertLiteLearningExternalEvidenceIngestionIntegrity,
+  createLiteLearningExternalEvidenceIngestionAccess,
+  type LiteLearningExternalEvidenceIngestionAccess,
+} from "./lite-learning-external-evidence-ingestion.js";
 export {
   learningActivationScheduleDigest, learningCollectionPrincipalBindingDigest,
   learningConfirmatoryAttemptDigest, learningEvidenceArtifactReportDigest,
@@ -3099,6 +3104,7 @@ export function assertLiteLearningEpisodeLedgerIntegrity(
   assertLiteTenantScopeEncodingAnchorSetIntegrity(db);
 
   assertLiteLearningExternalAuthorityIntegrity(db);
+  assertLiteLearningExternalEvidenceIngestionIntegrity(db);
 
   const incompleteAttempts = db.prepare(
     `SELECT attempt.tenant_id, attempt.confirmatory_attempt_id
@@ -3138,16 +3144,6 @@ export function assertLiteLearningEpisodeLedgerIntegrity(
     options.authorityReceiptKeyring,
   );
   assertLiteLearningSafetyStopBundlesIntegrity(db);
-
-  const unverifiedExternalAuthorityFacts = scalarCount(
-    db,
-    `SELECT COUNT(*) AS count
-     FROM lite_learning_evidence_artifacts
-     WHERE artifact_kind <> 'runtime_integrity_gate'`,
-  );
-  if (unverifiedExternalAuthorityFacts > 0) {
-    throw new Error("lite_learning_integrity_failed:unverified_external_authority_fact");
-  }
 
   const invalidRuntimeGatePrefixes = scalarCount(
     db,
@@ -6504,7 +6500,8 @@ const liteLearningMeasurementAuthority = createLiteLearningMeasurementAuthority(
 });
 const validateEffectMeasurement = liteLearningMeasurementAuthority.validateEffectMeasurement;
 export const buildLiteMeasurementEffectEventRow = liteLearningMeasurementAuthority.buildEffectEventRow;
-export type LiteLearningEpisodeLedgerAccess = LiteLearningExternalAuthorityAccess & {
+export type LiteLearningEpisodeLedgerAccess = LiteLearningExternalAuthorityAccess
+  & LiteLearningExternalEvidenceIngestionAccess & {
   transactionRunner(): SqliteTransactionRunner;
   resolveFeedbackSource(args: { tenantId: string; scope: string; guideTraceId: string }): Promise<ReturnType<typeof resolveLiteLearningFeedbackSource>>;
   resolveMeasurementEpisodePair(args: {
@@ -6665,9 +6662,14 @@ export function createLiteLearningEpisodeLedgerAccess(
   const { db, readDb, transaction } = database;
   assertLiteLearningEpisodeLedgerIntegrity(db, new Date().toISOString(), options);
   const externalAuthority = createLiteLearningExternalAuthorityAccess({ db, transaction });
+  const externalEvidenceIngestion = createLiteLearningExternalEvidenceIngestionAccess({
+    db,
+    transaction,
+  });
 
   return {
     ...externalAuthority,
+    ...externalEvidenceIngestion,
     transactionRunner() {
       return transaction;
     },

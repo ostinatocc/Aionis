@@ -9,14 +9,14 @@ import { fileURLToPath } from "node:url";
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..", "..");
 const COLLECTOR = path.join(ROOT, "scripts", "ci", "runtime-complexity-budget.mjs");
 const BUDGET = path.join(ROOT, "docs", "architecture", "runtime-complexity-budget.json");
-const EXPECTED_BASELINE_COMMIT = "47fc6625dff6daf5cb179ba5cd0b639e7ab92899";
+const EXPECTED_BASELINE_COMMIT = "790b66253d1b2e33f42844e9eafe04c0c22576bd";
 const EXPECTED_THRESHOLDS = {
-  source_files: 324,
-  source_lines: 164013,
+  source_files: 327,
+  source_lines: 168454,
   route_matrix_entries: 21,
   env_schema_fields: 177,
   import_cycles: 0,
-  largest_file_lines: 7511,
+  largest_file_lines: 7513,
 };
 
 function runCollector(args = []) {
@@ -66,10 +66,11 @@ function assertBudgetMetadata(budget) {
   assert.equal(budget.baseline_commit, EXPECTED_BASELINE_COMMIT);
   assert.equal(typeof budget.intent, "string");
   assert.equal(budget.intent, budget.intent.trim());
-  assert.match(budget.intent, /Task 8\.2B rebaseline/);
-  assert.match(budget.intent, /signed external-authority lifecycle kernel/);
-  assert.match(budget.intent, /external evidence artifact ingestion, aggregation, and release verdict authority remain fail-closed/);
-  assert.match(budget.intent, /adds no route, environment field, evidence verdict, or import cycle/);
+  assert.match(budget.intent, /Task 8\.2C-2 rebaseline/);
+  assert.match(budget.intent, /signed public-run authority and protected external-evidence store kernel/);
+  assert.match(budget.intent, /Generic evidence insertion and the public CLI remain closed/);
+  assert.match(budget.intent, /raw outer run-bundle member-byte verification.*remain for later batches/);
+  assert.match(budget.intent, /adds two source modules and no route, environment field, or import cycle/);
   assert.deepEqual(budget.thresholds, EXPECTED_THRESHOLDS);
 }
 
