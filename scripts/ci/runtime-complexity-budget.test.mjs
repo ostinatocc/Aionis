@@ -9,10 +9,10 @@ import { fileURLToPath } from "node:url";
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..", "..");
 const COLLECTOR = path.join(ROOT, "scripts", "ci", "runtime-complexity-budget.mjs");
 const BUDGET = path.join(ROOT, "docs", "architecture", "runtime-complexity-budget.json");
-const EXPECTED_BASELINE_COMMIT = "c4bac80478d42aebcc3f660a8bf2268d3b4364e5";
+const EXPECTED_BASELINE_COMMIT = "d921adde863cddc06489bbad73d2682382cc457d";
 const EXPECTED_THRESHOLDS = {
-  source_files: 333,
-  source_lines: 173255,
+  source_files: 334,
+  source_lines: 175094,
   route_matrix_entries: 21,
   env_schema_fields: 177,
   import_cycles: 0,
@@ -66,12 +66,13 @@ function assertBudgetMetadata(budget) {
   assert.equal(budget.baseline_commit, EXPECTED_BASELINE_COMMIT);
   assert.equal(typeof budget.intent, "string");
   assert.equal(budget.intent, budget.intent.trim());
-  assert.match(budget.intent, /Task 8\.2C-3 rebaseline/);
-  assert.match(budget.intent, /streaming raw archive\/member-byte verifier/);
-  assert.match(budget.intent, /Git HEAD\/blob and stable bundle-commit proof/);
-  assert.match(budget.intent, /internal formal ingest CLI/);
-  assert.match(budget.intent, /aggregate attestation and release-verdict authority remain for later batches/);
-  assert.match(budget.intent, /adds six source modules and no route, environment field, or import cycle/);
+  assert.match(budget.intent, /Task 8\.2D-1 rebaseline/);
+  assert.match(budget.intent, /external required-series status, terminal coverage/);
+  assert.match(budget.intent, /22-table full-column authority-head manifest/);
+  assert.match(budget.intent, /executable typed length-prefixed row\/table\/operation\/root hashing/);
+  assert.match(budget.intent, /full-policy-bound Ed25519 attestation envelope/);
+  assert.match(budget.intent, /release-verdict interpretation remain fail-closed/);
+  assert.match(budget.intent, /adds one source module and no route, environment field, or import cycle/);
   assert.deepEqual(budget.thresholds, EXPECTED_THRESHOLDS);
 }
 

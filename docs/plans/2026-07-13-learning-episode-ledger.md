@@ -2462,6 +2462,38 @@ receipt publication, output conflict recovery, and reopen after the evidence
 repository is removed. Aggregate attestation and release-verdict authority
 remain owned by the later Task 8.2D/E batches.
 
+**Implementation checkpoint (2026-07-17, Task 8.2D-1):** The first aggregate-
+attestation batch freezes the pure evidence contracts without yet granting a
+process authority to emit them. `learning-external-ingestion-attestation.ts`
+defines strict canonical required-series status and terminal-coverage indexes
+for the fixed offline-paired, production-shadow, and tool-E2E roles. Every role
+is exactly one of `result`, `termination_hold`, `preclaim_hold`, or `unstarted`;
+hold and unstarted branches carry explicit zero artifact, ingest-operation, and
+current-head counts. The zero-result case is therefore a canonical three-role
+projection with the digest of an empty result tuple, not omitted evidence.
+
+The deterministic aggregate projection binds the registered four-series map,
+revision and policy digests, database lineage and launcher DB-binding receipt,
+the canonical status and coverage digests, every result's C-3 artifact,
+operation, current-series-head, public-authority, archive, and Git identities,
+and a whole-authority head. Authority-head v1 freezes the complete v4 column
+order and primary key of 22 append-only learning tables plus all operation rows
+in `learning_external_authority_v1`; its typed NULL/text/integer/blob frames use
+an unambiguous u64be length prefix. The signed Ed25519 envelope is separate from
+the replay-stable projection and trusts only the attestor key frozen in the
+registered revision, after recomputing the complete external-execution-policy
+digest. It binds the projection, DB-binding receipt, and authority-head digests
+plus frozen attestor/launcher identities and attestation time.
+
+This checkpoint is D1, not the complete D authority. D2 must still reconstruct
+the projection and streaming head from the real v4 database, and D3 must run
+that projector inside the launcher-held deployment lease against an inherited
+descriptor after WAL checkpoint/truncation, using a private signer channel.
+The existing external-head CLI fence therefore remains fail-closed. Task 8.2D
+ends at a signed factual aggregate; Task 8.2E alone may interpret that aggregate
+with the archived acceptance root and produce a release verdict. No D1 contract
+contains `release_verdict`.
+
 Extend the production gate to consume the ledger-derived current-shadow export
 and the tool gate to consume a strict external `run-manifest.json`; both reports
 must bind task family, source/applicable revision, candidate/gate configuration

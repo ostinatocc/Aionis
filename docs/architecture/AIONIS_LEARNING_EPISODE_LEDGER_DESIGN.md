@@ -3555,6 +3555,39 @@ reopen tests guard these boundaries. This remains an internal operator command,
 not an SDK or package entrypoint; aggregate attestation and release-verdict
 authority are later layers.
 
+**Implementation checkpoint (2026-07-17, Task 8.2D-1):** Runtime now has the
+strict pure contract for the later signed aggregate, but no new signing or CLI
+authority. Required-series status and terminal coverage are fixed ordered
+three-role tagged unions. Results support `passed`, `failed`, and
+`inconclusive`; termination holds, pre-claim holds, and genuinely unstarted
+roles carry their exact terminal identity plus explicit zero result/operation/
+head counts. A zero-result aggregate still names all three registered external
+series and hashes the canonical empty result tuple.
+
+The replay-stable projection contains no construction timestamp and no release
+decision. It binds the registered revision and four-series map, schema and
+ledger-verifier identity, launcher DB-binding receipt and database lineage,
+canonical status and coverage, the complete C-3 result/ingest/head identity,
+and the whole-authority head. The v1 head manifest freezes the full v4 column
+order and primary key for 22 append-only learning authority tables, plus the
+complete closure of Runtime write operations whose scope is
+`learning_external_authority_v1`. Its versioned encoding rejects REAL and unsafe
+integers and domain-separates NULL, UTF-8 text, canonical integers, and blobs in
+u64be length-prefixed frames.
+
+The Ed25519 envelope is deliberately separate: it signs the projection digest,
+DB-binding-receipt digest, committed authority-head digest, revision-frozen
+attestor/launcher identities, and attestation time. Verification accepts the
+attestor raw public key only after the complete external execution policy is
+canonicalized and its digest matches the registered revision; an envelope
+cannot substitute its own key. D2 still owns live-v4 reconstruction
+and streaming head computation, while D3 owns the launcher-held writer lease,
+checkpoint/truncate, inherited-FD identity, private signer channel, and atomic
+publication. Until those layers exist, the existing external-head CLI path
+remains fail-closed. Task 8.2D certifies factual ingestion coverage only;
+Task 8.2E combines that fact with the acceptance archive and exclusively owns
+`release_verdict`.
+
 For an external kind, ingestion re-resolves the reservation, its sole ticket
 consumption, sole claim, sole supervisor binding, and sole session termination
 in the same tenant. The
