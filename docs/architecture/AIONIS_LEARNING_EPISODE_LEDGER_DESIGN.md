@@ -3697,6 +3697,63 @@ is still disabled. Deployment-slot durability/quiesce, tracked hold archives,
 same-snapshot D2/head composition, private signing, and durable publication are
 not claimed by this checkpoint.
 
+**Implementation checkpoint (2026-07-17, Task 8.2D-3a.2):** Durable deployment
+state is now a distinct launcher-owned authority rather than another table in
+the Runtime database being attested. Each caller-configured authority instance
+has an immutable registration derived from the opaque protected Runtime-
+database pin: canonical path, database-lineage identity, device/inode, one-time
+random first-binding anchor, and cross-bound random/physical identities for a
+carrier and state database. Their complete SQLite main/sidecar namespaces are
+disjoint. The module records a deployment-slot label, but the launcher has not
+yet supplied the one-to-one slot-to-path mapping needed to make that label
+globally unique.
+
+Carrier and state both use WAL, `synchronous=EXTRA`, `fullfsync=ON`,
+`checkpoint_fullfsync=ON`, exact PRAGMA/schema validation, and explicit durable-
+file and parent-directory `fsync`. A retained carrier `BEGIN IMMEDIATE` provides
+a conditional process-live lock; the secret savepoint proves only that the SQL
+transaction was not committed, rolled back, or restarted. On Unix, closing
+another descriptor for the same carrier inode in the same process can release
+POSIX locks without invalidating that savepoint. Filesystem ownership, mode,
+ACL, and link-count checks also do not prove local mount or lock semantics.
+Formal use requires a verified local-locking filesystem and an isolated carrier
+lock-holder process. No PID, TTL, or wall-clock stale-lock rule performs
+takeover. SQLite can recover a trusted crash-retained WAL/SHM pair, while the
+protected pin deliberately rejects a lone WAL or SHM sidecar pending a separate
+explicit recovery boundary.
+
+The carrier cross-binds the physical state database and stores an initial
+semantic witness plus one append-only witness at every clean release. Acquire
+replays the complete state and validates every witnessed prefix before creating
+the next lease epoch. This rejects a rolled-back or divergent clean-release
+state snapshot only while the carrier witness remains outside that rollback.
+It does not detect a joint carrier+state snapshot rollback or rollback within
+the last crash/unwitnessed lease. Consequently `fsync` is crash durability, not
+anti-rollback, and irreversible burn requires a non-rollback state authority or
+an external monotonic witness in another rollback domain.
+
+Within one current non-rolled-back authority-instance lineage, checkpoint
+generations are canonical unsigned-64 text. Recovery append-only abandons an
+orphan, so receipt generations may skip while reservation history remains a
+complete monotonic sequence. The first anchor is used whenever that lineage has
+no completion head, even after burns. Every completion stores the full canonical
+launcher-signed envelope and execution policy, preserving the historical key
+needed to reverify predecessors across rotation. Reopen checks the full
+reservation sequence, operation/lease/terminal binding, physical database,
+receipt digest/signature, predecessor, generation, time, and historical policy.
+
+Finalization consumes only WeakMap-branded lease, reservation, and prepared-
+completion capabilities. It derives anchor, head, and generation from durable
+state and re-runs the policy-fixed verifier; commit makes the receipt the head
+of the current lineage and a commit/response retry returns exact stored bytes.
+This remains a signing-ineligible substrate, not a production signer or complete
+slot authority. Missing boundaries are verified filesystem locking, isolated
+carrier ownership, launcher slot-path mapping, non-rollback state authority,
+managed-writer quiesce, live writer-fence and revision-policy capabilities,
+private launcher/attestor channels, D2 aggregate, tracked holds, public
+publication, release verdict, and multi-host consensus. The external-head
+command remains disabled.
+
 For an external kind, ingestion re-resolves the reservation, its sole ticket
 consumption, sole claim, sole supervisor binding, and sole session termination
 in the same tenant. The

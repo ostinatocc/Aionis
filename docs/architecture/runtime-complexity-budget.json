@@ -1,10 +1,10 @@
 {
   "schema_version": "aionis_runtime_complexity_budget_v1",
-  "baseline_commit": "06568c0c95d6dddbd7698b71e75014fb0b83cb22",
-  "intent": "Structural growth guard only; the Task 8.2D-3a.1 rebaseline adds three isolated source modules for a strict launcher-side WAL checkpoint and retained SQLite writer fence, a pathless fixed inherited-FD read-only snapshot boundary, and a revision-key-bound canonical launcher DB-binding cryptographic relation with explicit caller-supplied deployment-head and generation inputs plus historical-policy predecessor verification. Every new capability remains explicitly signing-ineligible without the deployment-slot lease/generation, same-snapshot D2 composition, tracked hold bundles, and private signer channel. The external-head CLI remains fail-closed. This batch adds no route, environment field, largest-file growth, or import cycle.",
+  "baseline_commit": "25e2ffa4304b899c6773e101388a1297b7e145a9",
+  "intent": "Structural growth guard only; the Task 8.2D-3a.2 rebaseline adds one isolated launcher-owned configured-authority-path module. Distinct EXTRA-synchronous WAL carrier and append-only state databases cross-bind physical identities, while a conditional retained BEGIN IMMEDIATE lease, hash-chained clean-release state witnesses, and full replay protect the current non-rolled-back authority lineage. Canonical generation reservations preserve crash gaps, the one-time first anchor, exact signed database-binding receipts, and complete historical policies. Runtime database path and physical lineage are registered only from the existing opaque protected-database pin; lease, reservation, and prepared-completion authorities remain WeakMap-branded and explicitly signing-ineligible. This batch explicitly does not claim verified local-locking filesystem semantics, isolated same-process carrier-FD ownership, launcher slot-path uniqueness, joint-snapshot anti-rollback, managed-writer quiesce, private signing, same-snapshot D2 composition, tracked holds, public publication, multi-host consensus, or an enabled external-head CLI. It adds no route, environment field, largest-file growth, or import cycle.",
   "thresholds": {
-    "source_files": 339,
-    "source_lines": 179595,
+    "source_files": 340,
+    "source_lines": 183080,
     "route_matrix_entries": 21,
     "env_schema_fields": 177,
     "import_cycles": 0,

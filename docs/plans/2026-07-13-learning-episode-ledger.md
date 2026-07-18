@@ -2597,6 +2597,67 @@ deployment-slot state and managed-writer quiesce, tracked hold bundles, live D2
 composition, private signing, and atomic publication remain subsequent D3
 batches.
 
+**Implementation checkpoint (2026-07-17, Task 8.2D-3a.2):** The launcher now
+has a signing-disabled durable authority instance for one caller-configured
+absolute state path. Provisioning consumes the opaque protected Runtime-
+database pin, freezes its canonical path, lineage identity, device, and inode,
+and creates a one-time CSPRNG first-binding anchor. Two owner-controlled,
+single-link SQLite databases cross-bind their random identities, physical
+device/inode identities, and registration digest. Their main and
+`-wal`/`-shm`/`-journal` namespaces must also be disjoint from the Runtime
+database. This module records the deployment-slot label but does not yet prove
+the launcher's one-to-one slot-to-path mapping; the same label can otherwise be
+provisioned at another path.
+
+Both carrier and state use WAL with `synchronous=EXTRA`, `fullfsync=ON`,
+`checkpoint_fullfsync=ON`, exact PRAGMA/schema replay, and explicit durable-file
+and parent-directory `fsync`. State mutations append operations, lease epochs,
+reservations, abandonments, and complete binding receipts. The carrier retains
+`BEGIN IMMEDIATE`; its random secret savepoint detects SQL `COMMIT`, `ROLLBACK`,
+or transaction restart. It does not prove that a Unix POSIX lock survived
+another same-process descriptor for the carrier inode being closed. Nor do the
+owner/mode/ACL/single-link checks prove mount locality or SQLite lock semantics.
+Formal exclusivity therefore additionally requires a verified local-locking
+filesystem and an isolated carrier lock-holder process. There is no TTL, PID,
+or wall-clock stale-lock takeover. A crash-retained trusted WAL/SHM pair is
+recovered by SQLite; a lone WAL or SHM sidecar still fails closed before open
+and requires an explicit protected recovery procedure that this batch does not
+provide.
+
+The carrier stores an initial state witness and appends another on each clean
+release. Acquire validates every witnessed semantic prefix before appending a
+new lease epoch. This detects an old or divergent clean-release state snapshot
+while the carrier witness itself has not rolled back. It does not detect a
+joint carrier+state snapshot rollback or rollback inside the last crashed or
+otherwise unwitnessed lease. `fsync` supplies crash durability, not
+anti-rollback. Irreversible generation burn and no-sibling claims therefore
+require `nonrollback_slot_state_authority`: non-rollback storage or an external
+monotonic witness outside the carrier/state rollback domain.
+
+Within the current non-rolled-back authority-instance lineage, a short state
+transaction reserves the next canonical unsigned-64 generation before use.
+Abandoned generations remain as gaps in receipt generations while reservation
+history stays complete and monotonic; `first` is selected from an empty durable
+head rather than from generation `1`. Completion derives anchor, generation,
+and predecessor from opaque capabilities, re-runs the policy-fixed Ed25519
+verifier, and atomically stores the complete canonical signed envelope and full
+historical policy. Reopen fully reverifies the chain across key/policy rotation,
+and a commit/response crash returns the exact stored completion bytes in the
+same lineage.
+
+Real tests cover dual-WAL durability PRAGMAs, SQLite-namespace collision,
+including case-fold aliases, one-shot provisioning, two-process contention,
+lock-holder plus uncommitted carrier/state transaction `SIGKILL` recovery,
+clean-release same-inode state rollback rejection, causal and extended-year
+time rejection before writes, burned-generation gaps, exact post-commit replay,
+opaque-capability forgery/revocation, policy/key rotation, fork/head/identity/
+generation/signer rejection, exhaustion, and schema/filesystem corruption. All
+results remain `signing_eligible=false`. Verified local locking, isolated
+carrier ownership, launcher slot-path mapping, non-rollback state authority,
+managed-writer quiesce, live writer-fence and revision-policy capabilities, the
+private signer channel, D2 aggregate, tracked holds, public publication, multi-
+host consensus, and the production external-head CLI remain later D3 work.
+
 Extend the production gate to consume the ledger-derived current-shadow export
 and the tool gate to consume a strict external `run-manifest.json`; both reports
 must bind task family, source/applicable revision, candidate/gate configuration

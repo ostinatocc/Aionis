@@ -9,10 +9,10 @@ import { fileURLToPath } from "node:url";
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..", "..");
 const COLLECTOR = path.join(ROOT, "scripts", "ci", "runtime-complexity-budget.mjs");
 const BUDGET = path.join(ROOT, "docs", "architecture", "runtime-complexity-budget.json");
-const EXPECTED_BASELINE_COMMIT = "06568c0c95d6dddbd7698b71e75014fb0b83cb22";
+const EXPECTED_BASELINE_COMMIT = "25e2ffa4304b899c6773e101388a1297b7e145a9";
 const EXPECTED_THRESHOLDS = {
-  source_files: 339,
-  source_lines: 179595,
+  source_files: 340,
+  source_lines: 183080,
   route_matrix_entries: 21,
   env_schema_fields: 177,
   import_cycles: 0,
@@ -66,17 +66,20 @@ function assertBudgetMetadata(budget) {
   assert.equal(budget.baseline_commit, EXPECTED_BASELINE_COMMIT);
   assert.equal(typeof budget.intent, "string");
   assert.equal(budget.intent, budget.intent.trim());
-  assert.match(budget.intent, /Task 8\.2D-3a\.1 rebaseline/);
-  assert.match(budget.intent, /strict launcher-side WAL checkpoint and retained SQLite writer fence/);
-  assert.match(budget.intent, /pathless fixed inherited-FD read-only snapshot boundary/);
-  assert.match(
-    budget.intent,
-    /revision-key-bound canonical launcher DB-binding cryptographic relation/,
-  );
-  assert.match(budget.intent, /explicit caller-supplied deployment-head and generation inputs/);
-  assert.match(budget.intent, /historical-policy predecessor verification/);
+  assert.match(budget.intent, /Task 8\.2D-3a\.2 rebaseline/);
+  assert.match(budget.intent, /configured-authority-path module/);
+  assert.match(budget.intent, /EXTRA-synchronous WAL carrier and append-only state/);
+  assert.match(budget.intent, /conditional retained BEGIN IMMEDIATE lease/);
+  assert.match(budget.intent, /hash-chained clean-release state witnesses/);
+  assert.match(budget.intent, /current non-rolled-back authority lineage/);
+  assert.match(budget.intent, /complete historical policies/);
+  assert.match(budget.intent, /opaque protected-database pin/);
+  assert.match(budget.intent, /WeakMap-branded/);
   assert.match(budget.intent, /explicitly signing-ineligible/);
-  assert.match(budget.intent, /external-head CLI remains fail-closed/);
+  assert.match(budget.intent, /does not claim verified local-locking filesystem semantics/);
+  assert.match(budget.intent, /launcher slot-path uniqueness/);
+  assert.match(budget.intent, /joint-snapshot anti-rollback/);
+  assert.match(budget.intent, /enabled external-head CLI/);
   assert.match(budget.intent, /no route, environment field, largest-file growth, or import cycle/);
   assert.deepEqual(budget.thresholds, EXPECTED_THRESHOLDS);
 }
