@@ -12,10 +12,10 @@ function toPosix(value) {
   return value.split(path.sep).join("/");
 }
 
-function workspaceSourceFiles() {
+function workspaceTypescriptFiles(pathspec) {
   const listed = spawnSync(
     "git",
-    ["ls-files", "--cached", "--others", "--exclude-standard", "src/**/*.ts"],
+    ["ls-files", "--cached", "--others", "--exclude-standard", pathspec],
     {
     cwd: ROOT,
     encoding: "utf8",
@@ -30,6 +30,10 @@ function workspaceSourceFiles() {
     .map((value) => value.trim())
     .filter((value) => value.length > 0 && fs.existsSync(path.join(ROOT, value)))
     .sort();
+}
+
+function workspaceSourceFiles() {
+  return workspaceTypescriptFiles("src/**/*.ts");
 }
 
 function countLines(source) {
@@ -179,8 +183,24 @@ function stronglyConnectedImportCycles(graph) {
   return components.sort((left, right) => left.join("\0").localeCompare(right.join("\0")));
 }
 
+function reachableModules(graph, entryPath) {
+  if (!graph.has(entryPath)) throw new Error(`Runtime entry is missing from source inventory: ${entryPath}`);
+  const visited = new Set();
+  const pending = [entryPath];
+  while (pending.length > 0) {
+    const current = pending.pop();
+    if (!current || visited.has(current)) continue;
+    visited.add(current);
+    for (const dependency of graph.get(current) ?? []) {
+      if (!visited.has(dependency)) pending.push(dependency);
+    }
+  }
+  return visited;
+}
+
 export function collectRuntimeComplexity() {
   const sourcePaths = workspaceSourceFiles();
+  const toolPaths = workspaceTypescriptFiles("tools/**/*.ts");
   const sourceSet = new Set(sourcePaths);
   const sources = new Map();
   const parsed = new Map();
@@ -206,13 +226,30 @@ export function collectRuntimeComplexity() {
 
   const boundaryPath = "src/server/lite-runtime-boundary.ts";
   const configPath = "src/config.ts";
+  const runtimeEntryPath = "src/runtime-entry.ts";
   if (!parsed.has(boundaryPath) || !parsed.has(configPath)) {
     throw new Error("Runtime complexity anchors are missing from tracked source inventory");
+  }
+
+  const runtimeEntryModules = reachableModules(graph, runtimeEntryPath);
+  const runtimeEntryLines = fileLines
+    .filter((entry) => runtimeEntryModules.has(entry.path))
+    .reduce((total, entry) => total + entry.lines, 0);
+  const nonEntryLines = sourceLines - runtimeEntryLines;
+  let toolLines = 0;
+  for (const relativePath of toolPaths) {
+    toolLines += countLines(fs.readFileSync(path.join(ROOT, relativePath), "utf8"));
   }
 
   return {
     source_files: sourcePaths.length,
     source_lines: sourceLines,
+    runtime_entry_source_files: runtimeEntryModules.size,
+    runtime_entry_source_lines: runtimeEntryLines,
+    non_entry_source_files: sourcePaths.length - runtimeEntryModules.size,
+    non_entry_source_lines: nonEntryLines,
+    tool_source_files: toolPaths.length,
+    tool_source_lines: toolLines,
     route_matrix_entries: countRouteMatrixEntries(parsed.get(boundaryPath)),
     env_schema_fields: countEnvSchemaFields(parsed.get(configPath)),
     import_cycles: stronglyConnectedImportCycles(graph),
@@ -237,6 +274,12 @@ function checkBudget(report, budgetPath) {
   const checks = [
     ["source_files", report.source_files, positiveInteger(thresholds.source_files, "thresholds.source_files")],
     ["source_lines", report.source_lines, positiveInteger(thresholds.source_lines, "thresholds.source_lines")],
+    ["runtime_entry_source_files", report.runtime_entry_source_files, positiveInteger(thresholds.runtime_entry_source_files, "thresholds.runtime_entry_source_files")],
+    ["runtime_entry_source_lines", report.runtime_entry_source_lines, positiveInteger(thresholds.runtime_entry_source_lines, "thresholds.runtime_entry_source_lines")],
+    ["non_entry_source_files", report.non_entry_source_files, positiveInteger(thresholds.non_entry_source_files, "thresholds.non_entry_source_files")],
+    ["non_entry_source_lines", report.non_entry_source_lines, positiveInteger(thresholds.non_entry_source_lines, "thresholds.non_entry_source_lines")],
+    ["tool_source_files", report.tool_source_files, positiveInteger(thresholds.tool_source_files, "thresholds.tool_source_files")],
+    ["tool_source_lines", report.tool_source_lines, positiveInteger(thresholds.tool_source_lines, "thresholds.tool_source_lines")],
     ["route_matrix_entries", report.route_matrix_entries, positiveInteger(thresholds.route_matrix_entries, "thresholds.route_matrix_entries")],
     ["env_schema_fields", report.env_schema_fields, positiveInteger(thresholds.env_schema_fields, "thresholds.env_schema_fields")],
     ["import_cycles", report.import_cycles.length, positiveInteger(thresholds.import_cycles, "thresholds.import_cycles")],
