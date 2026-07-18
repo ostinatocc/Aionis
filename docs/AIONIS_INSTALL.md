@@ -175,10 +175,11 @@ curl http://127.0.0.1:3001/readyz
 package version. `/readyz` returns boolean dependency checks. Neither endpoint
 returns API keys, raw environment values, or local SQLite file paths.
 
-Runtime requirement: Node.js `>=22.13.0` with the built-in `node:sqlite` module
-available. The installer checks both the version and the SQLite feature because
-Lite stores local memory state in SQLite. Earlier Node 22 experimental SQLite
-releases do not provide the row semantics required by the Runtime.
+Runtime requirement: Node.js `>=22.15.0 <23 || >=23.10.0` with the built-in
+`node:sqlite` module available. The installer checks both the version and the
+SQLite feature because Lite stores local memory state in SQLite. Earlier
+`node:sqlite` releases cannot open the URL paths used by the Runtime to require
+immutable snapshots and existing-file-only write access.
 
 The protected, non-HTTP learning-experiment `close` command also requires a
 verifiable local filesystem boundary. On Linux, install the distribution's
@@ -310,7 +311,7 @@ still accepted when you intentionally want one type for both directions.
 From this repo:
 
 ```bash
-node --version   # must be >= 22.13.0 and include node:sqlite
+node --version   # must be >=22.15.0 <23 or >=23.10.0 and include node:sqlite
 npm install
 npm run -s typecheck
 npm run -s lite:test

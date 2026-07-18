@@ -10,6 +10,8 @@ import { isAbsolute } from "node:path";
 
 import {
   createSqliteImmutableReadOnlyDatabase,
+  hasNodeSqliteUrlPathSupport,
+  NODE_SQLITE_URL_PATH_SUPPORTED_VERSION_RANGE,
   type SqliteDatabase,
 } from "./sqlite.js";
 import {
@@ -156,21 +158,10 @@ function isErrnoCode(error: unknown, code: string): boolean {
 }
 
 function assertSupportedNodeVersion(): void {
-  const [majorText, minorText, patchText] = process.versions.node.split(".", 3);
-  const version = [majorText, minorText, patchText].map((part) => Number(part));
-  if (version.length !== 3
-    || version.some((part) => !Number.isSafeInteger(part) || part < 0)) {
+  if (!hasNodeSqliteUrlPathSupport(process.versions.node)) {
     return boundaryError(
       "lite_runtime_inherited_authority_database_platform_unsupported",
-      "inherited Runtime authority snapshots cannot verify the Node.js version",
-    );
-  }
-  const [major, minor] = version as [number, number, number];
-  const supported = major > 22 || (major === 22 && minor >= 15);
-  if (!supported) {
-    return boundaryError(
-      "lite_runtime_inherited_authority_database_platform_unsupported",
-      `inherited Runtime authority snapshots require Node.js ${LITE_RUNTIME_INHERITED_AUTHORITY_DATABASE_MIN_NODE_VERSION} or newer`,
+      `inherited Runtime authority snapshots require Node.js ${NODE_SQLITE_URL_PATH_SUPPORTED_VERSION_RANGE}`,
     );
   }
 }
@@ -426,9 +417,9 @@ export function adoptLiteRuntimeInheritedAuthorityDatabase(
   // descriptor must not be replaceable with another file inside this process.
   inheritedDescriptorAdopted = true;
 
-  // node:sqlite did not accept URL inputs until Node.js 22.15.0. The immutable
-  // read-only file: URI is part of this authority boundary, so older supported
-  // Runtime releases must fail closed instead of falling back to a pathname.
+  // node:sqlite gained URL inputs in Node.js 22.15.0 and 23.10.0. The immutable
+  // read-only file: URI is part of this authority boundary, so runtimes without
+  // that API must fail closed instead of falling back to a pathname.
   assertSupportedNodeVersion();
   const descriptorPath = descriptorNamespacePath();
   const serviceUid = currentServiceUid();

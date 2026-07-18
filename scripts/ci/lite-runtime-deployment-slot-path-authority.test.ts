@@ -156,6 +156,14 @@ test("launcher root manifest reopens to the same deterministic slot mapping", (t
     "runtime-primary",
   );
   const first = inspectLiteRuntimeDeploymentSlotPathCapability(slot);
+  assert.equal(
+    first.contract_version,
+    "aionis_lite_runtime_deployment_slot_path_inspection_v2",
+  );
+  assert.equal(
+    first.authority_scope,
+    "configured_root_deterministic_slot_path_v2",
+  );
   assert.equal(first.root_instance_id, rootInspection.root_instance_id);
   assert.equal(first.root_manifest_sha256, rootInspection.root_manifest_sha256);
   assert.equal(first.deployment_slot, "runtime-primary");
@@ -169,16 +177,57 @@ test("launcher root manifest reopens to the same deterministic slot mapping", (t
     `${first.authority_state_relative_path}.lease`,
   );
   assert.equal(
+    first.provisioning_journal_relative_path,
+    `slots/v1/${first.slot_sha256.slice(0, 2)}/${first.slot_sha256}/provisioning.sqlite`,
+  );
+  assert.equal(
+    first.provisioning_phase_directory_relative_path,
+    `slots/v1/${first.slot_sha256.slice(0, 2)}/${first.slot_sha256}/provisioning-phases`,
+  );
+  assert.equal(
     first.authority_state_path,
     join(fixture.rootPath, first.authority_state_relative_path),
   );
   assert.equal(first.lease_carrier_path, `${first.authority_state_path}.lease`);
   assert.equal(
+    first.provisioning_journal_path,
+    join(fixture.rootPath, first.provisioning_journal_relative_path),
+  );
+  assert.equal(
+    first.provisioning_phase_directory_path,
+    join(fixture.rootPath, first.provisioning_phase_directory_relative_path),
+  );
+  assert.equal(
+    first.slot_path_mapping_sha256,
+    sha256(stableStringify({
+      contract_version:
+        "aionis_lite_runtime_deployment_slot_path_mapping_v2",
+      root_instance_id: first.root_instance_id,
+      root_manifest_sha256: first.root_manifest_sha256,
+      slot_sha256: first.slot_sha256,
+      path_layout: first.path_layout,
+      authority_state_relative_path: first.authority_state_relative_path,
+      lease_carrier_relative_path: first.lease_carrier_relative_path,
+      provisioning_journal_relative_path:
+        first.provisioning_journal_relative_path,
+      provisioning_phase_directory_relative_path:
+        first.provisioning_phase_directory_relative_path,
+    })),
+  );
+  assert.equal(
     first.trusted_launcher_root_selection,
     "required_not_established",
   );
-  assert.equal(first.slot_provisioning_recovery, "required_not_established");
+  assert.equal(
+    first.slot_provisioning_recovery,
+    "conditional_process_live_classify_resume_abort_v1",
+  );
+  assert.equal(
+    first.provisioning_rollback_resistance,
+    "current_lineage_only_without_provisioning_journal_rollback",
+  );
   assert.equal(first.filesystem_locking_verification, "required_not_established");
+  assert.equal(first.isolated_provisioning_lock_process, "required_not_established");
   assert.equal(first.isolated_carrier_lock_process, "required_not_established");
 
   prepareLiteRuntimeDeploymentSlotPathForProvisioning(slot);
@@ -438,6 +487,70 @@ test("pre-existing slot directories, symlinks, and files always require recovery
       );
     });
   }
+});
+
+test("provisioning journal and phase artifacts stay inside the exact slot directory", async (t) => {
+  await t.test("deterministic journal and phase paths are exact slot children", (child) => {
+    const fixture = createFixture(child);
+    const slot = deriveLiteRuntimeDeploymentSlotPathCapability(
+      fixture.rootCapability,
+      "provisioning-artifacts",
+    );
+    const inspection = prepareLiteRuntimeDeploymentSlotPathForProvisioning(slot);
+    assert.equal(
+      dirname(inspection.provisioning_journal_path),
+      inspection.slot_directory_path,
+    );
+    assert.equal(
+      dirname(inspection.provisioning_phase_directory_path),
+      inspection.slot_directory_path,
+    );
+    assert.equal(
+      inspection.provisioning_journal_path,
+      join(inspection.slot_directory_path, "provisioning.sqlite"),
+    );
+    assert.equal(
+      inspection.provisioning_phase_directory_path,
+      join(inspection.slot_directory_path, "provisioning-phases"),
+    );
+    assert.deepEqual(
+      assertLiteRuntimeDeploymentSlotPathProvisioned(slot),
+      inspection,
+    );
+  });
+
+  await t.test("redirected provisioning phase directory fails closed", (child) => {
+    const fixture = createFixture(child);
+    const slot = deriveLiteRuntimeDeploymentSlotPathCapability(
+      fixture.rootCapability,
+      "redirected-provisioning-phase",
+    );
+    const inspection = prepareLiteRuntimeDeploymentSlotPathForProvisioning(slot);
+    symlinkSync(
+      fixture.rootPath,
+      inspection.provisioning_phase_directory_path,
+      "dir",
+    );
+    assertPathAuthorityError(
+      () => assertLiteRuntimeDeploymentSlotPathProvisioned(slot),
+      "lite_runtime_deployment_slot_path_authority_recovery_required",
+    );
+  });
+
+  await t.test("group-writable provisioning phase directory fails closed", (child) => {
+    const fixture = createFixture(child);
+    const slot = deriveLiteRuntimeDeploymentSlotPathCapability(
+      fixture.rootCapability,
+      "unsafe-provisioning-phase",
+    );
+    const inspection = prepareLiteRuntimeDeploymentSlotPathForProvisioning(slot);
+    mkdirSync(inspection.provisioning_phase_directory_path, { mode: 0o700 });
+    chmodSync(inspection.provisioning_phase_directory_path, 0o770);
+    assertPathAuthorityError(
+      () => assertLiteRuntimeDeploymentSlotPathProvisioned(slot),
+      "lite_runtime_deployment_slot_path_authority_recovery_required",
+    );
+  });
 });
 
 test("a second prepare for one slot cannot invent a sibling authority path", (t) => {

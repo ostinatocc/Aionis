@@ -769,7 +769,14 @@ test("D3a.3a configured-root-mapped durable deployment-slot authority", { concur
       slotInspection.slot_path_mapping_sha256,
     );
     assert.equal(first.slot_path_mapping, "launcher_root_sha256_sharded_v1");
-    assert.equal(first.slot_provisioning_recovery, "required_not_established");
+    assert.equal(
+      first.slot_provisioning_recovery,
+      "conditional_process_live_classify_resume_abort_v1",
+    );
+    assert.equal(
+      first.provisioning_rollback_resistance,
+      "current_lineage_only_without_provisioning_journal_rollback",
+    );
     assert.equal(Object.isFrozen(first), true);
     const stateStat = lstatSync(current.authorityStatePath, { bigint: true });
     assert.equal(stateStat.isFile(), true);
@@ -808,6 +815,18 @@ test("D3a.3a configured-root-mapped durable deployment-slot authority", { concur
     assert.equal(
       leaseInspection.required_next_capabilities.includes(
         "protected_slot_provisioning_recovery",
+      ),
+      false,
+    );
+    assert.equal(
+      leaseInspection.required_next_capabilities.includes(
+        "isolated_provisioning_lock_process",
+      ),
+      true,
+    );
+    assert.equal(
+      leaseInspection.required_next_capabilities.includes(
+        "nonrollback_provisioning_journal_authority",
       ),
       true,
     );

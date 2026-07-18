@@ -20,7 +20,11 @@ import {
   type LiteRuntimeInheritedAuthorityDatabaseErrorCode,
   type LiteRuntimeInheritedAuthorityDatabaseTransactionCapability,
 } from "../../src/store/lite-runtime-inherited-authority-database.ts";
-import { createSqliteDatabase } from "../../src/store/sqlite.ts";
+import {
+  createSqliteDatabase,
+  hasNodeSqliteUrlPathSupport,
+  NODE_SQLITE_URL_PATH_SUPPORTED_VERSION_RANGE,
+} from "../../src/store/sqlite.ts";
 
 const CHILD_ACTION_ENV = "AIONIS_INHERITED_AUTHORITY_DATABASE_CHILD_ACTION";
 const CHILD_REOPEN_PATH_ENV = "AIONIS_INHERITED_AUTHORITY_DATABASE_REOPEN_PATH";
@@ -461,6 +465,23 @@ const childMode = process.env[CHILD_ACTION_ENV] !== undefined;
 if (childMode) {
   await runChildProcess();
 } else {
+  test("node:sqlite URL-path version gate excludes the Node 23 backport gap", () => {
+    assert.equal(
+      NODE_SQLITE_URL_PATH_SUPPORTED_VERSION_RANGE,
+      ">=22.15.0 <23 or >=23.10.0",
+    );
+    for (const version of [
+      "21.99.0", "22.14.9", "23.0.0", "23.9.9", "invalid",
+    ]) {
+      assert.equal(hasNodeSqliteUrlPathSupport(version), false, version);
+    }
+    for (const version of [
+      "22.15.0", "22.99.0", "23.10.0", "24.0.0", "25.1.0",
+    ]) {
+      assert.equal(hasNodeSqliteUrlPathSupport(version), true, version);
+    }
+  });
+
   test("inherited authority database adopts fixed fd 3 and runs one real read-only immutable snapshot", {
     skip: !SUPPORTED_PLATFORM,
     timeout: 30_000,

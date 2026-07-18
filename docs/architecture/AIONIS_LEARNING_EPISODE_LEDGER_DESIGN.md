@@ -3672,9 +3672,11 @@ and a secret SQLite savepoint guard, and detects descriptor reuse, permission,
 transaction restart, or byte changes. Replacing the former filesystem path does
 not redirect this inherited object; no claim is made that the path replacement
 itself is detected. The module closes SQLite and revokes its capabilities but
-never closes borrowed process-lifetime fd 3. It requires Node 22.15 or newer and
-records that launcher provenance, checkpoint, and writer-fence authority are
-not established by the descriptor alone.
+never closes borrowed process-lifetime fd 3. The Runtime `node:sqlite` URL-path
+floor is exactly `>=22.15.0 <23 || >=23.10.0`; Node 23.0 through 23.9 fail
+closed rather than falling back from the immutable `file:` URL to a pathname.
+Launcher provenance, checkpoint, and writer-fence authority are not established
+by the descriptor alone.
 
 The canonical v1 database-binding receipt is signed by the distinct launcher
 key frozen in the external policy. It binds slot, policy, logical and physical
@@ -3783,18 +3785,87 @@ This proves deterministic uniqueness only inside one supplied configured root;
 production launcher selection of the single trusted root is not established.
 It does not prove the mount is local or that SQLite locking is correct on that
 mount, does not isolate the retained carrier from every other descriptor in its
-process, and does not add anti-rollback. A crash between exclusive slot-directory
-creation and the complete paired registration/initial witness remains
-`recovery_required`; this batch intentionally provides no unsafe automatic
-deletion, but a protected classify/resume/abort recovery boundary is still
-missing. `trusted_launcher_root_selection` and
-`protected_slot_provisioning_recovery` therefore remain required. After that,
-D3a.3b must move the entire acquire/reserve/prepare+commit/release state machine
-into a one-shot authority worker with crash-aware async IPC; a lock-only child
-with parent-side state writes would leave a holder-crash race. Managed quiesce,
-live writer-fence/revision policy, private signing, D2/holds, publication,
-release verdict, multi-host consensus, and the external-head CLI also remain
-later work.
+process, and does not add anti-rollback.
+
+**Implementation checkpoint (2026-07-18, Task 8.2D-3a.3a.1):** Provisioning now
+has an explicit semantic classifier plus resume and abort operations. Every
+create or recover attempt first acquires the permanent sibling
+`<journal>.bootstrap-lock`: an owner-controlled, single-link mode-0600,
+DELETE-mode SQLite database with an exact application ID, schema, and singleton
+contract row. Its pinned connection retains `BEGIN IMMEDIATE` before the first
+publication inspection and across inspection, staging create/open/recovery,
+selected-intent validation, staging transaction completion and complete SQLite
+and descriptor close, sidecar verification, no-replace link, directory fsync,
+staging unlink, final directory fsync, and replay. The mutex file is a permanent
+slot artifact and is never unlinked. Normal release rolls back and closes its
+connection; holder `SIGKILL` closes the process descriptors and releases the
+SQLite lock, after which the same persistent mutex is strictly reopened.
+
+The immutable intent journal binds the configured-root mapping, Runtime
+database pin, randomly allocated authority identities, first anchor, and
+creation time. Its deterministic private `.bootstrap` database must finish
+COMMIT or ROLLBACK, close its SQLite connection and pinned descriptor, and have
+no `-journal`, `-wal`, or `-shm` sidecar before it can be synced and linked or
+unlinked. Independent published-winner scratch cleanup validates the selected
+intent owner, runs and ends a staging `BEGIN EXCLUSIVE`, fully closes staging,
+proves it sidecar-free, and only then rechecks the still-live bootstrap mutex,
+publication state, and inode before unlink plus directory fsync. Recovery
+recognizes staging-only, final+staging same-inode, and published-final plus
+independent scratch states. A committed staging intent is always reused without
+calling the random factory; only a fully uncommitted bootstrap may allocate a
+new identity. UPDATE, DELETE, a second INSERT, REPLACE, and INSERT OR REPLACE
+are independently rejected by the exact journal schema.
+
+Every phase receipt uses staging create, partial and complete write, file fsync,
+staging-directory fsync, no-replace final link, final-directory fsync, staging
+unlink, and final-directory fsync. A
+partial unpublished staging file is resettable scratch. A linked final must
+match the staging inode, canonical bytes, and digest, but while its `.pending`
+name remains it is a verified publication head, not a member of the durable
+prefix—even after the final-name directory fsync. Thus a sixth linked
+`committed` receipt and a second linked `aborted` receipt both classify as
+`incomplete` until resume or abort finishes publication cleanup. Receipt append
+requires the opaque journal lock acquired with the exact expected intent
+digest; mismatch fails before a capability or receipt is returned. The live
+guard also binds the fixed phase directory and rolls back to a random savepoint.
+That guard runs before and after carrier-inode creation, state-inode creation,
+carrier initialization, state initialization, and initial-witness insertion,
+so a lost savepoint stops each physical mutation. Receipt time is the maximum
+of the requested clock, intent time, and prior receipt time.
+
+The real evidence is executable rather than inferred. The provisioning-
+recovery subprocess matrix kills mutex self-bootstrap after durable empty-file
+creation, inside its dirty schema transaction, and immediately after schema
+commit; it then recovers one strict permanent mutex and one intent. It also
+kills journal bootstrap after publication inspection, staging creation, SQLite
+open, dirty transaction, transaction commit, staging durability, final link,
+parent fsync, scratch-close/no-sidecar cleanup, and staging unlink; proves a
+stale absent inspector is contended; and proves a mutex holder `SIGKILL` permits
+the next recovery. Receipt tests kill partial write and every publication edge,
+including the linked terminal heads above. The five savepoint-loss mutation
+tests preserve an exact pre-mutation slot-tree snapshot. The independent journal
+integrity test proves the SQL mutation guards, missing/forged/released/wrong-
+directory lock rejection, expected-intent-digest mismatch with zero receipt
+mutation, monotonic times, and the declared shorter-prefix rollback gap. The
+package/startup contract and SQLite adapter freeze the URL-path floor at
+`>=22.15.0 <23 || >=23.10.0`.
+
+The contract is intentionally
+`conditional_process_live_classify_resume_abort_v1`, not formal exclusivity.
+POSIX locking can still be invalidated by an unrelated close of the same journal
+inode in the same PID, and the mount's locking semantics are not yet attested.
+Likewise abort is a tombstone only in the current non-rolled-back journal
+lineage: deleting or rolling back the final receipt is not detectable without a
+non-rollback provisioning-journal authority. Classification is semantically
+read-only, but an ordinary SQLite WAL reader may refresh transient SHM bytes.
+`verified_local_locking_filesystem`, `isolated_provisioning_lock_process`,
+`nonrollback_provisioning_journal_authority`, trusted launcher-root selection,
+and non-rollback slot state therefore remain explicit. D3a.3b must move the
+entire acquire/reserve/prepare+commit/release state machine into a one-shot
+authority worker with crash-aware async IPC; a lock-only child with parent-side
+state writes would leave a holder-crash race. Managed quiesce, live writer-
+fence/revision policy, private signing, D2/holds, publication, release verdict,
+multi-host consensus, and the external-head CLI also remain later work.
 
 For an external kind, ingestion re-resolves the reservation, its sole ticket
 consumption, sole claim, sole supervisor binding, and sole session termination

@@ -9,10 +9,10 @@ import { fileURLToPath } from "node:url";
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..", "..");
 const COLLECTOR = path.join(ROOT, "scripts", "ci", "runtime-complexity-budget.mjs");
 const BUDGET = path.join(ROOT, "docs", "architecture", "runtime-complexity-budget.json");
-const EXPECTED_BASELINE_COMMIT = "0546946b93f8d1556562c5b047c93edfe0e2deaf";
+const EXPECTED_BASELINE_COMMIT = "45f97ce149d71a2f34a70295d332d545b9ab20b2";
 const EXPECTED_THRESHOLDS = {
-  source_files: 341,
-  source_lines: 184380,
+  source_files: 342,
+  source_lines: 189537,
   route_matrix_entries: 21,
   env_schema_fields: 177,
   import_cycles: 0,
@@ -66,30 +66,28 @@ function assertBudgetMetadata(budget) {
   assert.equal(budget.baseline_commit, EXPECTED_BASELINE_COMMIT);
   assert.equal(typeof budget.intent, "string");
   assert.equal(budget.intent, budget.intent.trim());
-  assert.match(budget.intent, /Task 8\.2D-3a\.3a rebaseline/);
-  assert.match(budget.intent, /configured-root slot-path authority module/);
-  assert.match(budget.intent, /expected manifest digest/);
-  assert.match(budget.intent, /deterministic sharded mapping/);
-  assert.match(budget.intent, /remove the raw authority-state path/);
-  assert.match(budget.intent, /bootstrap provisioning returns no live authority/);
-  assert.match(budget.intent, /private lease retentions prevent premature root close/);
-  assert.match(budget.intent, /Durable registration v2/);
-  assert.match(budget.intent, /EXTRA-synchronous WAL carrier and append-only state/);
-  assert.match(budget.intent, /conditional retained BEGIN IMMEDIATE lease/);
-  assert.match(budget.intent, /hash-chained clean-release state witnesses/);
-  assert.match(budget.intent, /current non-rolled-back authority lineage/);
-  assert.match(budget.intent, /complete historical policies/);
-  assert.match(budget.intent, /opaque protected-database pin/);
-  assert.match(budget.intent, /WeakMap-branded/);
-  assert.match(budget.intent, /explicitly signing-ineligible/);
-  assert.match(budget.intent, /does not claim verified local-locking filesystem semantics/);
-  assert.match(budget.intent, /establishes deterministic slot-path uniqueness/);
-  assert.match(
-    budget.intent,
-    /trusted launcher root selection and protected half-provision recovery remain explicit missing capabilities/,
-  );
-  assert.match(budget.intent, /joint-snapshot anti-rollback/);
-  assert.match(budget.intent, /enabled external-head CLI/);
+  assert.match(budget.intent, /Task 8\.2D-3a\.3a\.1 rebaseline/);
+  assert.match(budget.intent, /immutable SQLite provisioning journal/);
+  assert.match(budget.intent, /crash-safe configured-root deployment-slot creation/);
+  assert.match(budget.intent, /permanent private \.bootstrap-lock SQLite mutex/);
+  assert.match(budget.intent, /atomic no-replace publication/);
+  assert.match(budget.intent, /empty-file, dirty-transaction, and committed-schema prefixes recover after real SIGKILL/);
+  assert.match(budget.intent, /expected-digest BEGIN IMMEDIATE lock/);
+  assert.match(budget.intent, /random liveness savepoint/);
+  assert.match(budget.intent, /hash-chained phase receipts/);
+  assert.match(budget.intent, /namespace disjointness/);
+  assert.match(budget.intent, /linked-but-not-parent-synced prefixes/);
+  assert.match(budget.intent, /five authority mutations are guarded by lock-liveness checks/);
+  assert.match(budget.intent, /DatabaseSync URL-path support: >=22\.15\.0 <23 or >=23\.10\.0/);
+  assert.match(budget.intent, /conditional process-live recovery/);
+  assert.match(budget.intent, /rollback of a complete current lineage/);
+  assert.match(budget.intent, /non-cooperating same-process lock destruction/);
+  assert.match(budget.intent, /dirty unpublished scratch-byte immutability/);
+  assert.match(budget.intent, /remote-filesystem locking/);
+  assert.match(budget.intent, /managed-writer quiesce/);
+  assert.match(budget.intent, /private signing/);
+  assert.match(budget.intent, /multi-host consensus/);
+  assert.match(budget.intent, /public HTTP authority/);
   assert.match(budget.intent, /no route, environment field, largest-file growth, or import cycle/);
   assert.deepEqual(budget.thresholds, EXPECTED_THRESHOLDS);
 }

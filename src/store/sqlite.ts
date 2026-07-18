@@ -47,8 +47,21 @@ const require = createRequire(import.meta.url);
 
 let cachedSqliteModule: SqliteModule | null | undefined;
 
+export const NODE_SQLITE_URL_PATH_SUPPORTED_VERSION_RANGE =
+  ">=22.15.0 <23 or >=23.10.0" as const;
+
+export function hasNodeSqliteUrlPathSupport(version: string): boolean {
+  const match = /^(\d+)\.(\d+)\.(\d+)$/u.exec(version);
+  if (!match) return false;
+  const major = Number(match[1]);
+  const minor = Number(match[2]);
+  if (!Number.isSafeInteger(major) || !Number.isSafeInteger(minor)) return false;
+  return major === 22 ? minor >= 15 : major === 23 ? minor >= 10 : major > 23;
+}
+
 function loadSqliteModule(): SqliteModule | null {
-  if (process.versions.node.localeCompare("22.13.0", undefined, { numeric: true }) < 0 || cachedSqliteModule !== undefined) return cachedSqliteModule ?? null;
+  if (!hasNodeSqliteUrlPathSupport(process.versions.node)
+    || cachedSqliteModule !== undefined) return cachedSqliteModule ?? null;
   try {
     const mod = require("node:sqlite") as Partial<SqliteModule>;
     cachedSqliteModule = typeof mod.DatabaseSync === "function" ? mod as SqliteModule : null;
@@ -63,7 +76,9 @@ export function hasNodeSqliteSupport(): boolean {
 }
 
 export function nodeSqliteSupportError(): Error {
-  return new Error("Lite SQLite requires Node.js >=22.13.0 with node:sqlite support.");
+  return new Error(
+    `Lite SQLite requires Node.js ${NODE_SQLITE_URL_PATH_SUPPORTED_VERSION_RANGE} with node:sqlite URL-path support.`,
+  );
 }
 
 export function createSqliteDatabase(path: string): SqliteDatabase {

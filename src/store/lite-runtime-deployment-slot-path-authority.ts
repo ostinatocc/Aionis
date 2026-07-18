@@ -127,8 +127,8 @@ export type LiteRuntimeDeploymentSlotPathAuthorityRootInspection = Readonly<{
 
 export type LiteRuntimeDeploymentSlotPathInspection = Readonly<{
   contract_version:
-    "aionis_lite_runtime_deployment_slot_path_inspection_v1";
-  authority_scope: "configured_root_deterministic_slot_path_v1";
+    "aionis_lite_runtime_deployment_slot_path_inspection_v2";
+  authority_scope: "configured_root_deterministic_slot_path_v2";
   signing_eligible: false;
   deployment_slot: string;
   root_path: string;
@@ -140,12 +140,20 @@ export type LiteRuntimeDeploymentSlotPathInspection = Readonly<{
   slot_directory_path: string;
   authority_state_path: string;
   lease_carrier_path: string;
+  provisioning_journal_path: string;
+  provisioning_phase_directory_path: string;
   authority_state_relative_path: string;
   lease_carrier_relative_path: string;
+  provisioning_journal_relative_path: string;
+  provisioning_phase_directory_relative_path: string;
   slot_path_mapping_sha256: string;
   trusted_launcher_root_selection: "required_not_established";
-  slot_provisioning_recovery: "required_not_established";
+  slot_provisioning_recovery:
+    "conditional_process_live_classify_resume_abort_v1";
+  provisioning_rollback_resistance:
+    "current_lineage_only_without_provisioning_journal_rollback";
   filesystem_locking_verification: "required_not_established";
+  isolated_provisioning_lock_process: "required_not_established";
   isolated_carrier_lock_process: "required_not_established";
 }>;
 
@@ -256,7 +264,8 @@ function assertTrustedDirectoryStat(
   expectedUid: bigint,
   code:
     | "lite_runtime_deployment_slot_path_authority_filesystem_untrusted"
-    | "lite_runtime_deployment_slot_path_authority_identity_changed",
+    | "lite_runtime_deployment_slot_path_authority_identity_changed"
+    | "lite_runtime_deployment_slot_path_authority_recovery_required",
 ): BigIntStats {
   let stat: BigIntStats;
   try {
@@ -764,20 +773,27 @@ function buildSlotInspection(
   const slotDirectoryRelativePath = `slots/v1/${slotSha256.slice(0, 2)}/${slotSha256}`;
   const authorityStateRelativePath = `${slotDirectoryRelativePath}/state.sqlite`;
   const leaseCarrierRelativePath = `${authorityStateRelativePath}.lease`;
+  const provisioningJournalRelativePath =
+    `${slotDirectoryRelativePath}/provisioning.sqlite`;
+  const provisioningPhaseDirectoryRelativePath =
+    `${slotDirectoryRelativePath}/provisioning-phases`;
   const mappingProjection = Object.freeze({
     contract_version:
-      "aionis_lite_runtime_deployment_slot_path_mapping_v1" as const,
+      "aionis_lite_runtime_deployment_slot_path_mapping_v2" as const,
     root_instance_id: rootState.manifest.root_instance_id,
     root_manifest_sha256: rootState.manifestSha256,
     slot_sha256: slotSha256,
     path_layout: PATH_LAYOUT,
     authority_state_relative_path: authorityStateRelativePath,
     lease_carrier_relative_path: leaseCarrierRelativePath,
+    provisioning_journal_relative_path: provisioningJournalRelativePath,
+    provisioning_phase_directory_relative_path:
+      provisioningPhaseDirectoryRelativePath,
   });
   return Object.freeze({
     contract_version:
-      "aionis_lite_runtime_deployment_slot_path_inspection_v1" as const,
-    authority_scope: "configured_root_deterministic_slot_path_v1" as const,
+      "aionis_lite_runtime_deployment_slot_path_inspection_v2" as const,
+    authority_scope: "configured_root_deterministic_slot_path_v2" as const,
     signing_eligible: false as const,
     deployment_slot: deploymentSlot,
     root_path: rootState.rootPath,
@@ -789,12 +805,23 @@ function buildSlotInspection(
     slot_directory_path: join(rootState.rootRealpath, slotDirectoryRelativePath),
     authority_state_path: join(rootState.rootRealpath, authorityStateRelativePath),
     lease_carrier_path: join(rootState.rootRealpath, leaseCarrierRelativePath),
+    provisioning_journal_path:
+      join(rootState.rootRealpath, provisioningJournalRelativePath),
+    provisioning_phase_directory_path:
+      join(rootState.rootRealpath, provisioningPhaseDirectoryRelativePath),
     authority_state_relative_path: authorityStateRelativePath,
     lease_carrier_relative_path: leaseCarrierRelativePath,
+    provisioning_journal_relative_path: provisioningJournalRelativePath,
+    provisioning_phase_directory_relative_path:
+      provisioningPhaseDirectoryRelativePath,
     slot_path_mapping_sha256: sha256(stableStringify(mappingProjection)),
     trusted_launcher_root_selection: "required_not_established" as const,
-    slot_provisioning_recovery: "required_not_established" as const,
+    slot_provisioning_recovery:
+      "conditional_process_live_classify_resume_abort_v1" as const,
+    provisioning_rollback_resistance:
+      "current_lineage_only_without_provisioning_journal_rollback" as const,
     filesystem_locking_verification: "required_not_established" as const,
+    isolated_provisioning_lock_process: "required_not_established" as const,
     isolated_carrier_lock_process: "required_not_established" as const,
   });
 }
@@ -891,12 +918,14 @@ function ensureSharedDirectory(
 function assertOptionalCanonicalAuthorityFile(
   path: string,
   serviceUid: bigint,
+  allowedPublicationAlias?: string,
 ): void {
   if (!pathExists(path)) return;
   const stat = lstatSync(path, { bigint: true });
   if (!stat.isFile()
     || stat.uid !== serviceUid
-    || stat.nlink !== 1n
+    || (stat.nlink !== 1n
+      && !(stat.nlink === 2n && allowedPublicationAlias))
     || (stat.mode & 0o077n) !== 0n) {
     return pathAuthorityError(
       "lite_runtime_deployment_slot_path_authority_recovery_required",
@@ -916,6 +945,49 @@ function assertOptionalCanonicalAuthorityFile(
     return pathAuthorityError(
       "lite_runtime_deployment_slot_path_authority_recovery_required",
       "deployment-slot authority artifact path is redirected",
+    );
+  }
+  if (stat.nlink === 2n) {
+    let aliasStat: BigIntStats;
+    let aliasRealpath: string;
+    try {
+      aliasStat = lstatSync(allowedPublicationAlias!, { bigint: true });
+      aliasRealpath = realpathSync(allowedPublicationAlias!);
+    } catch {
+      return pathAuthorityError(
+        "lite_runtime_deployment_slot_path_authority_recovery_required",
+        "deployment-slot authority publication alias is unavailable",
+      );
+    }
+    if (!aliasStat.isFile()
+      || aliasStat.dev !== stat.dev
+      || aliasStat.ino !== stat.ino
+      || aliasStat.uid !== serviceUid
+      || aliasStat.nlink !== 2n
+      || aliasStat.mode !== stat.mode
+      || aliasRealpath !== allowedPublicationAlias) {
+      return pathAuthorityError(
+        "lite_runtime_deployment_slot_path_authority_recovery_required",
+        "deployment-slot authority publication alias is not the expected same-inode staging link",
+      );
+    }
+  }
+}
+
+function assertOptionalCanonicalAuthorityDirectory(
+  path: string,
+  serviceUid: bigint,
+): void {
+  if (!pathExists(path)) return;
+  const stat = assertTrustedDirectoryStat(
+    path,
+    serviceUid,
+    "lite_runtime_deployment_slot_path_authority_recovery_required",
+  );
+  if ((stat.mode & 0o7777n) !== 0o700n) {
+    return pathAuthorityError(
+      "lite_runtime_deployment_slot_path_authority_recovery_required",
+      "deployment-slot provisioning phase directory must remain mode 0700",
     );
   }
 }
@@ -1157,6 +1229,10 @@ export function assertLiteRuntimeDeploymentSlotPathProvisioned(
       !== state.inspection.slot_directory_path
     || state.inspection.lease_carrier_path
       !== `${state.inspection.authority_state_path}.lease`
+    || dirname(state.inspection.provisioning_journal_path)
+      !== state.inspection.slot_directory_path
+    || dirname(state.inspection.provisioning_phase_directory_path)
+      !== state.inspection.slot_directory_path
     || slotStat.dev !== state.rootState.rootDevice) {
     return pathAuthorityError(
       "lite_runtime_deployment_slot_path_authority_recovery_required",
@@ -1169,6 +1245,19 @@ export function assertLiteRuntimeDeploymentSlotPathProvisioned(
   );
   assertOptionalCanonicalAuthorityFile(
     state.inspection.lease_carrier_path,
+    state.rootState.serviceUid,
+  );
+  assertOptionalCanonicalAuthorityFile(
+    state.inspection.provisioning_journal_path,
+    state.rootState.serviceUid,
+    `${state.inspection.provisioning_journal_path}.bootstrap`,
+  );
+  assertOptionalCanonicalAuthorityFile(
+    `${state.inspection.provisioning_journal_path}.bootstrap-lock`,
+    state.rootState.serviceUid,
+  );
+  assertOptionalCanonicalAuthorityDirectory(
+    state.inspection.provisioning_phase_directory_path,
     state.rootState.serviceUid,
   );
   reverifyRootState(state.rootState);

@@ -18,11 +18,12 @@ ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 
 if ! node -e '
   const [major, minor] = process.versions.node.split(".").map(Number);
-  process.exit(major > 22 || (major === 22 && minor >= 13) ? 0 : 1);
+  const supported = major === 22 ? minor >= 15 : major === 23 ? minor >= 10 : major > 23;
+  process.exit(supported ? 0 : 1);
 ' >/dev/null 2>&1; then
   cat >&2 <<'EOF'
-start:lite requires Node.js >=22.13.0.
-Earlier experimental node:sqlite releases do not provide the row semantics required by the Runtime.
+start:lite requires Node.js >=22.15.0 <23 or >=23.10.0.
+Earlier node:sqlite releases cannot open the URL paths used for immutable and existing-file-only access.
 EOF
   exit 1
 fi
@@ -30,7 +31,7 @@ fi
 if ! node -e 'try { require("node:sqlite"); } catch { process.exit(1); }' >/dev/null 2>&1; then
   cat >&2 <<'EOF'
 start:lite requires Node.js with node:sqlite support.
-Use Node.js >=22.13.0 for the focused local Runtime.
+Use Node.js >=22.15.0 <23 or >=23.10.0 for the focused local Runtime.
 EOF
   exit 1
 fi

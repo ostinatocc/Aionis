@@ -255,5 +255,11 @@ test("default CI verifies release metadata, SDK and Manifest ownership, complexi
   assert.match(workflow, /npm run -s sdk:check/);
   assert.match(workflow, /npm run -s complexity:check/);
   assert.match(workflow, /npm run -s lite:smoke/);
-  assert.match(workflow, /node-version: "22\.13\.0"/);
+  assert.match(workflow, /name: Node 22\.15 minimum compatibility/);
+  assert.match(workflow, /node-version: "22\.15\.0"/);
+  assert.match(workflow, /name: Provisioning journal compatibility/);
+  assert.match(
+    workflow,
+    /node --import tsx --test scripts\/ci\/lite-runtime-deployment-slot-provisioning-journal-integrity\.test\.ts/,
+  );
 });

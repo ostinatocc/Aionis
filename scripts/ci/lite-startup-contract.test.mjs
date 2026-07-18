@@ -12,8 +12,11 @@ function readJson(file) {
 test("root scripts start the focused Runtime directly", () => {
   const rootPkg = readJson(path.join(ROOT, "package.json"));
   const rootLock = readJson(path.join(ROOT, "package-lock.json"));
-  assert.equal(rootPkg.engines.node, ">=22.13.0");
-  assert.equal(rootLock.packages[""].engines.node, ">=22.13.0");
+  assert.equal(rootPkg.engines.node, ">=22.15.0 <23 || >=23.10.0");
+  assert.equal(
+    rootLock.packages[""].engines.node,
+    ">=22.15.0 <23 || >=23.10.0",
+  );
   assert.equal(rootPkg.scripts["lite:build"], "npm run -s typecheck");
   assert.equal(rootPkg.scripts["lite:start"], "bash scripts/start-lite.sh");
   assert.equal(rootPkg.scripts["lite:start:local-process"], "LITE_SANDBOX_PROFILE=local_process_echo bash scripts/start-lite.sh");
@@ -41,8 +44,12 @@ test("root startup script owns local Runtime env", () => {
   assert.match(startScript, /local_process_echo/);
   assert.match(startScript, /SANDBOX_ENABLED/);
   assert.match(startScript, /SANDBOX_ADMIN_ONLY/);
-  assert.match(startScript, /major === 22 && minor >= 13/);
-  assert.match(startScript, /requires Node\.js >=22\.13\.0/);
+  assert.match(startScript, /major === 22 \? minor >= 15/);
+  assert.match(startScript, /major === 23 \? minor >= 10/);
+  assert.match(
+    startScript,
+    /requires Node\.js >=22\.15\.0 <23 or >=23\.10\.0/,
+  );
   assert.match(startScript, /exec node --import tsx src\/index\.ts/);
   assert.doesNotMatch(startScript, /exec npx tsx/);
   assert.equal(startScript.includes(`apps${"/"}lite`), false);

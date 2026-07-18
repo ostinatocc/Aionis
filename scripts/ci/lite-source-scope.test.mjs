@@ -157,6 +157,10 @@ test("root package stays Runtime-only and delegates adapters to external package
   assert.equal(packageJson.scripts?.["sdk:source-sync"], undefined);
   assert.equal(packageJson.scripts?.["packages:build"], undefined);
   assert.equal(packageJson.scripts?.["packages:test"], undefined);
+  assert.equal(
+    packageJson.scripts?.["lite:test"],
+    "node --test scripts/ci/*.mjs && npx tsx --test --test-concurrency=1 scripts/ci/*.ts",
+  );
   assert.equal(packageJson.scripts?.["test:focused"], "npm run -s typecheck && npm run -s lite:test");
   assert.equal(packageJson.scripts?.["build"], "npm run -s typecheck");
   assert.equal(

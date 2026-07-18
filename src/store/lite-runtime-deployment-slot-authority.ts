@@ -1,12 +1,13 @@
 import { createHash, randomBytes } from "node:crypto";
 import {
-  chmodSync,
   closeSync,
   constants as fsConstants,
+  fchmodSync,
   fstatSync,
   fsyncSync,
   lstatSync,
   openSync,
+  readdirSync,
   realpathSync,
   type BigIntStats,
 } from "node:fs";
@@ -37,10 +38,31 @@ import {
 import { assertLiteRuntimeAuthorityIdentity } from "./lite-learning-episode-ledger.js";
 import { normalizeSqliteSchemaSql } from "./sqlite-schema-sql.js";
 import {
-  createSqliteReadWriteExistingDatabase,
+  createSqliteReadOnlyDatabase,
   type SqliteDatabase,
 } from "./sqlite.js";
 import type { LiteRuntimeDatabase } from "./lite-runtime-database.js";
+import {
+  acquireLiteRuntimeDeploymentSlotProvisioningJournalLock,
+  appendLiteRuntimeDeploymentSlotProvisioningPhaseReceipt,
+  assertLiteRuntimeDeploymentSlotProvisioningJournalLockLive,
+  createLiteRuntimeDeploymentSlotProvisioningJournal,
+  inspectLiteRuntimeDeploymentSlotProvisioningJournalPublication,
+  invalidateLiteRuntimeDeploymentSlotProvisioningJournalLockForTesting,
+  liteRuntimeDeploymentSlotProvisioningJournalBootstrapPath,
+  liteRuntimeDeploymentSlotProvisioningJournalBootstrapMutexPath,
+  readLiteRuntimeDeploymentSlotProvisioningJournal,
+  readLiteRuntimeDeploymentSlotProvisioningPhaseReceipts,
+  recoverOrCreateLiteRuntimeDeploymentSlotProvisioningJournal,
+  releaseLiteRuntimeDeploymentSlotProvisioningJournalLock,
+  LiteRuntimeDeploymentSlotProvisioningJournalError,
+  type LiteRuntimeDeploymentSlotProvisioningIntent,
+  type LiteRuntimeDeploymentSlotProvisioningIntentWithoutDigest,
+  type LiteRuntimeDeploymentSlotProvisioningJournalLock,
+  type LiteRuntimeDeploymentSlotProvisioningJournalPublicationState,
+  type LiteRuntimeDeploymentSlotProvisioningPhase,
+  type LiteRuntimeDeploymentSlotProvisioningPhaseReceipt,
+} from "./lite-runtime-deployment-slot-provisioning-journal.js";
 import {
   assertLiteRuntimeDeploymentSlotPathCapability,
   assertLiteRuntimeDeploymentSlotPathProvisioned,
@@ -66,6 +88,8 @@ export type LiteRuntimeDeploymentSlotAuthorityErrorCode =
   | "lite_runtime_deployment_slot_authority_filesystem_untrusted"
   | "lite_runtime_deployment_slot_authority_already_provisioned"
   | "lite_runtime_deployment_slot_authority_recovery_required"
+  | "lite_runtime_deployment_slot_authority_recovery_contended"
+  | "lite_runtime_deployment_slot_authority_recovery_aborted"
   | "lite_runtime_deployment_slot_authority_schema_invalid"
   | "lite_runtime_deployment_slot_authority_integrity_failed"
   | "lite_runtime_deployment_slot_authority_slot_mismatch"
@@ -136,12 +160,14 @@ export type LiteRuntimeDeploymentSlotPreparedBindingCompletionCapability =
 
 export type LiteRuntimeDeploymentSlotProvisioningInspection = Readonly<{
   contract_version:
-    "aionis_lite_runtime_deployment_slot_provisioning_inspection_v2";
+    "aionis_lite_runtime_deployment_slot_provisioning_inspection_v3";
   authority_scope: "configured_root_deterministic_slot_path_registration";
   signing_eligible: false;
   deployment_slot: string;
   authority_state_path: string;
   lease_carrier_path: string;
+  provisioning_journal_path: string;
+  provisioning_phase_directory_path: string;
   authority_instance_id: string;
   carrier_instance_id: string;
   database_realpath: string;
@@ -150,17 +176,59 @@ export type LiteRuntimeDeploymentSlotProvisioningInspection = Readonly<{
   database_file_inode: string;
   first_binding_anchor_sha256: string;
   registration_sha256: string;
+  provisioning_intent_sha256: string;
   launcher_root_instance_id: string;
   launcher_root_manifest_sha256: string;
   slot_path_mapping_sha256: string;
   slot_path_mapping: "launcher_root_sha256_sharded_v1";
   trusted_launcher_root_selection: "required_not_established";
-  slot_provisioning_recovery: "required_not_established";
+  slot_provisioning_recovery:
+    "conditional_process_live_classify_resume_abort_v1";
+  provisioning_rollback_resistance:
+    "current_lineage_only_without_provisioning_journal_rollback";
+  filesystem_locking_verification: "required_not_established";
+  isolated_provisioning_lock_process: "required_not_established";
+}>;
+
+export type LiteRuntimeDeploymentSlotProvisioningDurablePhase =
+  | "intent_durable"
+  | "pair_inodes_durable"
+  | "carrier_ready"
+  | "state_ready"
+  | "initial_witness_ready"
+  | "committed"
+  | "aborted";
+
+export type LiteRuntimeDeploymentSlotProvisioningClassification = Readonly<{
+  contract_version:
+    "aionis_lite_runtime_deployment_slot_provisioning_classification_v1";
+  authority_scope: "configured_root_slot_path_provisioning_recovery";
+  signing_eligible: false;
+  deployment_slot: string;
+  authority_state_path: string;
+  lease_carrier_path: string;
+  provisioning_journal_path: string;
+  provisioning_phase_directory_path: string;
+  classification:
+    | "absent"
+    | "incomplete"
+    | "committed"
+    | "aborted"
+    | "ambiguous_or_corrupt";
+  last_durable_phase: LiteRuntimeDeploymentSlotProvisioningDurablePhase | null;
+  recovery_action: "provision" | "resume" | "none" | "manual_intervention";
+  provisioning_intent_sha256: string | null;
+  reason_code: string;
+  provisioning_inspection: LiteRuntimeDeploymentSlotProvisioningInspection | null;
+  rollback_resistance:
+    "current_lineage_only_without_provisioning_journal_rollback";
+  recovery_exclusivity:
+    "conditional_process_live_without_isolated_lock_process";
 }>;
 
 export type LiteRuntimeDeploymentSlotLeaseInspection = Readonly<{
   contract_version:
-    "aionis_lite_runtime_deployment_slot_exclusive_lease_inspection_v2";
+    "aionis_lite_runtime_deployment_slot_exclusive_lease_inspection_v3";
   authority_scope:
     "configured_root_slot_path_conditional_process_live_exclusivity";
   signing_eligible: false;
@@ -189,9 +257,10 @@ export type LiteRuntimeDeploymentSlotLeaseInspection = Readonly<{
     "clean_release_prefix_only_without_carrier_storage_rollback";
   required_next_capabilities: readonly [
     "verified_local_locking_filesystem",
+    "isolated_provisioning_lock_process",
     "isolated_carrier_lock_process",
     "trusted_launcher_root_selection",
-    "protected_slot_provisioning_recovery",
+    "nonrollback_provisioning_journal_authority",
     "nonrollback_slot_state_authority",
     "managed_runtime_writer_quiesce",
     "runtime_attestation_writer_fence",
@@ -202,7 +271,7 @@ export type LiteRuntimeDeploymentSlotLeaseInspection = Readonly<{
 
 export type LiteRuntimeDeploymentSlotReservationInspection = Readonly<{
   contract_version:
-    "aionis_lite_runtime_deployment_slot_checkpoint_reservation_inspection_v2";
+    "aionis_lite_runtime_deployment_slot_checkpoint_reservation_inspection_v3";
   authority_scope: "configured_root_slot_path_generation_and_chain_expectation";
   signing_eligible: false;
   deployment_slot: string;
@@ -234,9 +303,10 @@ export type LiteRuntimeDeploymentSlotReservationInspection = Readonly<{
     "clean_release_prefix_only_without_carrier_storage_rollback";
   required_next_capabilities: readonly [
     "verified_local_locking_filesystem",
+    "isolated_provisioning_lock_process",
     "isolated_carrier_lock_process",
     "trusted_launcher_root_selection",
-    "protected_slot_provisioning_recovery",
+    "nonrollback_provisioning_journal_authority",
     "nonrollback_slot_state_authority",
     "managed_runtime_writer_quiesce",
     "runtime_attestation_writer_fence",
@@ -247,7 +317,7 @@ export type LiteRuntimeDeploymentSlotReservationInspection = Readonly<{
 
 export type LiteRuntimeDeploymentSlotBindingCompletion = Readonly<{
   contract_version:
-    "aionis_lite_runtime_deployment_slot_binding_completion_v2";
+    "aionis_lite_runtime_deployment_slot_binding_completion_v3";
   authority_scope: "configured_root_slot_path_chain_transition";
   signing_eligible: false;
   exact_replay: boolean;
@@ -270,9 +340,10 @@ export type LiteRuntimeDeploymentSlotBindingCompletion = Readonly<{
     "current_lineage_only_without_carrier_storage_rollback";
   required_next_capabilities: readonly [
     "verified_local_locking_filesystem",
+    "isolated_provisioning_lock_process",
     "isolated_carrier_lock_process",
     "trusted_launcher_root_selection",
-    "protected_slot_provisioning_recovery",
+    "nonrollback_provisioning_journal_authority",
     "nonrollback_slot_state_authority",
     "managed_runtime_writer_quiesce",
     "runtime_attestation_writer_fence",
@@ -446,11 +517,84 @@ const leaseRegistry = new WeakMap<object, LeaseState>();
 const reservationRegistry = new WeakMap<object, ReservationState>();
 const preparedCompletionRegistry = new WeakMap<object, PreparedCompletionState>();
 
+let provisioningDurablePhaseObserverForTesting:
+  | ((phase: LiteRuntimeDeploymentSlotProvisioningDurablePhase) => void)
+  | null = null;
+
+export type LiteRuntimeDeploymentSlotProvisioningPhysicalMutation =
+  | "create_lease_carrier_inode"
+  | "create_durable_state_inode"
+  | "initialize_lease_carrier"
+  | "initialize_durable_state"
+  | "ensure_initial_carrier_witness";
+
+let provisioningPhysicalMutationObserverForTesting:
+  | ((
+      mutation: LiteRuntimeDeploymentSlotProvisioningPhysicalMutation,
+    ) => "invalidate_journal_savepoint" | void)
+  | null = null;
+
+/**
+ * @internal Test-only observation point reached strictly after a provisioning
+ * phase receipt has been fsynced. Production code must not install an observer;
+ * real crash tests use it only to pause a child before sending SIGKILL.
+ */
+export function installLiteRuntimeDeploymentSlotProvisioningObserverForTesting(
+  observer: (phase: LiteRuntimeDeploymentSlotProvisioningDurablePhase) => void,
+): () => void {
+  if (typeof observer !== "function" || provisioningDurablePhaseObserverForTesting) {
+    return authorityError(
+      "lite_runtime_deployment_slot_authority_recovery_required",
+      "deployment-slot provisioning test observer is invalid or already installed",
+    );
+  }
+  provisioningDurablePhaseObserverForTesting = observer;
+  let installed = true;
+  return () => {
+    if (!installed) return;
+    installed = false;
+    if (provisioningDurablePhaseObserverForTesting === observer) {
+      provisioningDurablePhaseObserverForTesting = null;
+    }
+  };
+}
+
+/** @internal Installs a pre-mutation lock-loss hook for deterministic tests. */
+export function installLiteRuntimeDeploymentSlotProvisioningPhysicalMutationObserverForTesting(
+  observer: (
+    mutation: LiteRuntimeDeploymentSlotProvisioningPhysicalMutation,
+  ) => "invalidate_journal_savepoint" | void,
+): () => void {
+  if (typeof observer !== "function"
+    || provisioningPhysicalMutationObserverForTesting) {
+    return authorityError(
+      "lite_runtime_deployment_slot_authority_recovery_required",
+      "deployment-slot provisioning physical-mutation test observer is invalid or already installed",
+    );
+  }
+  provisioningPhysicalMutationObserverForTesting = observer;
+  let installed = true;
+  return () => {
+    if (!installed) return;
+    installed = false;
+    if (provisioningPhysicalMutationObserverForTesting === observer) {
+      provisioningPhysicalMutationObserverForTesting = null;
+    }
+  };
+}
+
+function observeProvisioningDurablePhaseForTesting(
+  phase: LiteRuntimeDeploymentSlotProvisioningDurablePhase,
+): void {
+  provisioningDurablePhaseObserverForTesting?.(phase);
+}
+
 const NEXT_CAPABILITIES = Object.freeze([
   "verified_local_locking_filesystem",
+  "isolated_provisioning_lock_process",
   "isolated_carrier_lock_process",
   "trusted_launcher_root_selection",
-  "protected_slot_provisioning_recovery",
+  "nonrollback_provisioning_journal_authority",
   "nonrollback_slot_state_authority",
   "managed_runtime_writer_quiesce",
   "runtime_attestation_writer_fence",
@@ -961,6 +1105,33 @@ function assertDisjointSqlitePathNamespaces(
   }
 }
 
+function assertProvisioningSqliteNamespacesDisjoint(
+  inspection: LiteRuntimeDeploymentSlotPathInspection,
+  runtimeDatabasePath: string,
+): void {
+  assertDisjointSqlitePathNamespaces([
+    { label: "durable state", path: inspection.authority_state_path },
+    { label: "lease carrier", path: inspection.lease_carrier_path },
+    {
+      label: "provisioning journal",
+      path: inspection.provisioning_journal_path,
+    },
+    {
+      label: "provisioning bootstrap scratch",
+      path: liteRuntimeDeploymentSlotProvisioningJournalBootstrapPath(
+        inspection.provisioning_journal_path,
+      ),
+    },
+    {
+      label: "provisioning bootstrap mutex",
+      path: liteRuntimeDeploymentSlotProvisioningJournalBootstrapMutexPath(
+        inspection.provisioning_journal_path,
+      ),
+    },
+    { label: "Runtime database", path: runtimeDatabasePath },
+  ]);
+}
+
 /** The lease carrier name is fixed; callers cannot redirect it independently. */
 export function liteRuntimeDeploymentSlotLeaseCarrierPath(
   authorityStatePath: string,
@@ -1172,12 +1343,13 @@ function createEmptyAuthorityFile(path: string): void {
         | fsConstants.O_NOFOLLOW,
       0o600,
     );
+    fchmodSync(descriptor, 0o600);
     const stat = fstatSync(descriptor, { bigint: true });
     if (!stat.isFile()
       || stat.nlink !== 1n
       || typeof process.getuid !== "function"
       || stat.uid !== BigInt(process.getuid())
-      || (stat.mode & 0o077n) !== 0n) {
+      || (stat.mode & 0o7777n) !== 0o600n) {
       return authorityError(
         "lite_runtime_deployment_slot_authority_filesystem_untrusted",
         "deployment-slot authority file was not created as a private regular file",
@@ -1221,6 +1393,88 @@ function pathExists(path: string): boolean {
   }
 }
 
+function assertCanonicalProvisioningAuthorityFile(
+  path: string,
+  label: string,
+): BigIntStats {
+  assertTrustedProvisioningParent(path);
+  let stat: BigIntStats;
+  let realpath: string;
+  try {
+    stat = lstatSync(path, { bigint: true });
+    realpath = realpathSync(path);
+  } catch {
+    return authorityError(
+      "lite_runtime_deployment_slot_authority_recovery_required",
+      `deployment-slot ${label} is unavailable during provisioning recovery`,
+    );
+  }
+  if (!stat.isFile()
+    || stat.nlink !== 1n
+    || typeof process.getuid !== "function"
+    || stat.uid !== BigInt(process.getuid())
+    || (stat.mode & 0o7777n) !== 0o600n
+    || realpath !== path) {
+    return authorityError(
+      "lite_runtime_deployment_slot_authority_integrity_failed",
+      `deployment-slot ${label} physical identity is ambiguous or untrusted`,
+    );
+  }
+  return stat;
+}
+
+function isRecoverableUninitializedAuthorityDatabase(
+  path: string,
+  applicationId: number,
+): boolean {
+  if (!pathExists(path)) {
+    return !SQLITE_AUTHORITY_NAMESPACE_SUFFIXES.slice(1)
+      .some((suffix) => pathExists(`${path}${suffix}`));
+  }
+  let pin: LiteRuntimeProtectedAuthorityDatabasePin | null = null;
+  let database: LiteRuntimeDatabase | null = null;
+  try {
+    const stat = assertCanonicalProvisioningAuthorityFile(
+      path,
+      "authority database",
+    );
+    pin = pinLiteRuntimeProtectedAuthorityDatabase(path);
+    const before = assertLiteRuntimeProtectedAuthorityDatabasePinned(pin);
+    if (stat.size === 0n) {
+      return !before.wal_present
+        && !before.shared_memory_present
+        && !before.rollback_journal_present;
+    }
+    database = openLiteRuntimeProtectedAuthorityDatabase(pin);
+    assertLiteRuntimeProtectedAuthorityDatabasePinned(pin);
+    const db = database.db;
+    const application = pragmaScalar(db, "application_id");
+    const userVersion = pragmaScalar(db, "user_version");
+    const journalMode = pragmaScalar(db, "journal_mode");
+    const integrity = db.prepare("PRAGMA integrity_check").get() as
+      | Record<string, unknown>
+      | undefined;
+    const userObjects = db.prepare(
+      `SELECT COUNT(*) AS count
+       FROM sqlite_schema
+       WHERE name NOT LIKE 'sqlite_%'`,
+    ).get() as { count?: unknown } | undefined;
+    const integrityValue = integrity ? Object.values(integrity)[0] : undefined;
+    const recoverable = (application === 0 || application === applicationId)
+      && (userVersion === 0 || userVersion === DEPLOYMENT_SLOT_SCHEMA_VERSION)
+      && (journalMode === "delete" || journalMode === "wal")
+      && integrityValue === "ok"
+      && userObjects?.count === 0;
+    assertLiteRuntimeProtectedAuthorityDatabasePinned(pin);
+    return recoverable;
+  } catch {
+    return false;
+  } finally {
+    closeDatabaseBestEffort(database);
+    closePinBestEffort(pin);
+  }
+}
+
 function assertProvisioningPairAbsent(statePath: string, carrierPath: string): void {
   const stateExists = pathExists(statePath);
   const carrierExists = pathExists(carrierPath);
@@ -1242,8 +1496,14 @@ function initializeCarrier(
   path: string,
   row: CarrierIdentityRow,
 ): void {
-  const db = createSqliteReadWriteExistingDatabase(path);
+  let pin: LiteRuntimeProtectedAuthorityDatabasePin | null = null;
+  let database: LiteRuntimeDatabase | null = null;
   try {
+    pin = pinLiteRuntimeProtectedAuthorityDatabase(path);
+    assertLiteRuntimeProtectedAuthorityDatabasePinned(pin);
+    database = openLiteRuntimeProtectedAuthorityDatabase(pin);
+    assertLiteRuntimeProtectedAuthorityDatabasePinned(pin);
+    const db = database.db;
     configureAuthorityDatabase(db, DEPLOYMENT_SLOT_LEASE_APPLICATION_ID, "WAL");
     db.exec("BEGIN IMMEDIATE");
     try {
@@ -1276,11 +1536,16 @@ function initializeCarrier(
       "lease carrier",
     );
     assertExactSchema(db, CARRIER_SCHEMA_OBJECTS, "lease carrier");
+    assertLiteRuntimeProtectedAuthorityDatabasePinned(pin);
+    closeDatabaseBestEffort(database);
+    database = null;
+    assertLiteRuntimeProtectedAuthorityDatabasePinned(pin);
+    syncStateDatabaseFiles(path);
+    assertLiteRuntimeProtectedAuthorityDatabasePinned(pin);
   } finally {
-    db.close();
+    closeDatabaseBestEffort(database);
+    closePinBestEffort(pin);
   }
-  chmodSync(path, 0o600);
-  syncStateDatabaseFiles(path);
 }
 
 function registrationProjection(row: Omit<RegistrationRow, "registration_sha256">): string {
@@ -1304,8 +1569,14 @@ function registrationProjection(row: Omit<RegistrationRow, "registration_sha256"
 }
 
 function initializeState(path: string, row: RegistrationRow): void {
-  const db = createSqliteReadWriteExistingDatabase(path);
+  let pin: LiteRuntimeProtectedAuthorityDatabasePin | null = null;
+  let database: LiteRuntimeDatabase | null = null;
   try {
+    pin = pinLiteRuntimeProtectedAuthorityDatabase(path);
+    assertLiteRuntimeProtectedAuthorityDatabasePinned(pin);
+    database = openLiteRuntimeProtectedAuthorityDatabase(pin);
+    assertLiteRuntimeProtectedAuthorityDatabasePinned(pin);
+    const db = database.db;
     configureAuthorityDatabase(db, DEPLOYMENT_SLOT_STATE_APPLICATION_ID, "WAL");
     db.exec("BEGIN IMMEDIATE");
     try {
@@ -1350,11 +1621,16 @@ function initializeState(path: string, row: RegistrationRow): void {
       "durable state",
     );
     assertExactSchema(db, STATE_SCHEMA_OBJECTS, "durable state");
+    assertLiteRuntimeProtectedAuthorityDatabasePinned(pin);
+    closeDatabaseBestEffort(database);
+    database = null;
+    assertLiteRuntimeProtectedAuthorityDatabasePinned(pin);
+    syncStateDatabaseFiles(path);
+    assertLiteRuntimeProtectedAuthorityDatabasePinned(pin);
   } finally {
-    db.close();
+    closeDatabaseBestEffort(database);
+    closePinBestEffort(pin);
   }
-  chmodSync(path, 0o600);
-  syncStateDatabaseFiles(path);
 }
 
 function readRuntimeDatabaseIdentity(
@@ -1366,6 +1642,1435 @@ function readRuntimeDatabaseIdentity(
   } finally {
     void database.close().catch(() => undefined);
   }
+}
+
+type ProvisioningPairEvidenceV1 = Readonly<{
+  contract_version:
+    "aionis_lite_runtime_deployment_slot_provisioning_pair_evidence_v1";
+  carrier_database_device: string;
+  carrier_database_inode: string;
+  state_database_device: string;
+  state_database_inode: string;
+  registration_sha256: string;
+}>;
+
+function journalAuthorityError(error: unknown, context: string): never {
+  if (error instanceof LiteRuntimeDeploymentSlotProvisioningJournalError) {
+    if (error.code
+      === "lite_runtime_deployment_slot_provisioning_journal_contended") {
+      return authorityError(
+        "lite_runtime_deployment_slot_authority_recovery_contended",
+        `deployment-slot provisioning recovery lock is contended: ${context}`,
+      );
+    }
+    return authorityError(
+      "lite_runtime_deployment_slot_authority_recovery_required",
+      `deployment-slot provisioning journal is ambiguous or corrupt: ${context}`,
+    );
+  }
+  throw error;
+}
+
+function provisioningIntentWithoutDigest(args: Readonly<{
+  slotPathInspection: LiteRuntimeDeploymentSlotPathInspection;
+  runtimeDatabasePin: LiteRuntimeProtectedAuthorityDatabasePin;
+  createdAt: string;
+  authorityInstanceId: string;
+  carrierInstanceId: string;
+  firstBindingAnchorSha256: string;
+}>): LiteRuntimeDeploymentSlotProvisioningIntentWithoutDigest {
+  const runtimeInspection = assertLiteRuntimeProtectedAuthorityDatabasePinned(
+    args.runtimeDatabasePin,
+  );
+  const databaseInstanceId = readRuntimeDatabaseIdentity(args.runtimeDatabasePin);
+  return Object.freeze({
+    contract_version:
+      "aionis_lite_runtime_deployment_slot_provisioning_intent_v1" as const,
+    deployment_slot: args.slotPathInspection.deployment_slot,
+    launcher_root_instance_id: args.slotPathInspection.root_instance_id,
+    launcher_root_manifest_sha256:
+      args.slotPathInspection.root_manifest_sha256,
+    slot_path_mapping_sha256:
+      args.slotPathInspection.slot_path_mapping_sha256,
+    authority_state_path: args.slotPathInspection.authority_state_path,
+    lease_carrier_path: args.slotPathInspection.lease_carrier_path,
+    database_realpath: runtimeInspection.database_realpath,
+    database_instance_id: databaseInstanceId,
+    database_file_device: String(runtimeInspection.database_device),
+    database_file_inode: String(runtimeInspection.database_inode),
+    authority_instance_id: args.authorityInstanceId,
+    carrier_instance_id: args.carrierInstanceId,
+    first_binding_anchor_sha256: args.firstBindingAnchorSha256,
+    created_at: args.createdAt,
+  });
+}
+
+function assertProvisioningIntentMatchesSlot(
+  intent: LiteRuntimeDeploymentSlotProvisioningIntent,
+  inspection: LiteRuntimeDeploymentSlotPathInspection,
+): void {
+  const expected = Object.freeze({
+    deployment_slot: inspection.deployment_slot,
+    launcher_root_instance_id: inspection.root_instance_id,
+    launcher_root_manifest_sha256: inspection.root_manifest_sha256,
+    slot_path_mapping_sha256: inspection.slot_path_mapping_sha256,
+    authority_state_path: inspection.authority_state_path,
+    lease_carrier_path: inspection.lease_carrier_path,
+  });
+  const actual = Object.freeze({
+    deployment_slot: intent.deployment_slot,
+    launcher_root_instance_id: intent.launcher_root_instance_id,
+    launcher_root_manifest_sha256: intent.launcher_root_manifest_sha256,
+    slot_path_mapping_sha256: intent.slot_path_mapping_sha256,
+    authority_state_path: intent.authority_state_path,
+    lease_carrier_path: intent.lease_carrier_path,
+  });
+  if (stableStringify(actual) !== stableStringify(expected)) {
+    return authorityError(
+      "lite_runtime_deployment_slot_authority_integrity_failed",
+      "deployment-slot provisioning intent is detached from its configured-root mapping",
+    );
+  }
+  assertProvisioningSqliteNamespacesDisjoint(
+    inspection,
+    intent.database_realpath,
+  );
+}
+
+function assertProvisioningIntentMatchesRuntimePin(
+  intent: LiteRuntimeDeploymentSlotProvisioningIntent,
+  runtimeDatabasePin: LiteRuntimeProtectedAuthorityDatabasePin,
+): void {
+  const inspection = assertLiteRuntimeProtectedAuthorityDatabasePinned(
+    runtimeDatabasePin,
+  );
+  const databaseInstanceId = readRuntimeDatabaseIdentity(runtimeDatabasePin);
+  if (inspection.database_realpath !== intent.database_realpath
+    || String(inspection.database_device) !== intent.database_file_device
+    || String(inspection.database_inode) !== intent.database_file_inode
+    || databaseInstanceId !== intent.database_instance_id) {
+    return authorityError(
+      "lite_runtime_deployment_slot_authority_database_mismatch",
+      "deployment-slot provisioning recovery Runtime database pin changed from its durable intent",
+    );
+  }
+}
+
+function assertProvisioningIntentRuntimeReadOnly(
+  intent: LiteRuntimeDeploymentSlotProvisioningIntent,
+): void {
+  let pin: LiteRuntimeProtectedAuthorityDatabasePin | null = null;
+  let db: SqliteDatabase | null = null;
+  try {
+    pin = pinLiteRuntimeProtectedAuthorityDatabase(intent.database_realpath);
+    const inspection = assertLiteRuntimeProtectedAuthorityDatabasePinned(pin);
+    db = createSqliteReadOnlyDatabase(intent.database_realpath);
+    const databaseInstanceId = assertLiteRuntimeAuthorityIdentity(db);
+    if (String(inspection.database_device) !== intent.database_file_device
+      || String(inspection.database_inode) !== intent.database_file_inode
+      || databaseInstanceId !== intent.database_instance_id) {
+      return authorityError(
+        "lite_runtime_deployment_slot_authority_database_mismatch",
+        "deployment-slot provisioning intent Runtime database identity changed",
+      );
+    }
+  } finally {
+    try { db?.close(); } catch { /* preserve verification failure */ }
+    closePinBestEffort(pin);
+  }
+}
+
+function registrationFromProvisioningIntent(
+  intent: LiteRuntimeDeploymentSlotProvisioningIntent,
+  carrierDevice: string,
+  carrierInode: string,
+): RegistrationRow {
+  const withoutDigest: Omit<RegistrationRow, "registration_sha256"> = {
+    singleton: 1,
+    contract_version: "aionis_lite_runtime_deployment_slot_registration_v2",
+    deployment_slot: intent.deployment_slot,
+    launcher_root_instance_id: intent.launcher_root_instance_id,
+    launcher_root_manifest_sha256: intent.launcher_root_manifest_sha256,
+    slot_path_mapping_sha256: intent.slot_path_mapping_sha256,
+    authority_instance_id: intent.authority_instance_id,
+    carrier_instance_id: intent.carrier_instance_id,
+    lease_database_device: carrierDevice,
+    lease_database_inode: carrierInode,
+    database_realpath: intent.database_realpath,
+    database_instance_id: intent.database_instance_id,
+    database_file_device: intent.database_file_device,
+    database_file_inode: intent.database_file_inode,
+    first_binding_anchor_sha256: intent.first_binding_anchor_sha256,
+    created_at: intent.created_at,
+  };
+  return Object.freeze({
+    ...withoutDigest,
+    registration_sha256: sha256(registrationProjection(withoutDigest)),
+  });
+}
+
+function pairEvidenceFromProvisioningFiles(
+  intent: LiteRuntimeDeploymentSlotProvisioningIntent,
+): Readonly<{
+  evidence: ProvisioningPairEvidenceV1;
+  registration: RegistrationRow;
+}> {
+  const carrier = assertCanonicalProvisioningAuthorityFile(
+    intent.lease_carrier_path,
+    "lease carrier",
+  );
+  const state = assertCanonicalProvisioningAuthorityFile(
+    intent.authority_state_path,
+    "durable state",
+  );
+  const registration = registrationFromProvisioningIntent(
+    intent,
+    carrier.dev.toString(10),
+    carrier.ino.toString(10),
+  );
+  return Object.freeze({
+    evidence: Object.freeze({
+      contract_version:
+        "aionis_lite_runtime_deployment_slot_provisioning_pair_evidence_v1",
+      carrier_database_device: carrier.dev.toString(10),
+      carrier_database_inode: carrier.ino.toString(10),
+      state_database_device: state.dev.toString(10),
+      state_database_inode: state.ino.toString(10),
+      registration_sha256: registration.registration_sha256,
+    }),
+    registration,
+  });
+}
+
+function parseProvisioningPairEvidence(
+  receipt: LiteRuntimeDeploymentSlotProvisioningPhaseReceipt,
+): ProvisioningPairEvidenceV1 {
+  let value: unknown;
+  try {
+    value = JSON.parse(receipt.evidence_json) as unknown;
+  } catch {
+    return authorityError(
+      "lite_runtime_deployment_slot_authority_integrity_failed",
+      "deployment-slot provisioning pair evidence is not JSON",
+    );
+  }
+  if (!value || typeof value !== "object" || Array.isArray(value)) {
+    return authorityError(
+      "lite_runtime_deployment_slot_authority_integrity_failed",
+      "deployment-slot provisioning pair evidence is invalid",
+    );
+  }
+  const record = value as Record<string, unknown>;
+  assertExactKeys(record, [
+    "contract_version",
+    "carrier_database_device",
+    "carrier_database_inode",
+    "state_database_device",
+    "state_database_inode",
+    "registration_sha256",
+  ], "provisioning pair evidence");
+  if (record.contract_version
+      !== "aionis_lite_runtime_deployment_slot_provisioning_pair_evidence_v1"
+    || typeof record.carrier_database_device !== "string"
+    || typeof record.carrier_database_inode !== "string"
+    || typeof record.state_database_device !== "string"
+    || typeof record.state_database_inode !== "string"
+    || typeof record.registration_sha256 !== "string") {
+    return authorityError(
+      "lite_runtime_deployment_slot_authority_integrity_failed",
+      "deployment-slot provisioning pair evidence shape is invalid",
+    );
+  }
+  parseCanonicalU64(record.carrier_database_device, "carrier database device");
+  parseCanonicalU64(record.carrier_database_inode, "carrier database inode");
+  parseCanonicalU64(record.state_database_device, "state database device");
+  parseCanonicalU64(record.state_database_inode, "state database inode");
+  assertDigest(record.registration_sha256, "provisioning registration digest");
+  return Object.freeze({
+    contract_version:
+      "aionis_lite_runtime_deployment_slot_provisioning_pair_evidence_v1",
+    carrier_database_device: record.carrier_database_device,
+    carrier_database_inode: record.carrier_database_inode,
+    state_database_device: record.state_database_device,
+    state_database_inode: record.state_database_inode,
+    registration_sha256: record.registration_sha256,
+  });
+}
+
+function assertReceiptEvidence(
+  receipt: LiteRuntimeDeploymentSlotProvisioningPhaseReceipt,
+  expected: unknown,
+  label: string,
+): void {
+  if (receipt.evidence_json !== stableStringify(expected)) {
+    return authorityError(
+      "lite_runtime_deployment_slot_authority_integrity_failed",
+      `deployment-slot provisioning ${label} receipt evidence is invalid`,
+    );
+  }
+}
+
+function appendProvisioningPhase(args: Readonly<{
+  inspection: LiteRuntimeDeploymentSlotPathInspection;
+  intent: LiteRuntimeDeploymentSlotProvisioningIntent;
+  lock: LiteRuntimeDeploymentSlotProvisioningJournalLock;
+  phase: LiteRuntimeDeploymentSlotProvisioningPhase;
+  evidence: unknown;
+  recordedAt: Date;
+}>): LiteRuntimeDeploymentSlotProvisioningPhaseReceipt {
+  let receipt: LiteRuntimeDeploymentSlotProvisioningPhaseReceipt;
+  try {
+    receipt = appendLiteRuntimeDeploymentSlotProvisioningPhaseReceipt({
+      lock: args.lock,
+      phaseDirectoryPath: args.inspection.provisioning_phase_directory_path,
+      phase: args.phase,
+      evidence: args.evidence,
+      recordedAt: args.recordedAt,
+    });
+  } catch (error) {
+    return journalAuthorityError(error, `append ${args.phase}`);
+  }
+  observeProvisioningDurablePhaseForTesting(args.phase);
+  return receipt;
+}
+
+function assertProvisioningRecoveryLockLive(args: Readonly<{
+  inspection: LiteRuntimeDeploymentSlotPathInspection;
+  intent: LiteRuntimeDeploymentSlotProvisioningIntent;
+  lock: LiteRuntimeDeploymentSlotProvisioningJournalLock;
+  context: string;
+}>): void {
+  try {
+    assertLiteRuntimeDeploymentSlotProvisioningJournalLockLive({
+      lock: args.lock,
+      expectedIntentSha256: args.intent.intent_sha256,
+      phaseDirectoryPath: args.inspection.provisioning_phase_directory_path,
+    });
+  } catch (error) {
+    return journalAuthorityError(error, args.context);
+  }
+}
+
+function performProvisioningRecoveryMutation<T>(args: Readonly<{
+  inspection: LiteRuntimeDeploymentSlotPathInspection;
+  intent: LiteRuntimeDeploymentSlotProvisioningIntent;
+  lock: LiteRuntimeDeploymentSlotProvisioningJournalLock;
+  mutation: LiteRuntimeDeploymentSlotProvisioningPhysicalMutation;
+  context: string;
+  mutate: () => T;
+}>): T {
+  assertProvisioningRecoveryLockLive(args);
+  const testAction = provisioningPhysicalMutationObserverForTesting?.(
+    args.mutation,
+  );
+  if (testAction === "invalidate_journal_savepoint") {
+    invalidateLiteRuntimeDeploymentSlotProvisioningJournalLockForTesting(
+      args.lock,
+    );
+  }
+  assertProvisioningRecoveryLockLive(args);
+  const result = args.mutate();
+  assertProvisioningRecoveryLockLive(args);
+  return result;
+}
+
+function phaseReceipt(
+  receipts: readonly LiteRuntimeDeploymentSlotProvisioningPhaseReceipt[],
+  phase: LiteRuntimeDeploymentSlotProvisioningPhase,
+): LiteRuntimeDeploymentSlotProvisioningPhaseReceipt | null {
+  return receipts.find((receipt) => receipt.phase === phase) ?? null;
+}
+
+function provisioningInspectionFrom(
+  inspection: LiteRuntimeDeploymentSlotPathInspection,
+  intent: LiteRuntimeDeploymentSlotProvisioningIntent,
+  registration: RegistrationRow,
+): LiteRuntimeDeploymentSlotProvisioningInspection {
+  return Object.freeze({
+    contract_version:
+      "aionis_lite_runtime_deployment_slot_provisioning_inspection_v3" as const,
+    authority_scope:
+      "configured_root_deterministic_slot_path_registration" as const,
+    signing_eligible: false as const,
+    deployment_slot: intent.deployment_slot,
+    authority_state_path: inspection.authority_state_path,
+    lease_carrier_path: inspection.lease_carrier_path,
+    provisioning_journal_path: inspection.provisioning_journal_path,
+    provisioning_phase_directory_path:
+      inspection.provisioning_phase_directory_path,
+    authority_instance_id: intent.authority_instance_id,
+    carrier_instance_id: intent.carrier_instance_id,
+    database_realpath: intent.database_realpath,
+    database_instance_id: intent.database_instance_id,
+    database_file_device: intent.database_file_device,
+    database_file_inode: intent.database_file_inode,
+    first_binding_anchor_sha256: intent.first_binding_anchor_sha256,
+    registration_sha256: registration.registration_sha256,
+    provisioning_intent_sha256: intent.intent_sha256,
+    launcher_root_instance_id: intent.launcher_root_instance_id,
+    launcher_root_manifest_sha256: intent.launcher_root_manifest_sha256,
+    slot_path_mapping_sha256: intent.slot_path_mapping_sha256,
+    slot_path_mapping: "launcher_root_sha256_sharded_v1" as const,
+    trusted_launcher_root_selection: "required_not_established" as const,
+    slot_provisioning_recovery:
+      "conditional_process_live_classify_resume_abort_v1" as const,
+    provisioning_rollback_resistance:
+      "current_lineage_only_without_provisioning_journal_rollback" as const,
+    filesystem_locking_verification: "required_not_established" as const,
+    isolated_provisioning_lock_process: "required_not_established" as const,
+  });
+}
+
+function inspectCarrierInitializedReadOnly(args: Readonly<{
+  path: string;
+  deploymentSlot: string;
+  registration: RegistrationRow;
+}>): CarrierIdentityRow {
+  let pin: LiteRuntimeProtectedAuthorityDatabasePin | null = null;
+  let db: SqliteDatabase | null = null;
+  try {
+    pin = pinLiteRuntimeProtectedAuthorityDatabase(args.path);
+    db = createSqliteReadOnlyDatabase(args.path);
+    configureOpenedAuthorityDatabase(db);
+    return assertCarrierIdentity(
+      db,
+      args.deploymentSlot,
+      args.registration,
+      pin,
+    );
+  } finally {
+    try { db?.close(); } catch { /* preserve verification failure */ }
+    closePinBestEffort(pin);
+  }
+}
+
+function inspectStateInitializedReadOnly(args: Readonly<{
+  path: string;
+  registration: RegistrationRow;
+}>): ReplayedState {
+  let pin: LiteRuntimeProtectedAuthorityDatabasePin | null = null;
+  let db: SqliteDatabase | null = null;
+  try {
+    pin = pinLiteRuntimeProtectedAuthorityDatabase(args.path);
+    assertLiteRuntimeProtectedAuthorityDatabasePinned(pin);
+    db = createSqliteReadOnlyDatabase(args.path);
+    configureOpenedAuthorityDatabase(db);
+    const replayed = replayDurableState(db);
+    assertRegistrationMatches(replayed.registration, args.registration);
+    return replayed;
+  } finally {
+    try { db?.close(); } catch { /* preserve verification failure */ }
+    closePinBestEffort(pin);
+  }
+}
+
+function assertProvisioningPairIdentity(
+  intent: LiteRuntimeDeploymentSlotProvisioningIntent,
+  evidence: ProvisioningPairEvidenceV1,
+): RegistrationRow {
+  const carrier = assertCanonicalProvisioningAuthorityFile(
+    intent.lease_carrier_path,
+    "lease carrier",
+  );
+  const state = assertCanonicalProvisioningAuthorityFile(
+    intent.authority_state_path,
+    "durable state",
+  );
+  if (carrier.dev.toString(10) !== evidence.carrier_database_device
+    || carrier.ino.toString(10) !== evidence.carrier_database_inode
+    || state.dev.toString(10) !== evidence.state_database_device
+    || state.ino.toString(10) !== evidence.state_database_inode) {
+    return authorityError(
+      "lite_runtime_deployment_slot_authority_integrity_failed",
+      "deployment-slot provisioning database pair physical identity changed",
+    );
+  }
+  const registration = registrationFromProvisioningIntent(
+    intent,
+    evidence.carrier_database_device,
+    evidence.carrier_database_inode,
+  );
+  if (registration.registration_sha256 !== evidence.registration_sha256) {
+    return authorityError(
+      "lite_runtime_deployment_slot_authority_integrity_failed",
+      "deployment-slot provisioning pair registration digest is invalid",
+    );
+  }
+  return registration;
+}
+
+function expectedCarrierPhaseEvidence(
+  intent: LiteRuntimeDeploymentSlotProvisioningIntent,
+  registration: RegistrationRow,
+): Readonly<Record<string, string>> {
+  return Object.freeze({
+    contract_version:
+      "aionis_lite_runtime_deployment_slot_provisioning_carrier_ready_v1",
+    carrier_instance_id: intent.carrier_instance_id,
+    registration_sha256: registration.registration_sha256,
+  });
+}
+
+function expectedStatePhaseEvidence(
+  intent: LiteRuntimeDeploymentSlotProvisioningIntent,
+  registration: RegistrationRow,
+): Readonly<Record<string, string>> {
+  return Object.freeze({
+    contract_version:
+      "aionis_lite_runtime_deployment_slot_provisioning_state_ready_v1",
+    authority_instance_id: intent.authority_instance_id,
+    registration_sha256: registration.registration_sha256,
+  });
+}
+
+function expectedWitnessPhaseEvidence(
+  registration: RegistrationRow,
+  witness: CarrierStateWitnessRow,
+): Readonly<Record<string, string>> {
+  return Object.freeze({
+    contract_version:
+      "aionis_lite_runtime_deployment_slot_provisioning_initial_witness_v1",
+    registration_sha256: registration.registration_sha256,
+    witness_epoch: "1",
+    witness_sha256: witness.witness_sha256,
+  });
+}
+
+function expectedCommittedPhaseEvidence(
+  registration: RegistrationRow,
+  witnessSha256: string,
+): Readonly<Record<string, string>> {
+  return Object.freeze({
+    contract_version:
+      "aionis_lite_runtime_deployment_slot_provisioning_committed_v1",
+    initial_witness_sha256: witnessSha256,
+    registration_sha256: registration.registration_sha256,
+  });
+}
+
+function provisioningSlotEntryAllowlist(
+  inspection: LiteRuntimeDeploymentSlotPathInspection,
+): Set<string> {
+  const bootstrapMutexPath =
+    liteRuntimeDeploymentSlotProvisioningJournalBootstrapMutexPath(
+      inspection.provisioning_journal_path,
+    );
+  return new Set<string>([
+    basename(inspection.authority_state_path),
+    `${basename(inspection.authority_state_path)}-wal`,
+    `${basename(inspection.authority_state_path)}-shm`,
+    basename(inspection.lease_carrier_path),
+    `${basename(inspection.lease_carrier_path)}-wal`,
+    `${basename(inspection.lease_carrier_path)}-shm`,
+    basename(inspection.provisioning_journal_path),
+    basename(inspection.provisioning_phase_directory_path),
+    basename(bootstrapMutexPath),
+    `${basename(bootstrapMutexPath)}-journal`,
+  ]);
+}
+
+function assertNoUnexpectedProvisioningSlotEntries(
+  inspection: LiteRuntimeDeploymentSlotPathInspection,
+): void {
+  const allowed = provisioningSlotEntryAllowlist(inspection);
+  let entries: string[];
+  try {
+    entries = readdirSync(inspection.slot_directory_path);
+  } catch {
+    return authorityError(
+      "lite_runtime_deployment_slot_authority_integrity_failed",
+      "deployment-slot provisioning directory cannot be enumerated safely",
+    );
+  }
+  const unexpected = entries.filter((entry) => !allowed.has(entry));
+  if (unexpected.length !== 0) {
+    return authorityError(
+      "lite_runtime_deployment_slot_authority_integrity_failed",
+      "deployment-slot provisioning directory contains an unknown or aliased artifact",
+    );
+  }
+}
+
+function assertPublishedJournalScratchSlotEntries(
+  inspection: LiteRuntimeDeploymentSlotPathInspection,
+): void {
+  const allowed = provisioningSlotEntryAllowlist(inspection);
+  const stagingPath = liteRuntimeDeploymentSlotProvisioningJournalBootstrapPath(
+    inspection.provisioning_journal_path,
+  );
+  allowed.add(basename(stagingPath));
+  allowed.add(`${basename(stagingPath)}-journal`);
+  let entries: string[];
+  try {
+    entries = readdirSync(inspection.slot_directory_path);
+  } catch {
+    return authorityError(
+      "lite_runtime_deployment_slot_authority_integrity_failed",
+      "deployment-slot published-journal scratch directory cannot be enumerated safely",
+    );
+  }
+  if (entries.some((entry) => !allowed.has(entry))) {
+    return authorityError(
+      "lite_runtime_deployment_slot_authority_integrity_failed",
+      "deployment-slot published-journal scratch is mixed with unknown artifacts",
+    );
+  }
+}
+
+function assertRecoverableJournalBootstrapOnly(
+  inspection: LiteRuntimeDeploymentSlotPathInspection,
+  publication:
+    | "recoverable_staging"
+    | "recoverable_linked"
+    | "published_with_recoverable_staging",
+): void {
+  const stagingPath = liteRuntimeDeploymentSlotProvisioningJournalBootstrapPath(
+    inspection.provisioning_journal_path,
+  );
+  const bootstrapMutexPath =
+    liteRuntimeDeploymentSlotProvisioningJournalBootstrapMutexPath(
+      inspection.provisioning_journal_path,
+    );
+  const allowed = new Set<string>([
+    basename(bootstrapMutexPath),
+    `${basename(bootstrapMutexPath)}-journal`,
+    basename(stagingPath),
+    ...(publication === "recoverable_staging"
+      ? [`${basename(stagingPath)}-journal`]
+      : publication === "recoverable_linked"
+        ? [basename(inspection.provisioning_journal_path)]
+        : [
+            basename(inspection.provisioning_journal_path),
+            `${basename(stagingPath)}-journal`,
+          ]),
+  ]);
+  let entries: string[];
+  try {
+    entries = readdirSync(inspection.slot_directory_path);
+  } catch {
+    return authorityError(
+      "lite_runtime_deployment_slot_authority_integrity_failed",
+      "deployment-slot journal bootstrap directory cannot be enumerated safely",
+    );
+  }
+  if (entries.length === 0 || entries.some((entry) => !allowed.has(entry))) {
+    return authorityError(
+      "lite_runtime_deployment_slot_authority_integrity_failed",
+      "deployment-slot journal bootstrap is mixed with authority or unknown artifacts",
+    );
+  }
+}
+
+function isCarrierInitializedForProvisioning(
+  intent: LiteRuntimeDeploymentSlotProvisioningIntent,
+  registration: RegistrationRow,
+): boolean {
+  try {
+    inspectCarrierInitializedReadOnly({
+      path: intent.lease_carrier_path,
+      deploymentSlot: intent.deployment_slot,
+      registration,
+    });
+    return true;
+  } catch (error) {
+    if (isRecoverableUninitializedAuthorityDatabase(
+      intent.lease_carrier_path,
+      DEPLOYMENT_SLOT_LEASE_APPLICATION_ID,
+    )) return false;
+    throw error;
+  }
+}
+
+function isStateInitializedForProvisioning(
+  intent: LiteRuntimeDeploymentSlotProvisioningIntent,
+  registration: RegistrationRow,
+): boolean {
+  try {
+    inspectStateInitializedReadOnly({
+      path: intent.authority_state_path,
+      registration,
+    });
+    return true;
+  } catch (error) {
+    if (isRecoverableUninitializedAuthorityDatabase(
+      intent.authority_state_path,
+      DEPLOYMENT_SLOT_STATE_APPLICATION_ID,
+    )) return false;
+    throw error;
+  }
+}
+
+function assertGenesisProvisioningReplay(replayed: ReplayedState): void {
+  if (replayed.operations.size !== 0
+    || replayed.leaseEpochs.length !== 0
+    || replayed.reservations.length !== 0
+    || replayed.abandonments.size !== 0
+    || replayed.completions.size !== 0
+    || replayed.activeReservation !== null
+    || replayed.head !== null) {
+    return authorityError(
+      "lite_runtime_deployment_slot_authority_integrity_failed",
+      "deployment-slot provisioning prefix contains operational state before commit",
+    );
+  }
+}
+
+type VerifiedProvisioningPrefix = Readonly<{
+  registration: RegistrationRow | null;
+  initialWitness: CarrierStateWitnessRow | null;
+}>;
+
+function verifyProvisioningPrefix(args: Readonly<{
+  inspection: LiteRuntimeDeploymentSlotPathInspection;
+  intent: LiteRuntimeDeploymentSlotProvisioningIntent;
+  receipts: readonly LiteRuntimeDeploymentSlotProvisioningPhaseReceipt[];
+}>): VerifiedProvisioningPrefix {
+  assertProvisioningIntentMatchesSlot(args.intent, args.inspection);
+  assertProvisioningIntentRuntimeReadOnly(args.intent);
+  const journalPublication =
+    inspectLiteRuntimeDeploymentSlotProvisioningJournalPublication(
+      args.inspection.provisioning_journal_path,
+    );
+  if (journalPublication === "published_with_recoverable_staging") {
+    assertPublishedJournalScratchSlotEntries(args.inspection);
+  } else {
+    assertNoUnexpectedProvisioningSlotEntries(args.inspection);
+  }
+  const intentReceipt = phaseReceipt(args.receipts, "intent_durable");
+  if (!intentReceipt) {
+    if (args.receipts.length !== 0
+      || pathExists(args.intent.lease_carrier_path)
+      || pathExists(args.intent.authority_state_path)) {
+      return authorityError(
+        "lite_runtime_deployment_slot_authority_integrity_failed",
+        "deployment-slot provisioning physical state exists before its durable intent receipt",
+      );
+    }
+    return Object.freeze({ registration: null, initialWitness: null });
+  }
+  assertReceiptEvidence(intentReceipt, Object.freeze({
+    contract_version:
+      "aionis_lite_runtime_deployment_slot_provisioning_intent_durable_v1",
+    intent_sha256: args.intent.intent_sha256,
+  }), "intent");
+
+  const pairReceipt = phaseReceipt(args.receipts, "pair_inodes_durable");
+  if (!pairReceipt) {
+    const carrierExists = pathExists(args.intent.lease_carrier_path);
+    const stateExists = pathExists(args.intent.authority_state_path);
+    if (stateExists && !carrierExists) {
+      return authorityError(
+        "lite_runtime_deployment_slot_authority_integrity_failed",
+        "deployment-slot durable-state inode exists without its carrier prefix",
+      );
+    }
+    if (!isRecoverableUninitializedAuthorityDatabase(
+      args.intent.lease_carrier_path,
+      DEPLOYMENT_SLOT_LEASE_APPLICATION_ID,
+    )) {
+      return authorityError(
+        "lite_runtime_deployment_slot_authority_integrity_failed",
+        "deployment-slot carrier advanced without a durable pair receipt",
+      );
+    }
+    if (!isRecoverableUninitializedAuthorityDatabase(
+      args.intent.authority_state_path,
+      DEPLOYMENT_SLOT_STATE_APPLICATION_ID,
+    )) {
+      return authorityError(
+        "lite_runtime_deployment_slot_authority_integrity_failed",
+        "deployment-slot state advanced without a durable pair receipt",
+      );
+    }
+    const abortedReceipt = phaseReceipt(args.receipts, "aborted");
+    if (abortedReceipt) {
+      const previous = args.receipts.at(-2)!;
+      assertReceiptEvidence(abortedReceipt, Object.freeze({
+        contract_version:
+          "aionis_lite_runtime_deployment_slot_provisioning_aborted_v1",
+        prior_phase: previous.phase,
+        prior_receipt_sha256: previous.receipt_sha256,
+      }), "abort");
+    }
+    return Object.freeze({ registration: null, initialWitness: null });
+  }
+
+  const pairEvidence = parseProvisioningPairEvidence(pairReceipt);
+  const registration = assertProvisioningPairIdentity(args.intent, pairEvidence);
+  const carrierInitialized = isCarrierInitializedForProvisioning(
+    args.intent,
+    registration,
+  );
+  const stateInitialized = isStateInitializedForProvisioning(
+    args.intent,
+    registration,
+  );
+  const carrierReceipt = phaseReceipt(args.receipts, "carrier_ready");
+  const stateReceipt = phaseReceipt(args.receipts, "state_ready");
+  const witnessReceipt = phaseReceipt(args.receipts, "initial_witness_ready");
+  const committedReceipt = phaseReceipt(args.receipts, "committed");
+  const abortedReceipt = phaseReceipt(args.receipts, "aborted");
+
+  if (!carrierReceipt) {
+    if (stateInitialized) {
+      return authorityError(
+        "lite_runtime_deployment_slot_authority_integrity_failed",
+        "deployment-slot state initialized before the carrier receipt",
+      );
+    }
+    if (abortedReceipt) {
+      const previous = args.receipts.at(-2);
+      assertReceiptEvidence(abortedReceipt, Object.freeze({
+        contract_version:
+          "aionis_lite_runtime_deployment_slot_provisioning_aborted_v1",
+        prior_phase: previous?.phase ?? "intent_durable",
+        prior_receipt_sha256: previous?.receipt_sha256 ?? intentReceipt.receipt_sha256,
+      }), "abort");
+    }
+    return Object.freeze({ registration, initialWitness: null });
+  }
+  assertReceiptEvidence(
+    carrierReceipt,
+    expectedCarrierPhaseEvidence(args.intent, registration),
+    "carrier-ready",
+  );
+  if (!carrierInitialized) {
+    return authorityError(
+      "lite_runtime_deployment_slot_authority_integrity_failed",
+      "deployment-slot carrier-ready receipt has no initialized carrier",
+    );
+  }
+
+  if (!stateReceipt) {
+    if (stateInitialized) {
+      const ahead = inspectProvisionedAuthorityReadOnly({
+        authorityStatePath: args.intent.authority_state_path,
+        leaseCarrierPath: args.intent.lease_carrier_path,
+        deploymentSlot: args.intent.deployment_slot,
+        expectedRegistration: registration,
+        requireWitness: false,
+      });
+      assertGenesisProvisioningReplay(ahead.replayed);
+      if (ahead.witnessCount !== 0) {
+        return authorityError(
+          "lite_runtime_deployment_slot_authority_integrity_failed",
+          "deployment-slot witness advanced before the state-ready receipt",
+        );
+      }
+    }
+    if (abortedReceipt) {
+      const previous = args.receipts.at(-2)!;
+      assertReceiptEvidence(abortedReceipt, Object.freeze({
+        contract_version:
+          "aionis_lite_runtime_deployment_slot_provisioning_aborted_v1",
+        prior_phase: previous.phase,
+        prior_receipt_sha256: previous.receipt_sha256,
+      }), "abort");
+    }
+    return Object.freeze({ registration, initialWitness: null });
+  }
+  assertReceiptEvidence(
+    stateReceipt,
+    expectedStatePhaseEvidence(args.intent, registration),
+    "state-ready",
+  );
+  if (!stateInitialized) {
+    return authorityError(
+      "lite_runtime_deployment_slot_authority_integrity_failed",
+      "deployment-slot state-ready receipt has no initialized state",
+    );
+  }
+
+  const pair = inspectProvisionedAuthorityReadOnly({
+    authorityStatePath: args.intent.authority_state_path,
+    leaseCarrierPath: args.intent.lease_carrier_path,
+    deploymentSlot: args.intent.deployment_slot,
+    expectedRegistration: registration,
+    requireWitness: witnessReceipt !== null || committedReceipt !== null,
+  });
+  if (!committedReceipt) assertGenesisProvisioningReplay(pair.replayed);
+  if (!witnessReceipt) {
+    if (pair.witnessCount > 1) {
+      return authorityError(
+        "lite_runtime_deployment_slot_authority_integrity_failed",
+        "deployment-slot provisioning gained multiple witnesses before commit",
+      );
+    }
+    if (abortedReceipt) {
+      const previous = args.receipts.at(-2)!;
+      assertReceiptEvidence(abortedReceipt, Object.freeze({
+        contract_version:
+          "aionis_lite_runtime_deployment_slot_provisioning_aborted_v1",
+        prior_phase: previous.phase,
+        prior_receipt_sha256: previous.receipt_sha256,
+      }), "abort");
+    }
+    return Object.freeze({
+      registration,
+      initialWitness: pair.initialWitness,
+    });
+  }
+  if (!pair.initialWitness || pair.initialWitness.witness_epoch !== "1") {
+    return authorityError(
+      "lite_runtime_deployment_slot_authority_integrity_failed",
+      "deployment-slot initial witness receipt has no witness epoch 1",
+    );
+  }
+  assertReceiptEvidence(
+    witnessReceipt,
+    expectedWitnessPhaseEvidence(registration, pair.initialWitness),
+    "initial-witness",
+  );
+  if (!committedReceipt) {
+    if (pair.witnessCount !== 1) {
+      return authorityError(
+        "lite_runtime_deployment_slot_authority_integrity_failed",
+        "deployment-slot pre-commit witness prefix is not genesis",
+      );
+    }
+    if (abortedReceipt) {
+      const previous = args.receipts.at(-2)!;
+      assertReceiptEvidence(abortedReceipt, Object.freeze({
+        contract_version:
+          "aionis_lite_runtime_deployment_slot_provisioning_aborted_v1",
+        prior_phase: previous.phase,
+        prior_receipt_sha256: previous.receipt_sha256,
+      }), "abort");
+    }
+    return Object.freeze({ registration, initialWitness: pair.initialWitness });
+  }
+  assertReceiptEvidence(
+    committedReceipt,
+    expectedCommittedPhaseEvidence(registration, pair.initialWitness.witness_sha256),
+    "commit",
+  );
+  if (abortedReceipt) {
+    return authorityError(
+      "lite_runtime_deployment_slot_authority_integrity_failed",
+      "deployment-slot committed provisioning cannot also be aborted",
+    );
+  }
+  return Object.freeze({ registration, initialWitness: pair.initialWitness });
+}
+
+function provisioningClassificationResult(args: Readonly<{
+  inspection: LiteRuntimeDeploymentSlotPathInspection;
+  classification:
+    | "absent"
+    | "incomplete"
+    | "committed"
+    | "aborted"
+    | "ambiguous_or_corrupt";
+  lastDurablePhase: LiteRuntimeDeploymentSlotProvisioningDurablePhase | null;
+  recoveryAction: "provision" | "resume" | "none" | "manual_intervention";
+  intentSha256: string | null;
+  reasonCode: string;
+  provisioningInspection?: LiteRuntimeDeploymentSlotProvisioningInspection | null;
+}>): LiteRuntimeDeploymentSlotProvisioningClassification {
+  return Object.freeze({
+    contract_version:
+      "aionis_lite_runtime_deployment_slot_provisioning_classification_v1",
+    authority_scope: "configured_root_slot_path_provisioning_recovery",
+    signing_eligible: false,
+    deployment_slot: args.inspection.deployment_slot,
+    authority_state_path: args.inspection.authority_state_path,
+    lease_carrier_path: args.inspection.lease_carrier_path,
+    provisioning_journal_path: args.inspection.provisioning_journal_path,
+    provisioning_phase_directory_path:
+      args.inspection.provisioning_phase_directory_path,
+    classification: args.classification,
+    last_durable_phase: args.lastDurablePhase,
+    recovery_action: args.recoveryAction,
+    provisioning_intent_sha256: args.intentSha256,
+    reason_code: args.reasonCode,
+    provisioning_inspection: args.provisioningInspection ?? null,
+    rollback_resistance:
+      "current_lineage_only_without_provisioning_journal_rollback" as const,
+    recovery_exclusivity:
+      "conditional_process_live_without_isolated_lock_process" as const,
+  });
+}
+
+/**
+ * Semantic read-only classification of the configured-root prefix. SQLite WAL
+ * readers may refresh transient SHM coordination bytes; authority rows,
+ * receipts, journal intent, and main/WAL durable state are never mutated.
+ */
+export function classifyLiteRuntimeDeploymentSlotAuthorityProvisioning(
+  args: Readonly<{ slotPath: LiteRuntimeDeploymentSlotPathCapability }>,
+): LiteRuntimeDeploymentSlotProvisioningClassification {
+  const inspection = assertLiteRuntimeDeploymentSlotPathCapability(args.slotPath);
+  if (!pathExists(inspection.slot_directory_path)) {
+    return provisioningClassificationResult({
+      inspection,
+      classification: "absent",
+      lastDurablePhase: null,
+      recoveryAction: "provision",
+      intentSha256: null,
+      reasonCode: "slot_directory_absent",
+    });
+  }
+  let intent: LiteRuntimeDeploymentSlotProvisioningIntent | null = null;
+  try {
+    assertLiteRuntimeDeploymentSlotPathProvisioned(args.slotPath);
+    const journalPublication =
+      inspectLiteRuntimeDeploymentSlotProvisioningJournalPublication(
+        inspection.provisioning_journal_path,
+      );
+    if (journalPublication === "recoverable_staging"
+      || journalPublication === "recoverable_linked") {
+      assertRecoverableJournalBootstrapOnly(inspection, journalPublication);
+      return provisioningClassificationResult({
+        inspection,
+        classification: "incomplete",
+        lastDurablePhase: null,
+        recoveryAction: "resume",
+        intentSha256: null,
+        reasonCode: journalPublication === "recoverable_staging"
+          ? "recoverable_journal_bootstrap_staging"
+          : "recoverable_journal_bootstrap_linked",
+      });
+    }
+    const hasPublishedJournalScratch =
+      journalPublication === "published_with_recoverable_staging";
+    if (hasPublishedJournalScratch) {
+      assertPublishedJournalScratchSlotEntries(inspection);
+    } else {
+      assertNoUnexpectedProvisioningSlotEntries(inspection);
+    }
+    if (journalPublication === "absent") {
+      const entries = readdirSync(inspection.slot_directory_path);
+      const bootstrapMutexPath =
+        liteRuntimeDeploymentSlotProvisioningJournalBootstrapMutexPath(
+          inspection.provisioning_journal_path,
+        );
+      const bootstrapMutexEntries = new Set([
+        basename(bootstrapMutexPath),
+        `${basename(bootstrapMutexPath)}-journal`,
+      ]);
+      if (entries.length === 0
+        || entries.every((entry) => bootstrapMutexEntries.has(entry))) {
+        return provisioningClassificationResult({
+          inspection,
+          classification: "incomplete",
+          lastDurablePhase: null,
+          recoveryAction: "resume",
+          intentSha256: null,
+          reasonCode: "empty_slot_directory",
+        });
+      }
+      return provisioningClassificationResult({
+        inspection,
+        classification: "ambiguous_or_corrupt",
+        lastDurablePhase: null,
+        recoveryAction: "manual_intervention",
+        intentSha256: null,
+        reasonCode: "journal_missing_with_artifacts",
+      });
+    }
+    intent = readLiteRuntimeDeploymentSlotProvisioningJournal(
+      inspection.provisioning_journal_path,
+    );
+    const receipts = readLiteRuntimeDeploymentSlotProvisioningPhaseReceipts({
+      phaseDirectoryPath: inspection.provisioning_phase_directory_path,
+      intent,
+    });
+    const verified = verifyProvisioningPrefix({ inspection, intent, receipts });
+    const last = receipts.at(-1)?.phase ?? null;
+    if (hasPublishedJournalScratch) {
+      return provisioningClassificationResult({
+        inspection,
+        classification: "incomplete",
+        lastDurablePhase: last,
+        recoveryAction: "resume",
+        intentSha256: intent.intent_sha256,
+        reasonCode: "published_journal_with_recoverable_bootstrap_scratch",
+      });
+    }
+    if (last === "committed") {
+      if (!verified.registration) {
+        throw new Error("committed provisioning registration is unavailable");
+      }
+      return provisioningClassificationResult({
+        inspection,
+        classification: "committed",
+        lastDurablePhase: last,
+        recoveryAction: "none",
+        intentSha256: intent.intent_sha256,
+        reasonCode: "committed_prefix_verified",
+        provisioningInspection: provisioningInspectionFrom(
+          inspection,
+          intent,
+          verified.registration,
+        ),
+      });
+    }
+    if (last === "aborted") {
+      return provisioningClassificationResult({
+        inspection,
+        classification: "aborted",
+        lastDurablePhase: last,
+        recoveryAction: "none",
+        intentSha256: intent.intent_sha256,
+        reasonCode: "abort_tombstone_verified",
+      });
+    }
+    return provisioningClassificationResult({
+      inspection,
+      classification: "incomplete",
+      lastDurablePhase: last,
+      recoveryAction: "resume",
+      intentSha256: intent.intent_sha256,
+      reasonCode: "recoverable_prefix_verified",
+    });
+  } catch (error) {
+    const code = error && typeof error === "object" && "code" in error
+      && typeof (error as { code?: unknown }).code === "string"
+      ? (error as { code: string }).code
+      : "provisioning_prefix_verification_failed";
+    return provisioningClassificationResult({
+      inspection,
+      classification: "ambiguous_or_corrupt",
+      lastDurablePhase: null,
+      recoveryAction: "manual_intervention",
+      intentSha256: intent?.intent_sha256 ?? null,
+      reasonCode: code,
+    });
+  }
+}
+
+function ensureInitialProvisioningWitness(
+  intent: LiteRuntimeDeploymentSlotProvisioningIntent,
+  registration: RegistrationRow,
+): CarrierStateWitnessRow {
+  const before = inspectProvisionedAuthorityReadOnly({
+    authorityStatePath: intent.authority_state_path,
+    leaseCarrierPath: intent.lease_carrier_path,
+    deploymentSlot: intent.deployment_slot,
+    expectedRegistration: registration,
+    requireWitness: false,
+  });
+  assertGenesisProvisioningReplay(before.replayed);
+  if (before.witnessCount !== 0) {
+    if (before.witnessCount !== 1
+      || !before.initialWitness
+      || before.initialWitness.witness_epoch !== "1") {
+      return authorityError(
+        "lite_runtime_deployment_slot_authority_integrity_failed",
+        "deployment-slot provisioning initial witness prefix is invalid",
+      );
+    }
+    return before.initialWitness;
+  }
+
+  let carrierPin: LiteRuntimeProtectedAuthorityDatabasePin | null = null;
+  let statePin: LiteRuntimeProtectedAuthorityDatabasePin | null = null;
+  let carrierDatabase: LiteRuntimeDatabase | null = null;
+  let stateDatabase: LiteRuntimeDatabase | null = null;
+  try {
+    carrierPin = pinLiteRuntimeProtectedAuthorityDatabase(intent.lease_carrier_path);
+    statePin = pinLiteRuntimeProtectedAuthorityDatabase(intent.authority_state_path);
+    carrierDatabase = openLiteRuntimeProtectedAuthorityDatabase(carrierPin);
+    stateDatabase = openLiteRuntimeProtectedAuthorityDatabase(statePin);
+    configureOpenedAuthorityDatabase(carrierDatabase.db);
+    configureOpenedAuthorityDatabase(stateDatabase.db);
+    const carrierIdentity = assertCarrierIdentity(
+      carrierDatabase.db,
+      intent.deployment_slot,
+      registration,
+      carrierPin,
+    );
+    const replayed = replayDurableState(stateDatabase.db);
+    assertRegistrationMatches(replayed.registration, registration);
+    assertGenesisProvisioningReplay(replayed);
+    const witness = buildCarrierWitness(
+      replayed,
+      statePin,
+      "1",
+      intent.created_at,
+      null,
+    );
+    carrierDatabase.db.exec("BEGIN IMMEDIATE");
+    try {
+      insertCarrierWitness(carrierDatabase.db, witness);
+      carrierDatabase.db.exec("COMMIT");
+    } catch (error) {
+      try { carrierDatabase.db.exec("ROLLBACK"); } catch { /* preserve first error */ }
+      throw error;
+    }
+    assertLiteRuntimeProtectedAuthorityDatabasePinned(carrierPin);
+    syncStateDatabaseFiles(intent.lease_carrier_path);
+    const witnessed = assertCarrierWitnesses(
+      carrierDatabase.db,
+      carrierIdentity,
+      replayed,
+      statePin,
+    );
+    if (witnessed.witness_epoch !== "1"
+      || witnessed.witness_sha256 !== witness.witness_sha256) {
+      return authorityError(
+        "lite_runtime_deployment_slot_authority_integrity_failed",
+        "deployment-slot initial witness changed during provisioning",
+      );
+    }
+    return witnessed;
+  } finally {
+    closeDatabaseBestEffort(stateDatabase);
+    closeDatabaseBestEffort(carrierDatabase);
+    closePinBestEffort(statePin);
+    closePinBestEffort(carrierPin);
+  }
+}
+
+function readProvisioningReceipts(
+  inspection: LiteRuntimeDeploymentSlotPathInspection,
+  intent: LiteRuntimeDeploymentSlotProvisioningIntent,
+): readonly LiteRuntimeDeploymentSlotProvisioningPhaseReceipt[] {
+  try {
+    return readLiteRuntimeDeploymentSlotProvisioningPhaseReceipts({
+      phaseDirectoryPath: inspection.provisioning_phase_directory_path,
+      intent,
+    });
+  } catch (error) {
+    return journalAuthorityError(error, "read durable phase prefix");
+  }
+}
+
+function advanceProvisioningRecovery(args: Readonly<{
+  slotPath: LiteRuntimeDeploymentSlotPathCapability;
+  inspection: LiteRuntimeDeploymentSlotPathInspection;
+  intent: LiteRuntimeDeploymentSlotProvisioningIntent;
+  runtimeDatabasePin: LiteRuntimeProtectedAuthorityDatabasePin;
+  lock: LiteRuntimeDeploymentSlotProvisioningJournalLock;
+  recordedAt: Date;
+}>): LiteRuntimeDeploymentSlotProvisioningInspection {
+  assertProvisioningIntentMatchesSlot(args.intent, args.inspection);
+  assertProvisioningIntentMatchesRuntimePin(args.intent, args.runtimeDatabasePin);
+  assertProvisioningRecoveryLockLive({
+    ...args,
+    context: "begin provisioning recovery",
+  });
+  let receipts = [...readProvisioningReceipts(args.inspection, args.intent)];
+  if (receipts.at(-1)?.phase === "aborted") {
+    return authorityError(
+      "lite_runtime_deployment_slot_authority_recovery_aborted",
+      "deployment-slot provisioning is aborted in the current durable journal lineage",
+    );
+  }
+  const initiallyVerified = verifyProvisioningPrefix({
+    inspection: args.inspection,
+    intent: args.intent,
+    receipts,
+  });
+  if (receipts.at(-1)?.phase === "committed") {
+    if (!initiallyVerified.registration) {
+      return authorityError(
+        "lite_runtime_deployment_slot_authority_integrity_failed",
+        "deployment-slot committed registration is unavailable",
+      );
+    }
+    return provisioningInspectionFrom(
+      args.inspection,
+      args.intent,
+      initiallyVerified.registration,
+    );
+  }
+
+  if (!phaseReceipt(receipts, "intent_durable")) {
+    receipts.push(appendProvisioningPhase({
+      inspection: args.inspection,
+      intent: args.intent,
+      lock: args.lock,
+      phase: "intent_durable",
+      evidence: Object.freeze({
+        contract_version:
+          "aionis_lite_runtime_deployment_slot_provisioning_intent_durable_v1",
+        intent_sha256: args.intent.intent_sha256,
+      }),
+      recordedAt: args.recordedAt,
+    }));
+  }
+
+  let registration: RegistrationRow;
+  const existingPairReceipt = phaseReceipt(receipts, "pair_inodes_durable");
+  if (!existingPairReceipt) {
+    const carrierExists = pathExists(args.intent.lease_carrier_path);
+    const stateExists = pathExists(args.intent.authority_state_path);
+    if (stateExists && !carrierExists) {
+      return authorityError(
+        "lite_runtime_deployment_slot_authority_integrity_failed",
+        "deployment-slot provisioning state inode exists without its carrier",
+      );
+    }
+    if (!isRecoverableUninitializedAuthorityDatabase(
+      args.intent.lease_carrier_path,
+      DEPLOYMENT_SLOT_LEASE_APPLICATION_ID,
+    )) {
+      return authorityError(
+        "lite_runtime_deployment_slot_authority_integrity_failed",
+        "deployment-slot provisioning carrier prefix is not recoverable",
+      );
+    }
+    if (!isRecoverableUninitializedAuthorityDatabase(
+      args.intent.authority_state_path,
+      DEPLOYMENT_SLOT_STATE_APPLICATION_ID,
+    )) {
+      return authorityError(
+        "lite_runtime_deployment_slot_authority_integrity_failed",
+        "deployment-slot provisioning state prefix is not recoverable",
+      );
+    }
+    if (!carrierExists) {
+      performProvisioningRecoveryMutation({
+        ...args,
+        mutation: "create_lease_carrier_inode",
+        context: "create lease-carrier inode",
+        mutate: () => createEmptyAuthorityFile(args.intent.lease_carrier_path),
+      });
+    }
+    if (!stateExists) {
+      performProvisioningRecoveryMutation({
+        ...args,
+        mutation: "create_durable_state_inode",
+        context: "create durable-state inode",
+        mutate: () => createEmptyAuthorityFile(args.intent.authority_state_path),
+      });
+    }
+    const pair = pairEvidenceFromProvisioningFiles(args.intent);
+    registration = pair.registration;
+    receipts.push(appendProvisioningPhase({
+      inspection: args.inspection,
+      intent: args.intent,
+      lock: args.lock,
+      phase: "pair_inodes_durable",
+      evidence: pair.evidence,
+      recordedAt: args.recordedAt,
+    }));
+  } else {
+    registration = assertProvisioningPairIdentity(
+      args.intent,
+      parseProvisioningPairEvidence(existingPairReceipt),
+    );
+  }
+
+  if (!phaseReceipt(receipts, "carrier_ready")) {
+    if (!isCarrierInitializedForProvisioning(args.intent, registration)) {
+      performProvisioningRecoveryMutation({
+        ...args,
+        mutation: "initialize_lease_carrier",
+        context: "initialize lease carrier",
+        mutate: () => initializeCarrier(args.intent.lease_carrier_path, {
+          singleton: 1,
+          contract_version:
+            "aionis_lite_runtime_deployment_slot_lease_identity_v1",
+          deployment_slot: args.intent.deployment_slot,
+          authority_instance_id: args.intent.authority_instance_id,
+          carrier_instance_id: args.intent.carrier_instance_id,
+          state_database_device:
+            assertCanonicalProvisioningAuthorityFile(
+              args.intent.authority_state_path,
+              "durable state",
+            ).dev.toString(10),
+          state_database_inode:
+            assertCanonicalProvisioningAuthorityFile(
+              args.intent.authority_state_path,
+              "durable state",
+            ).ino.toString(10),
+          registration_sha256: registration.registration_sha256,
+          created_at: args.intent.created_at,
+        }),
+      });
+    }
+    inspectCarrierInitializedReadOnly({
+      path: args.intent.lease_carrier_path,
+      deploymentSlot: args.intent.deployment_slot,
+      registration,
+    });
+    receipts.push(appendProvisioningPhase({
+      inspection: args.inspection,
+      intent: args.intent,
+      lock: args.lock,
+      phase: "carrier_ready",
+      evidence: expectedCarrierPhaseEvidence(args.intent, registration),
+      recordedAt: args.recordedAt,
+    }));
+  }
+
+  if (!phaseReceipt(receipts, "state_ready")) {
+    if (!isStateInitializedForProvisioning(args.intent, registration)) {
+      performProvisioningRecoveryMutation({
+        ...args,
+        mutation: "initialize_durable_state",
+        context: "initialize durable state",
+        mutate: () => initializeState(
+          args.intent.authority_state_path,
+          registration,
+        ),
+      });
+    }
+    const replayed = inspectStateInitializedReadOnly({
+      path: args.intent.authority_state_path,
+      registration,
+    });
+    assertGenesisProvisioningReplay(replayed);
+    receipts.push(appendProvisioningPhase({
+      inspection: args.inspection,
+      intent: args.intent,
+      lock: args.lock,
+      phase: "state_ready",
+      evidence: expectedStatePhaseEvidence(args.intent, registration),
+      recordedAt: args.recordedAt,
+    }));
+  }
+
+  const initialWitness = performProvisioningRecoveryMutation({
+    ...args,
+    mutation: "ensure_initial_carrier_witness",
+    context: "ensure initial carrier witness",
+    mutate: () => ensureInitialProvisioningWitness(args.intent, registration),
+  });
+  if (!phaseReceipt(receipts, "initial_witness_ready")) {
+    receipts.push(appendProvisioningPhase({
+      inspection: args.inspection,
+      intent: args.intent,
+      lock: args.lock,
+      phase: "initial_witness_ready",
+      evidence: expectedWitnessPhaseEvidence(registration, initialWitness),
+      recordedAt: args.recordedAt,
+    }));
+  }
+
+  assertLiteRuntimeDeploymentSlotPathProvisioned(args.slotPath);
+  assertProvisioningIntentMatchesRuntimePin(args.intent, args.runtimeDatabasePin);
+  if (!phaseReceipt(receipts, "committed")) {
+    receipts.push(appendProvisioningPhase({
+      inspection: args.inspection,
+      intent: args.intent,
+      lock: args.lock,
+      phase: "committed",
+      evidence: expectedCommittedPhaseEvidence(
+        registration,
+        initialWitness.witness_sha256,
+      ),
+      recordedAt: args.recordedAt,
+    }));
+  }
+  const verified = verifyProvisioningPrefix({
+    inspection: args.inspection,
+    intent: args.intent,
+    receipts,
+  });
+  if (!verified.registration) {
+    return authorityError(
+      "lite_runtime_deployment_slot_authority_integrity_failed",
+      "deployment-slot committed provisioning lost its registration",
+    );
+  }
+  return provisioningInspectionFrom(
+    args.inspection,
+    args.intent,
+    verified.registration,
+  );
 }
 
 /**
@@ -1383,149 +3088,382 @@ export function provisionLiteRuntimeDeploymentSlotAuthority(args: Readonly<{
   const slotPathInspection = assertLiteRuntimeDeploymentSlotPathCapability(
     args.slotPath,
   );
-  const authorityStatePath = slotPathInspection.authority_state_path;
-  const leaseCarrierPath = slotPathInspection.lease_carrier_path;
-  const deploymentSlot = slotPathInspection.deployment_slot;
   const runtimeInspection = assertLiteRuntimeProtectedAuthorityDatabasePinned(
     args.runtimeDatabasePin,
   );
-  assertDisjointSqlitePathNamespaces([
-    { label: "durable state", path: authorityStatePath },
-    { label: "lease carrier", path: leaseCarrierPath },
-    { label: "Runtime database", path: runtimeInspection.database_realpath },
-  ]);
-  const databaseInstanceId = readRuntimeDatabaseIdentity(args.runtimeDatabasePin);
+  assertProvisioningSqliteNamespacesDisjoint(
+    slotPathInspection,
+    runtimeInspection.database_realpath,
+  );
   const createdAt = canonicalTime(args.now ?? new Date(), "provisioning time");
-  const authorityInstanceId = randomDigest(
-    args.randomBytesFactory,
-    "authority instance",
-  );
-  const carrierInstanceId = randomDigest(
-    args.randomBytesFactory,
-    "carrier instance",
-  );
-  const firstBindingAnchorSha256 = randomDigest(
-    args.randomBytesFactory,
-    "first-binding anchor",
-  );
   prepareLiteRuntimeDeploymentSlotPathForProvisioning(args.slotPath);
-  assertTrustedProvisioningParent(authorityStatePath);
-  assertTrustedProvisioningParent(leaseCarrierPath);
-  assertProvisioningPairAbsent(authorityStatePath, leaseCarrierPath);
+  assertProvisioningPairAbsent(
+    slotPathInspection.authority_state_path,
+    slotPathInspection.lease_carrier_path,
+  );
+  const intentWithoutDigest = provisioningIntentWithoutDigest({
+    slotPathInspection,
+    runtimeDatabasePin: args.runtimeDatabasePin,
+    createdAt,
+    authorityInstanceId: randomDigest(
+      args.randomBytesFactory,
+      "authority instance",
+    ),
+    carrierInstanceId: randomDigest(
+      args.randomBytesFactory,
+      "carrier instance",
+    ),
+    firstBindingAnchorSha256: randomDigest(
+      args.randomBytesFactory,
+      "first-binding anchor",
+    ),
+  });
+  let intent: LiteRuntimeDeploymentSlotProvisioningIntent;
+  try {
+    intent = createLiteRuntimeDeploymentSlotProvisioningJournal({
+      journalPath: slotPathInspection.provisioning_journal_path,
+      intentWithoutDigest,
+    });
+  } catch (error) {
+    return journalAuthorityError(error, "create durable provisioning intent");
+  }
+  let lock: LiteRuntimeDeploymentSlotProvisioningJournalLock | null = null;
+  try {
+    lock = acquireLiteRuntimeDeploymentSlotProvisioningJournalLock(
+      {
+        journalPath: slotPathInspection.provisioning_journal_path,
+        expectedIntentSha256: intent.intent_sha256,
+      },
+    );
+    return advanceProvisioningRecovery({
+      slotPath: args.slotPath,
+      inspection: slotPathInspection,
+      intent,
+      runtimeDatabasePin: args.runtimeDatabasePin,
+      lock,
+      recordedAt: args.now ?? new Date(),
+    });
+  } catch (error) {
+    return journalAuthorityError(error, "provision configured-root authority");
+  } finally {
+    if (lock) {
+      try {
+        releaseLiteRuntimeDeploymentSlotProvisioningJournalLock(lock);
+      } catch (error) {
+        journalAuthorityError(error, "release provisioning recovery lock");
+      }
+    }
+  }
+}
 
-  // Create both inodes before initializing either database so each side can
-  // bind the other's physical identity without a circular pathname lookup.
-  createEmptyAuthorityFile(leaseCarrierPath);
-  createEmptyAuthorityFile(authorityStatePath);
-  const carrierStat = lstatSync(leaseCarrierPath, { bigint: true });
-  const stateStat = lstatSync(authorityStatePath, { bigint: true });
-  if (!carrierStat.isFile() || carrierStat.nlink !== 1n
-    || !stateStat.isFile() || stateStat.nlink !== 1n) {
+/** Explicitly resumes only a verified incomplete provisioning prefix. */
+export function resumeLiteRuntimeDeploymentSlotAuthorityProvisioning(
+  args: Readonly<{
+    slotPath: LiteRuntimeDeploymentSlotPathCapability;
+    runtimeDatabasePin: LiteRuntimeProtectedAuthorityDatabasePin;
+    now?: Date;
+    randomBytesFactory?: (size: number) => Uint8Array;
+  }>,
+): LiteRuntimeDeploymentSlotProvisioningInspection {
+  const preflightInspection = assertLiteRuntimeDeploymentSlotPathCapability(
+    args.slotPath,
+  );
+  const preflightRuntime = assertLiteRuntimeProtectedAuthorityDatabasePinned(
+    args.runtimeDatabasePin,
+  );
+  assertProvisioningSqliteNamespacesDisjoint(
+    preflightInspection,
+    preflightRuntime.database_realpath,
+  );
+  const classified = classifyLiteRuntimeDeploymentSlotAuthorityProvisioning({
+    slotPath: args.slotPath,
+  });
+  if (classified.classification === "committed") {
+    if (!classified.provisioning_inspection) {
+      return authorityError(
+        "lite_runtime_deployment_slot_authority_integrity_failed",
+        "deployment-slot committed provisioning inspection is unavailable",
+      );
+    }
+    const inspection = assertLiteRuntimeDeploymentSlotPathProvisioned(args.slotPath);
+    let intent: LiteRuntimeDeploymentSlotProvisioningIntent;
+    try {
+      intent = readLiteRuntimeDeploymentSlotProvisioningJournal(
+        inspection.provisioning_journal_path,
+      );
+    } catch (error) {
+      return journalAuthorityError(error, "revalidate committed recovery intent");
+    }
+    assertProvisioningIntentMatchesSlot(intent, inspection);
+    assertProvisioningIntentMatchesRuntimePin(intent, args.runtimeDatabasePin);
+    return classified.provisioning_inspection;
+  }
+  if (classified.classification === "aborted") {
+    return authorityError(
+      "lite_runtime_deployment_slot_authority_recovery_aborted",
+      "deployment-slot provisioning abort tombstone blocks the current durable journal lineage",
+    );
+  }
+  if (classified.classification === "absent") {
     return authorityError(
       "lite_runtime_deployment_slot_authority_recovery_required",
-      "deployment-slot lease carrier changed during provisioning",
+      "deployment-slot provisioning is absent; use the one-time provision operation",
+    );
+  }
+  if (classified.classification === "ambiguous_or_corrupt") {
+    return authorityError(
+      "lite_runtime_deployment_slot_authority_recovery_required",
+      "deployment-slot provisioning is ambiguous or corrupt and requires manual intervention",
     );
   }
 
-  const registrationWithoutDigest: Omit<RegistrationRow, "registration_sha256"> = {
-    singleton: 1,
-    contract_version: "aionis_lite_runtime_deployment_slot_registration_v2",
-    deployment_slot: deploymentSlot,
-    launcher_root_instance_id: slotPathInspection.root_instance_id,
-    launcher_root_manifest_sha256: slotPathInspection.root_manifest_sha256,
-    slot_path_mapping_sha256: slotPathInspection.slot_path_mapping_sha256,
-    authority_instance_id: authorityInstanceId,
-    carrier_instance_id: carrierInstanceId,
-    lease_database_device: carrierStat.dev.toString(10),
-    lease_database_inode: carrierStat.ino.toString(10),
-    database_realpath: runtimeInspection.database_realpath,
-    database_instance_id: databaseInstanceId,
-    database_file_device: String(runtimeInspection.database_device),
-    database_file_inode: String(runtimeInspection.database_inode),
-    first_binding_anchor_sha256: firstBindingAnchorSha256,
-    created_at: createdAt,
-  };
-  const registration: RegistrationRow = {
-    ...registrationWithoutDigest,
-    registration_sha256: sha256(registrationProjection(registrationWithoutDigest)),
-  };
-
-  initializeCarrier(leaseCarrierPath, {
-    singleton: 1,
-    contract_version: "aionis_lite_runtime_deployment_slot_lease_identity_v1",
-    deployment_slot: deploymentSlot,
-    authority_instance_id: authorityInstanceId,
-    carrier_instance_id: carrierInstanceId,
-    state_database_device: stateStat.dev.toString(10),
-    state_database_inode: stateStat.ino.toString(10),
-    registration_sha256: registration.registration_sha256,
-    created_at: createdAt,
-  });
-  initializeState(authorityStatePath, registration);
-
-  let carrierPin: LiteRuntimeProtectedAuthorityDatabasePin | null = null;
-  let statePin: LiteRuntimeProtectedAuthorityDatabasePin | null = null;
-  let carrierDatabase: LiteRuntimeDatabase | null = null;
-  let stateDatabase: LiteRuntimeDatabase | null = null;
+  const inspection = assertLiteRuntimeDeploymentSlotPathProvisioned(args.slotPath);
+  const recordedAt = args.now ?? new Date();
+  canonicalTime(recordedAt, "provisioning recovery time");
+  let intent: LiteRuntimeDeploymentSlotProvisioningIntent;
+  let journalPublication: LiteRuntimeDeploymentSlotProvisioningJournalPublicationState;
   try {
-    carrierPin = pinLiteRuntimeProtectedAuthorityDatabase(leaseCarrierPath);
-    statePin = pinLiteRuntimeProtectedAuthorityDatabase(authorityStatePath);
-    carrierDatabase = openLiteRuntimeProtectedAuthorityDatabase(carrierPin);
-    stateDatabase = openLiteRuntimeProtectedAuthorityDatabase(statePin);
-    configureOpenedAuthorityDatabase(carrierDatabase.db);
-    configureOpenedAuthorityDatabase(stateDatabase.db);
-    const carrierIdentity = assertCarrierIdentity(
-      carrierDatabase.db,
-      deploymentSlot,
-      registration,
-      carrierPin,
-    );
-    const replayed = replayDurableState(stateDatabase.db);
-    assertRegistrationMatches(replayed.registration, registration);
-    carrierDatabase.db.exec("BEGIN IMMEDIATE");
-    try {
-      insertCarrierWitness(
-        carrierDatabase.db,
-        buildCarrierWitness(replayed, statePin, "1", createdAt, null),
+    journalPublication =
+      inspectLiteRuntimeDeploymentSlotProvisioningJournalPublication(
+        inspection.provisioning_journal_path,
       );
-      carrierDatabase.db.exec("COMMIT");
-    } catch (error) {
-      try { carrierDatabase.db.exec("ROLLBACK"); } catch { /* preserve first error */ }
-      throw error;
-    }
-    assertLiteRuntimeProtectedAuthorityDatabasePinned(carrierPin);
-    syncStateDatabaseFiles(leaseCarrierPath);
-    assertCarrierWitnesses(carrierDatabase.db, carrierIdentity, replayed, statePin);
-  } finally {
-    closeDatabaseBestEffort(stateDatabase);
-    closeDatabaseBestEffort(carrierDatabase);
-    closePinBestEffort(statePin);
-    closePinBestEffort(carrierPin);
+  } catch (error) {
+    return journalAuthorityError(error, "inspect provisioning journal publication");
   }
+  if (journalPublication !== "published") {
+    if (journalPublication === "absent") {
+      const bootstrapMutexPath =
+        liteRuntimeDeploymentSlotProvisioningJournalBootstrapMutexPath(
+          inspection.provisioning_journal_path,
+        );
+      const allowed = new Set([
+        basename(bootstrapMutexPath),
+        `${basename(bootstrapMutexPath)}-journal`,
+      ]);
+      if (readdirSync(inspection.slot_directory_path)
+        .some((entry) => !allowed.has(entry))) {
+        return authorityError(
+          "lite_runtime_deployment_slot_authority_recovery_required",
+          "deployment-slot empty-prefix recovery found unexpected artifacts",
+        );
+      }
+    }
+    if (journalPublication === "recoverable_staging"
+      || journalPublication === "recoverable_linked") {
+      assertRecoverableJournalBootstrapOnly(inspection, journalPublication);
+    } else if (journalPublication === "published_with_recoverable_staging") {
+      assertPublishedJournalScratchSlotEntries(inspection);
+    }
+    const createdAt = canonicalTime(recordedAt, "provisioning recovery time");
+    try {
+      intent = recoverOrCreateLiteRuntimeDeploymentSlotProvisioningJournal({
+        journalPath: inspection.provisioning_journal_path,
+        validateSelectedIntent: (selectedIntent) => {
+          assertProvisioningIntentMatchesSlot(selectedIntent, inspection);
+          assertProvisioningIntentMatchesRuntimePin(
+            selectedIntent,
+            args.runtimeDatabasePin,
+          );
+        },
+        intentWithoutDigestFactory: () => provisioningIntentWithoutDigest({
+          slotPathInspection: inspection,
+          runtimeDatabasePin: args.runtimeDatabasePin,
+          createdAt,
+          authorityInstanceId: randomDigest(
+            args.randomBytesFactory,
+            "authority instance",
+          ),
+          carrierInstanceId: randomDigest(
+            args.randomBytesFactory,
+            "carrier instance",
+          ),
+          firstBindingAnchorSha256: randomDigest(
+            args.randomBytesFactory,
+            "first-binding anchor",
+          ),
+        }),
+      });
+    } catch (error) {
+      return journalAuthorityError(error, "create recovery intent for empty prefix");
+    }
+  } else {
+    try {
+      intent = readLiteRuntimeDeploymentSlotProvisioningJournal(
+        inspection.provisioning_journal_path,
+      );
+    } catch (error) {
+      return journalAuthorityError(error, "read provisioning recovery intent");
+    }
+  }
+  assertProvisioningIntentMatchesSlot(intent, inspection);
+  assertProvisioningIntentMatchesRuntimePin(intent, args.runtimeDatabasePin);
 
-  return Object.freeze({
-    contract_version:
-      "aionis_lite_runtime_deployment_slot_provisioning_inspection_v2" as const,
-    authority_scope:
-      "configured_root_deterministic_slot_path_registration" as const,
-    signing_eligible: false as const,
-    deployment_slot: deploymentSlot,
-    authority_state_path: authorityStatePath,
-    lease_carrier_path: leaseCarrierPath,
-    authority_instance_id: authorityInstanceId,
-    carrier_instance_id: carrierInstanceId,
-    database_realpath: runtimeInspection.database_realpath,
-    database_instance_id: databaseInstanceId,
-    database_file_device: String(runtimeInspection.database_device),
-    database_file_inode: String(runtimeInspection.database_inode),
-    first_binding_anchor_sha256: firstBindingAnchorSha256,
-    registration_sha256: registration.registration_sha256,
-    launcher_root_instance_id: slotPathInspection.root_instance_id,
-    launcher_root_manifest_sha256: slotPathInspection.root_manifest_sha256,
-    slot_path_mapping_sha256: slotPathInspection.slot_path_mapping_sha256,
-    slot_path_mapping: "launcher_root_sha256_sharded_v1" as const,
-    trusted_launcher_root_selection: "required_not_established" as const,
-    slot_provisioning_recovery: "required_not_established" as const,
+  let lock: LiteRuntimeDeploymentSlotProvisioningJournalLock | null = null;
+  try {
+    lock = acquireLiteRuntimeDeploymentSlotProvisioningJournalLock(
+      {
+        journalPath: inspection.provisioning_journal_path,
+        expectedIntentSha256: intent.intent_sha256,
+      },
+    );
+    return advanceProvisioningRecovery({
+      slotPath: args.slotPath,
+      inspection,
+      intent,
+      runtimeDatabasePin: args.runtimeDatabasePin,
+      lock,
+      recordedAt,
+    });
+  } catch (error) {
+    return journalAuthorityError(error, "resume provisioning recovery");
+  } finally {
+    if (lock) {
+      try {
+        releaseLiteRuntimeDeploymentSlotProvisioningJournalLock(lock);
+      } catch (error) {
+        journalAuthorityError(error, "release resumed provisioning lock");
+      }
+    }
+  }
+}
+
+/**
+ * Tombstones one verified incomplete prefix in the current durable journal
+ * lineage. Abort never unlinks, truncates, replaces, or reuses the journal or
+ * either authority database. Storage rollback resistance remains explicit.
+ */
+export function abortLiteRuntimeDeploymentSlotAuthorityProvisioning(
+  args: Readonly<{ slotPath: LiteRuntimeDeploymentSlotPathCapability }>,
+): LiteRuntimeDeploymentSlotProvisioningClassification {
+  const classified = classifyLiteRuntimeDeploymentSlotAuthorityProvisioning({
+    slotPath: args.slotPath,
+  });
+  if (classified.classification === "aborted") return classified;
+  if (classified.classification === "committed") {
+    return authorityError(
+      "lite_runtime_deployment_slot_authority_already_provisioned",
+      "deployment-slot committed authority cannot be aborted",
+    );
+  }
+  if (classified.classification === "ambiguous_or_corrupt") {
+    return authorityError(
+      "lite_runtime_deployment_slot_authority_recovery_required",
+      "deployment-slot ambiguous or corrupt prefix cannot be mutated by abort",
+    );
+  }
+  if (classified.classification === "absent") {
+    return authorityError(
+      "lite_runtime_deployment_slot_authority_recovery_required",
+      "deployment-slot absent prefix has nothing durable to abort",
+    );
+  }
+  const inspection = assertLiteRuntimeDeploymentSlotPathProvisioned(args.slotPath);
+  if (!pathExists(inspection.provisioning_journal_path)) {
+    return authorityError(
+      "lite_runtime_deployment_slot_authority_recovery_required",
+      "deployment-slot empty prefix has no durable intent to tombstone safely",
+    );
+  }
+  let intent: LiteRuntimeDeploymentSlotProvisioningIntent;
+  try {
+    const publication =
+      inspectLiteRuntimeDeploymentSlotProvisioningJournalPublication(
+        inspection.provisioning_journal_path,
+      );
+    const preflightIntent = readLiteRuntimeDeploymentSlotProvisioningJournal(
+      inspection.provisioning_journal_path,
+    );
+    assertProvisioningIntentMatchesSlot(preflightIntent, inspection);
+    assertProvisioningIntentRuntimeReadOnly(preflightIntent);
+    intent = publication === "published_with_recoverable_staging"
+      ? recoverOrCreateLiteRuntimeDeploymentSlotProvisioningJournal({
+          journalPath: inspection.provisioning_journal_path,
+          validateSelectedIntent: (selectedIntent) => {
+            assertProvisioningIntentMatchesSlot(selectedIntent, inspection);
+            assertProvisioningIntentRuntimeReadOnly(selectedIntent);
+          },
+          intentWithoutDigestFactory: () => {
+            throw new Error(
+              "abort cannot allocate a provisioning identity while cleaning scratch",
+            );
+          },
+        })
+      : preflightIntent;
+  } catch (error) {
+    return journalAuthorityError(error, "read or recover abort intent");
+  }
+  let lock: LiteRuntimeDeploymentSlotProvisioningJournalLock | null = null;
+  try {
+    lock = acquireLiteRuntimeDeploymentSlotProvisioningJournalLock(
+      {
+        journalPath: inspection.provisioning_journal_path,
+        expectedIntentSha256: intent.intent_sha256,
+      },
+    );
+    let receipts = [...readProvisioningReceipts(inspection, intent)];
+    verifyProvisioningPrefix({ inspection, intent, receipts });
+    const last = receipts.at(-1);
+    if (last?.phase === "committed") {
+      return authorityError(
+        "lite_runtime_deployment_slot_authority_already_provisioned",
+        "deployment-slot committed authority cannot be aborted",
+      );
+    }
+    if (last?.phase === "aborted") {
+      return provisioningClassificationResult({
+        inspection,
+        classification: "aborted",
+        lastDurablePhase: "aborted",
+        recoveryAction: "none",
+        intentSha256: intent.intent_sha256,
+        reasonCode: "abort_tombstone_verified_after_lock",
+      });
+    }
+    const recordedAt = new Date(Math.max(
+      Date.now(),
+      Date.parse(last?.recorded_at ?? intent.created_at),
+    ));
+    if (!last) {
+      receipts.push(appendProvisioningPhase({
+        inspection,
+        intent,
+        lock,
+        phase: "intent_durable",
+        evidence: Object.freeze({
+          contract_version:
+            "aionis_lite_runtime_deployment_slot_provisioning_intent_durable_v1",
+          intent_sha256: intent.intent_sha256,
+        }),
+        recordedAt,
+      }));
+    }
+    const prior = receipts.at(-1)!;
+    appendProvisioningPhase({
+      inspection,
+      intent,
+      lock,
+      phase: "aborted",
+      evidence: Object.freeze({
+        contract_version:
+          "aionis_lite_runtime_deployment_slot_provisioning_aborted_v1",
+        prior_phase: prior.phase,
+        prior_receipt_sha256: prior.receipt_sha256,
+      }),
+      recordedAt,
+    });
+  } catch (error) {
+    return journalAuthorityError(error, "append provisioning abort tombstone");
+  } finally {
+    if (lock) {
+      try {
+        releaseLiteRuntimeDeploymentSlotProvisioningJournalLock(lock);
+      } catch (error) {
+        journalAuthorityError(error, "release provisioning abort lock");
+      }
+    }
+  }
+  return classifyLiteRuntimeDeploymentSlotAuthorityProvisioning({
+    slotPath: args.slotPath,
   });
 }
 
@@ -2462,6 +4400,91 @@ function insertCarrierWitness(
   );
 }
 
+type ReadOnlyProvisionedAuthority = Readonly<{
+  registration: RegistrationRow;
+  carrierIdentity: CarrierIdentityRow;
+  replayed: ReplayedState;
+  latestWitness: CarrierStateWitnessRow | null;
+  initialWitness: CarrierStateWitnessRow | null;
+  witnessCount: number;
+}>;
+
+function inspectProvisionedAuthorityReadOnly(args: Readonly<{
+  authorityStatePath: string;
+  leaseCarrierPath: string;
+  deploymentSlot: string;
+  expectedRegistration: RegistrationRow;
+  requireWitness: boolean;
+}>): ReadOnlyProvisionedAuthority {
+  let carrierPin: LiteRuntimeProtectedAuthorityDatabasePin | null = null;
+  let statePin: LiteRuntimeProtectedAuthorityDatabasePin | null = null;
+  let carrierDb: SqliteDatabase | null = null;
+  let stateDb: SqliteDatabase | null = null;
+  try {
+    carrierPin = pinLiteRuntimeProtectedAuthorityDatabase(args.leaseCarrierPath);
+    statePin = pinLiteRuntimeProtectedAuthorityDatabase(args.authorityStatePath);
+    carrierDb = createSqliteReadOnlyDatabase(args.leaseCarrierPath);
+    stateDb = createSqliteReadOnlyDatabase(args.authorityStatePath);
+    configureOpenedAuthorityDatabase(carrierDb);
+    configureOpenedAuthorityDatabase(stateDb);
+    const carrierIdentity = assertCarrierIdentity(
+      carrierDb,
+      args.deploymentSlot,
+      args.expectedRegistration,
+      carrierPin,
+    );
+    const replayed = replayDurableState(stateDb);
+    assertRegistrationMatches(replayed.registration, args.expectedRegistration);
+    const witnessCountRow = carrierDb.prepare(
+      "SELECT COUNT(*) AS count FROM lite_runtime_deployment_slot_state_witnesses",
+    ).get() as { count?: unknown } | undefined;
+    const witnessCount = witnessCountRow?.count;
+    if (typeof witnessCount !== "number"
+      || !Number.isSafeInteger(witnessCount)
+      || witnessCount < 0) {
+      return authorityError(
+        "lite_runtime_deployment_slot_authority_integrity_failed",
+        "deployment-slot carrier witness count is invalid",
+      );
+    }
+    if (witnessCount === 0) {
+      if (args.requireWitness) {
+        return authorityError(
+          "lite_runtime_deployment_slot_authority_integrity_failed",
+          "deployment-slot initial carrier witness is not durable",
+        );
+      }
+      return Object.freeze({
+        registration: replayed.registration,
+        carrierIdentity,
+        replayed,
+        latestWitness: null,
+        initialWitness: null,
+        witnessCount,
+      });
+    }
+    const latestWitness = assertCarrierWitnesses(
+      carrierDb,
+      carrierIdentity,
+      replayed,
+      statePin,
+    );
+    return Object.freeze({
+      registration: replayed.registration,
+      carrierIdentity,
+      replayed,
+      latestWitness,
+      initialWitness: readCarrierWitnesses(carrierDb)[0]!,
+      witnessCount,
+    });
+  } finally {
+    try { stateDb?.close(); } catch { /* preserve verification failure */ }
+    try { carrierDb?.close(); } catch { /* preserve verification failure */ }
+    closePinBestEffort(statePin);
+    closePinBestEffort(carrierPin);
+  }
+}
+
 function assertRuntimeMapping(
   registration: RegistrationRow,
   runtimePin: LiteRuntimeProtectedAuthorityDatabasePin,
@@ -2598,7 +4621,7 @@ function completionFromRow(
   }
   return Object.freeze({
     contract_version:
-      "aionis_lite_runtime_deployment_slot_binding_completion_v2" as const,
+      "aionis_lite_runtime_deployment_slot_binding_completion_v3" as const,
     authority_scope: "configured_root_slot_path_chain_transition" as const,
     signing_eligible: false as const,
     exact_replay: exactReplay,
@@ -2632,7 +4655,7 @@ function leaseInspection(
 ): LiteRuntimeDeploymentSlotLeaseInspection {
   return Object.freeze({
     contract_version:
-      "aionis_lite_runtime_deployment_slot_exclusive_lease_inspection_v2" as const,
+      "aionis_lite_runtime_deployment_slot_exclusive_lease_inspection_v3" as const,
     authority_scope:
       "configured_root_slot_path_conditional_process_live_exclusivity" as const,
     signing_eligible: false as const,
@@ -2677,6 +4700,21 @@ export function acquireLiteRuntimeDeploymentSlotExclusiveLease(args: Readonly<{
   now?: Date;
   randomBytesFactory?: (size: number) => Uint8Array;
 }>): LiteRuntimeDeploymentSlotExclusiveLeaseCapability {
+  const provisioning = classifyLiteRuntimeDeploymentSlotAuthorityProvisioning({
+    slotPath: args.slotPath,
+  });
+  if (provisioning.classification !== "committed") {
+    if (provisioning.classification === "ambiguous_or_corrupt") {
+      return authorityError(
+        "lite_runtime_deployment_slot_authority_integrity_failed",
+        `deployment-slot authority integrity and filesystem state verification failed closed before lease (${provisioning.reason_code})`,
+      );
+    }
+    return authorityError(
+      "lite_runtime_deployment_slot_authority_recovery_required",
+      "deployment-slot authority cannot acquire a lease before protected provisioning commits",
+    );
+  }
   const slotPathInspection = assertLiteRuntimeDeploymentSlotPathProvisioned(
     args.slotPath,
   );
@@ -2964,7 +5002,7 @@ function reservationInspection(
 ): LiteRuntimeDeploymentSlotReservationInspection {
   return Object.freeze({
     contract_version: (
-      "aionis_lite_runtime_deployment_slot_checkpoint_reservation_inspection_v2"
+      "aionis_lite_runtime_deployment_slot_checkpoint_reservation_inspection_v3"
     ) as const,
     authority_scope:
       "configured_root_slot_path_generation_and_chain_expectation" as const,
