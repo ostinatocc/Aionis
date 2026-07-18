@@ -7,7 +7,10 @@ import { createLiteRecallStore } from "../../src/store/lite-recall-store.ts";
 import { createLiteWriteStore } from "../../src/store/lite-write-store.ts";
 import { applyPreparedMemoryWrite, prepareMemoryWrite } from "../../src/memory/write.ts";
 import { buildAionisMemoryPacket } from "../../src/memory/product-output-assembler.ts";
-import { drainLiteAssociativeLinkOutbox } from "../../src/jobs/associative-linking-worker.ts";
+import {
+  drainLiteAssociativeLinkOutbox,
+  startLiteAssociativeLinkWorker,
+} from "../../src/jobs/associative-linking-worker.ts";
 
 function tmpDbPath(): string {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), "aionis-lite-assoc-worker-"));
@@ -164,6 +167,59 @@ test("lite associative_link outbox drains into shadow candidates", async () => {
     assert.ok(relatedPacketMemory);
     assert.ok(relatedPacketMemory.recall_sources.some((source) => source.kind === "associative_shadow"));
   } finally {
+    await liteRecallStore.close();
+    await liteWriteStore.close();
+  }
+});
+
+test("lite associative_link worker shutdown waits for its active initial drain", async () => {
+  const dbPath = tmpDbPath();
+  const liteWriteStore = createLiteWriteStore(dbPath);
+  const liteRecallStore = createLiteRecallStore(dbPath);
+  let worker: ReturnType<typeof startLiteAssociativeLinkWorker> | null = null;
+  try {
+    await writeExecutionEvent({
+      liteWriteStore,
+      clientId: "assoc:shutdown:first",
+      title: "Checkout renderer baseline for shutdown drain",
+      summary: "Renderer path validated checkout contract and typecheck.",
+      embedding: vectorAt(0),
+    });
+    const secondWrite = await writeExecutionEvent({
+      liteWriteStore,
+      clientId: "assoc:shutdown:second",
+      title: "Related renderer continuation for shutdown drain",
+      summary: "Continuation reused the renderer contract and validations.",
+      embedding: vectorAt(1),
+    });
+    const secondId = secondWrite.nodes[0]?.id;
+    assert.ok(secondId);
+    assert.equal((await liteWriteStore.listOutboxEvents({
+      eventType: "associative_link",
+      limit: 10,
+    })).length, 2);
+
+    worker = startLiteAssociativeLinkWorker({
+      writeStore: liteWriteStore,
+      recallAccess: liteRecallStore.createRecallAccess(),
+      intervalMs: 60_000,
+      batchSize: 10,
+    });
+    await worker.shutdown();
+
+    assert.equal((await liteWriteStore.listOutboxEvents({
+      eventType: "associative_link",
+      limit: 10,
+    })).length, 0);
+    const candidates = await liteWriteStore.listAssociationCandidatesForSource({
+      scope: "default",
+      src_id: secondId,
+      statuses: ["shadow"],
+      limit: 10,
+    });
+    assert.ok(candidates.length > 0);
+  } finally {
+    if (worker) await worker.shutdown();
     await liteRecallStore.close();
     await liteWriteStore.close();
   }

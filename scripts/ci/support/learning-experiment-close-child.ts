@@ -6,7 +6,7 @@ import {
 import {
   LearningExperimentClosingError,
   closeLiteLearningExperiment,
-} from "../../../src/store/lite-learning-experiment-closing.js";
+} from "../../../tools/learning-experiments/lite-learning-experiment-closing.js";
 import { sha256Hex } from "../../../src/util/crypto.js";
 
 type ParentCommand = Readonly<{ type: "go" }>;

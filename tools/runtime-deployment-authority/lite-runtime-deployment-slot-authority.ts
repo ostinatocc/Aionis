@@ -19,7 +19,7 @@ import {
   ExternalExecutionPolicyV1Schema,
   externalExecutionPolicyDigest,
   type ExternalExecutionPolicyV1,
-} from "../memory/learning-episode-ledger.js";
+} from "../../src/memory/learning-episode-ledger.js";
 import {
   learningRuntimeDatabaseBindingReceiptDigest,
   learningRuntimeDatabaseBindingReceiptJson,
@@ -27,21 +27,21 @@ import {
   verifyLearningRuntimeDatabaseBindingReceiptCryptographicRelation,
   type LearningRuntimeDatabaseBindingChainExpectationV1,
   type LearningRuntimeDatabaseBindingReceiptEnvelopeV1,
-} from "../memory/learning-runtime-database-binding.js";
+} from "../../src/memory/learning-runtime-database-binding.js";
 import {
   assertLiteRuntimeProtectedAuthorityDatabasePinned,
   closeLiteRuntimeProtectedAuthorityDatabasePin,
   openLiteRuntimeProtectedAuthorityDatabase,
   pinLiteRuntimeProtectedAuthorityDatabase,
   type LiteRuntimeProtectedAuthorityDatabasePin,
-} from "./lite-runtime-protected-authority-database.js";
-import { assertLiteRuntimeAuthorityIdentity } from "./lite-learning-episode-ledger.js";
-import { normalizeSqliteSchemaSql } from "./sqlite-schema-sql.js";
+} from "../../src/store/lite-runtime-protected-authority-database.js";
+import { assertLiteRuntimeAuthorityIdentity } from "../../src/store/lite-learning-episode-ledger.js";
+import { normalizeSqliteSchemaSql } from "../../src/store/sqlite-schema-sql.js";
 import {
   createSqliteReadOnlyDatabase,
   type SqliteDatabase,
-} from "./sqlite.js";
-import type { LiteRuntimeDatabase } from "./lite-runtime-database.js";
+} from "../../src/store/sqlite.js";
+import type { LiteRuntimeDatabase } from "../../src/store/lite-runtime-database.js";
 import {
   acquireLiteRuntimeDeploymentSlotProvisioningJournalLock,
   appendLiteRuntimeDeploymentSlotProvisioningPhaseReceipt,

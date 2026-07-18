@@ -64,7 +64,7 @@ import {
   provisionLiteRuntimeDeploymentSlotAuthority as provisionLiteRuntimeDeploymentSlotAuthorityRaw,
   releaseLiteRuntimeDeploymentSlotExclusiveLease as releaseLiteRuntimeDeploymentSlotExclusiveLeaseRaw,
   reserveLiteRuntimeDeploymentSlotCheckpointGeneration,
-} from "../../src/store/lite-runtime-deployment-slot-authority.js";
+} from "../../tools/runtime-deployment-authority/lite-runtime-deployment-slot-authority.js";
 import {
   closeLiteRuntimeDeploymentSlotPathAuthorityRoot,
   deriveLiteRuntimeDeploymentSlotPathCapability,
@@ -74,7 +74,7 @@ import {
   provisionLiteRuntimeDeploymentSlotPathAuthorityRoot,
   type LiteRuntimeDeploymentSlotPathAuthorityRootCapability,
   type LiteRuntimeDeploymentSlotPathCapability,
-} from "../../src/store/lite-runtime-deployment-slot-path-authority.js";
+} from "../../tools/runtime-deployment-authority/lite-runtime-deployment-slot-path-authority.js";
 
 const ROOT = resolve(fileURLToPath(new URL("../..", import.meta.url)));
 const LEASE_CHILD = fileURLToPath(

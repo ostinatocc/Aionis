@@ -41,13 +41,26 @@ import {
   resolveNodeWorkflowSteps,
   resolveNodeToolSet,
 } from "./node-execution-surface.js";
-import { applyPolicyMemoryLearningControlLite } from "./policy-memory.js";
+import {
+  assertPreparedPolicyMemoryLearningControlCurrent,
+  preparePolicyMemoryLearningControlLite,
+  sealPolicyAuthoritySlots,
+} from "./policy-memory.js";
 import { buildPromotionEvidenceLedgerV1 } from "./promotion-evidence-ledger.js";
 import {
   runtimeAuthorityGateFromValue,
   sealRuntimeAuthorityEffectReceipt,
 } from "./authority-effect-broker.js";
 import { applyPreparedMemoryWrite, prepareMemoryWrite } from "./write.js";
+import { runAppliedAuthorityMutationV2 } from "./applied-authority-mutation.js";
+import {
+  NODE_AUTHORITY_UPDATE_SIDE_EFFECTS,
+  applyNodeAuthorityPatchesV2,
+  assertNodeDecisionRowMatchesAuthorityState,
+  buildNodeAuthorityMutationV2,
+  verifyNodeAuthorityPatchesV2,
+  type NodeAuthorityPatchV2,
+} from "./node-authority-mutation.js";
 import { resolveTenantScope } from "./tenant.js";
 import type { LiteFindNodeRow, LiteWriteStore } from "../store/lite-write-store.js";
 import { sha256Hex } from "../util/crypto.js";
@@ -355,38 +368,6 @@ function forgettingMutationAdmissibility(args: {
       `compression_layer_${compressionLayer ?? "unknown"}`,
     ],
   };
-}
-
-async function insertLearningLoopMutationCommit(args: {
-  liteWriteStore: LearningLoopLiteStore;
-  scope: string;
-  actor: string;
-  kind: string;
-  input: Record<string, unknown>;
-  diff: Record<string, unknown>;
-}): Promise<string> {
-  const parent = await args.liteWriteStore.latestCommit(args.scope);
-  const inputSha = sha256Hex(stableStringify(args.input));
-  const diffJson = stableStringify(args.diff);
-  const diffSha = sha256Hex(diffJson);
-  const commitHash = sha256Hex(stableStringify({
-    parentHash: parent?.commit_hash ?? "",
-    inputSha,
-    diffSha,
-    scope: args.scope,
-    actor: args.actor,
-    kind: args.kind,
-  }));
-  return await args.liteWriteStore.insertCommit({
-    scope: args.scope,
-    parentCommitId: parent?.id ?? null,
-    inputSha256: inputSha,
-    diffJson,
-    actor: args.actor,
-    modelVersion: null,
-    promptVersion: null,
-    commitHash,
-  });
 }
 
 function workflowPromotionOrigin(value: unknown): "execution_write_projection" | "replay_learning_projection" {
@@ -787,26 +768,47 @@ async function processWorkflowCandidate(args: {
       requireAuthorityClaims: true,
     });
   }
-  const out = await args.liteWriteStore.withTx(() =>
-    applyPreparedMemoryWrite(args.liteWriteStore, prepared, {
+  const out = await args.liteWriteStore.withTx(async () => {
+    const currentSource = (await args.liteWriteStore.nodeStatesByIds(
+      args.scope,
+      [args.row.id],
+    )).get(args.row.id);
+    if (!currentSource) throw new Error("learning_loop_workflow_source_missing");
+    assertNodeDecisionRowMatchesAuthorityState(
+      args.row,
+      currentSource,
+      "learning_loop_authority_decision_state_mismatch",
+    );
+    const currentStable = await args.liteWriteStore.findExecutionNativeNodes({
+      scope: args.scope,
+      executionKind: "workflow_anchor",
+      workflowSignature,
+      consumerAgentId: args.row.owner_agent_id ?? null,
+      consumerTeamId: args.row.owner_team_id ?? null,
+      limit: 1,
+      offset: 0,
+    });
+    if (currentStable.rows.length > 0) return null;
+    return await applyPreparedMemoryWrite(args.liteWriteStore, prepared, {
       maxTextLen: args.opts.maxTextLen,
       piiRedaction: args.opts.piiRedaction,
       allowCrossScopeEdges: args.opts.allowCrossScopeEdges,
-    }),
-  );
-  await markNodeLearningLoopDecision({
-    liteWriteStore: args.liteWriteStore,
-    scope: args.scope,
-    row: args.row,
-    decision: {
-      action: "promote_workflow",
-      status: "applied",
-      stable_node_id: stableNodeId,
-      commit_id: out.commit_id,
-      applied_at: args.now,
-      actor: args.actor,
-    },
+    });
   });
+  if (!out) {
+    return decision({
+      surface: "workflow",
+      target_id: args.row.id,
+      action: "skip",
+      applied: false,
+      mode: args.mode,
+      reasons: ["stable_workflow_already_exists"],
+      confidence: 0.64,
+      policy_mutation_v1: null,
+      policy_mutation_adjudication_v1: null,
+      commit_id: null,
+    });
+  }
 
   return decision({
     surface: "workflow",
@@ -822,43 +824,6 @@ async function processWorkflowCandidate(args: {
   });
 }
 
-async function markNodeLearningLoopDecision(args: {
-  liteWriteStore: Pick<LiteWriteStore, "updateNodeAnchorState">;
-  scope: string;
-  row: LiteFindNodeRow;
-  decision: Record<string, unknown>;
-}) {
-  const slots = {
-    ...(asRecord(args.row.slots) ?? {}),
-    learning_loop_v1: {
-      loop_version: "learning_loop_run_v1",
-      ...args.decision,
-    },
-  };
-  const lifecycle = resolveNodeLifecycleSignals({
-    type: args.row.type,
-    tier: args.row.tier,
-    title: args.row.title,
-    text_summary: args.row.text_summary,
-    slots,
-    salience: args.row.salience,
-    importance: args.row.importance,
-    confidence: args.row.confidence,
-    raw_ref: args.row.raw_ref ?? null,
-    evidence_ref: args.row.evidence_ref ?? null,
-  });
-  await args.liteWriteStore.updateNodeAnchorState({
-    scope: args.scope,
-    id: args.row.id,
-    slots: lifecycle.slots,
-    textSummary: args.row.text_summary,
-    salience: lifecycle.salience,
-    importance: lifecycle.importance,
-    confidence: lifecycle.confidence,
-    commitId: firstString(args.decision.commit_id),
-  });
-}
-
 async function processPolicyMemory(args: {
   liteWriteStore: LearningLoopLiteStore;
   row: LiteFindNodeRow;
@@ -866,28 +831,192 @@ async function processPolicyMemory(args: {
   scope: string;
   actor: string;
   mode: "dry_run" | "apply";
-  now: string;
 }): Promise<LearningLoopDecision> {
-  const slots = asRecord(args.row.slots) ?? {};
-  const surface = resolveNodePolicyMemorySurface(slots);
-  const positive = numberField(slots.feedback_positive) ?? 0;
-  const negative = numberField(slots.feedback_negative) ?? 0;
-  const shouldRetire = surface.policy_memory_state === "active" && negative >= 2 && negative > positive;
-  if (!shouldRetire) {
+  type PolicyRetirementValue =
+    | { status: "not_eligible"; reasons: string[] }
+    | { status: "dry_run_eligible" }
+    | {
+        status: "retired";
+        mutation: PolicyMutationV1;
+        adjudication: PolicyMutationAdjudicationV1;
+      };
+
+  const authority = await runAppliedAuthorityMutationV2<PolicyRetirementValue>({
+    store: args.liteWriteStore,
+    scope: args.scope,
+    inputSha256: sha256Hex(stableStringify({
+      job: "learning_loop_policy_retirement",
+      policy_memory_id: args.row.id,
+      mode: args.mode,
+    })),
+    actor: args.actor,
+    plan: async ({ appliedAt }) => {
+      const currentRows = await args.liteWriteStore.findNodes({
+        scope: args.scope,
+        id: args.row.id,
+        type: "concept",
+        operatorView: true,
+        limit: 1,
+        offset: 0,
+      });
+      const current = currentRows.rows[0];
+      const currentState = (await args.liteWriteStore.nodeStatesByIds(
+        args.scope,
+        [args.row.id],
+      )).get(args.row.id);
+      if (!current || !currentState) {
+        return {
+          status: "no_op" as const,
+          value: { status: "not_eligible" as const, reasons: ["policy_memory_target_missing"] },
+        };
+      }
+      assertNodeDecisionRowMatchesAuthorityState(
+        current,
+        currentState,
+        "learning_loop_authority_decision_state_mismatch",
+      );
+      const currentSlots = asRecord(current.slots) ?? {};
+      const surface = resolveNodePolicyMemorySurface(currentSlots);
+      const positive = numberField(currentSlots.feedback_positive) ?? 0;
+      const negative = numberField(currentSlots.feedback_negative) ?? 0;
+      const shouldRetire = surface.policy_memory_state === "active"
+        && negative >= 2
+        && negative > positive;
+      if (!shouldRetire) {
+        return {
+          status: "no_op" as const,
+          value: {
+            status: "not_eligible" as const,
+            reasons: ["policy_memory_not_ready_for_lifecycle_mutation"],
+          },
+        };
+      }
+      if (args.mode === "dry_run") {
+        return {
+          status: "no_op" as const,
+          value: { status: "dry_run_eligible" as const },
+        };
+      }
+
+      const prepared = await preparePolicyMemoryLearningControlLite(args.liteWriteStore, {
+        tenant_id: args.tenantId,
+        scope: args.scope,
+        policy_memory_id: current.id,
+        action: "retire",
+        actor: args.actor,
+        reason: "learning_loop_negative_feedback_threshold",
+        applied_at: appliedAt,
+      });
+      await assertPreparedPolicyMemoryLearningControlCurrent(prepared, args.liteWriteStore);
+      const mutation = buildPolicyMutationFromLearningControlApply({
+        tenant_id: args.tenantId,
+        scope: args.scope,
+        policy_memory_id: prepared.result.policy_memory.node_id,
+        action: "retire",
+        actor: args.actor,
+        reason: "learning_loop_negative_feedback_threshold",
+        previous_state: prepared.result.previous_state,
+        next_state: prepared.result.next_state,
+        learning_control_contract_present: false,
+        live_policy_contract_present: false,
+        contract_trust: prepared.result.policy_memory.policy_contract.contract_trust ?? null,
+        activation_mode: prepared.result.policy_memory.policy_contract.activation_mode,
+        selected_tool: prepared.result.policy_memory.selected_tool,
+        workflow_signature: prepared.result.policy_memory.policy_contract.workflow_signature,
+        file_path: prepared.result.policy_memory.policy_contract.file_path,
+      });
+      const adjudication = adjudicatePolicyMutationV1(mutation);
+      const nextSlots = {
+        ...prepared.update.slots,
+        policy_mutation_v1: mutation,
+        policy_mutation_adjudication_v1: adjudication,
+        learning_loop_v1: {
+          loop_version: "learning_loop_run_v1",
+          action: "retire_policy",
+          status: "applied",
+          applied_at: appliedAt,
+          actor: args.actor,
+        },
+      };
+      const lifecycle = resolveNodeLifecycleSignals({
+        type: current.type,
+        tier: current.tier,
+        title: current.title,
+        text_summary: prepared.update.text_summary,
+        slots: nextSlots,
+        salience: prepared.update.salience,
+        importance: prepared.update.importance,
+        confidence: prepared.update.confidence,
+        raw_ref: current.raw_ref ?? null,
+        evidence_ref: current.evidence_ref ?? null,
+        reference_time: appliedAt,
+      });
+      const sealedSlots = sealPolicyAuthoritySlots({
+        scope: args.scope,
+        id: current.id,
+        clientId: current.client_id,
+        issuedAt: appliedAt,
+        slots: lifecycle.slots,
+      });
+      const patch: NodeAuthorityPatchV2 = {
+        id: current.id,
+        slots: sealedSlots,
+        textSummary: prepared.update.text_summary,
+        salience: lifecycle.salience,
+        importance: lifecycle.importance,
+        confidence: lifecycle.confidence,
+      };
+      return {
+        status: "mutate" as const,
+        authorityKind: "learning_loop_policy_retirement",
+        mutations: [buildNodeAuthorityMutationV2({
+          before: currentState,
+          patch,
+          requestedEvidence: {
+            side_effects: NODE_AUTHORITY_UPDATE_SIDE_EFFECTS,
+            operation_context: {
+              action: "retire_policy",
+              reason: "learning_loop_negative_feedback_threshold",
+              previous_state: prepared.result.previous_state,
+              next_state: prepared.result.next_state,
+            },
+          },
+        })],
+        apply: async ({ commitId }) => {
+          await applyNodeAuthorityPatchesV2({
+            store: args.liteWriteStore,
+            scope: args.scope,
+            patches: [patch],
+            commitId,
+          });
+          return { status: "retired" as const, mutation, adjudication };
+        },
+        verify: async ({ commitId }) => verifyNodeAuthorityPatchesV2({
+          store: args.liteWriteStore,
+          scope: args.scope,
+          patches: [patch],
+          commitId,
+          errorLabel: "learning_loop_authority",
+        }),
+      };
+    },
+  });
+
+  if (authority.value.status === "not_eligible") {
     return decision({
       surface: "policy",
       target_id: args.row.id,
       action: "monitor",
       applied: false,
       mode: args.mode,
-      reasons: ["policy_memory_not_ready_for_lifecycle_mutation"],
+      reasons: authority.value.reasons,
       confidence: 0.58,
       policy_mutation_v1: null,
       policy_mutation_adjudication_v1: null,
       commit_id: null,
     });
   }
-  if (args.mode === "dry_run") {
+  if (authority.value.status === "dry_run_eligible") {
     return decision({
       surface: "policy",
       target_id: args.row.id,
@@ -902,67 +1031,6 @@ async function processPolicyMemory(args: {
     });
   }
 
-  const applied = await args.liteWriteStore.withTx(() =>
-    applyPolicyMemoryLearningControlLite(args.liteWriteStore, {
-      tenant_id: args.tenantId,
-      scope: args.scope,
-      policy_memory_id: args.row.id,
-      action: "retire",
-      actor: args.actor,
-      reason: "learning_loop_negative_feedback_threshold",
-      applied_at: args.now,
-    }),
-  );
-  const mutation = buildPolicyMutationFromLearningControlApply({
-    tenant_id: args.tenantId,
-    scope: args.scope,
-    policy_memory_id: applied.policy_memory.node_id,
-    action: "retire",
-    actor: args.actor,
-    reason: "learning_loop_negative_feedback_threshold",
-    previous_state: applied.previous_state,
-    next_state: applied.next_state,
-    learning_control_contract_present: false,
-    live_policy_contract_present: false,
-    contract_trust: applied.policy_memory.policy_contract.contract_trust ?? null,
-    activation_mode: applied.policy_memory.policy_contract.activation_mode,
-    selected_tool: applied.policy_memory.selected_tool,
-    workflow_signature: applied.policy_memory.policy_contract.workflow_signature,
-    file_path: applied.policy_memory.policy_contract.file_path,
-  });
-  const adjudication = adjudicatePolicyMutationV1(mutation);
-  const refreshed = await args.liteWriteStore.findNodes({
-    scope: args.scope,
-    id: args.row.id,
-    limit: 1,
-    offset: 0,
-  });
-  const nextRow = refreshed.rows[0];
-  if (nextRow) {
-    const nextSlots = {
-      ...(asRecord(nextRow.slots) ?? {}),
-      policy_mutation_v1: mutation,
-      policy_mutation_adjudication_v1: adjudication,
-      learning_loop_v1: {
-        loop_version: "learning_loop_run_v1",
-        action: "retire_policy",
-        status: "applied",
-        applied_at: args.now,
-        actor: args.actor,
-      },
-    };
-    await args.liteWriteStore.updateNodeAnchorState({
-      scope: args.scope,
-      id: nextRow.id,
-      slots: nextSlots,
-      textSummary: nextRow.text_summary,
-      salience: nextRow.salience,
-      importance: nextRow.importance,
-      confidence: nextRow.confidence,
-      commitId: nextRow.commit_id ?? null,
-    });
-  }
-
   return decision({
     surface: "policy",
     target_id: args.row.id,
@@ -971,21 +1039,36 @@ async function processPolicyMemory(args: {
     mode: args.mode,
     reasons: ["negative_feedback_exceeds_positive_feedback", "policy_memory_retired"],
     confidence: 0.76,
-    policy_mutation_v1: mutation,
-    policy_mutation_adjudication_v1: adjudication,
-    commit_id: null,
+    policy_mutation_v1: authority.value.mutation,
+    policy_mutation_adjudication_v1: authority.value.adjudication,
+    commit_id: authority.commitId,
   });
 }
 
-async function processMemoryForgetting(args: {
-  liteWriteStore: LearningLoopLiteStore;
+type ForgettingAdmissibleEvaluation = {
+  status: "admissible";
+  mutationAction: ForgettingMutationAction;
+  semanticAction: MemoryEvolutionAction;
+  currentTier: MemoryTierName;
+  targetTier: MemoryTierName;
+  reasons: string[];
+  admissibilityReasons: string[];
+  confidence: number;
+  forgetting: Record<string, unknown>;
+  lifecycle: ReturnType<typeof resolveNodeLifecycleSignals>;
+};
+
+type ForgettingEvaluation = ForgettingAdmissibleEvaluation | {
+  status: "monitor";
+  reasons: string[];
+  confidence: number;
+};
+
+function evaluateForgettingTarget(args: {
   row: LiteFindNodeRow;
-  scope: string;
-  actor: string;
-  mode: "dry_run" | "apply";
   now: string;
-  forgettingMutationPolicy: ForgettingMutationPolicy;
-}): Promise<LearningLoopDecision> {
+  policy: ForgettingMutationPolicy;
+}): ForgettingEvaluation {
   const currentTier = normalizeMemoryTier(args.row.tier);
   const lifecycle = resolveNodeLifecycleSignals({
     type: args.row.type,
@@ -1015,26 +1098,17 @@ async function processMemoryForgetting(args: {
     ? compareMemoryTierRank(targetTier, currentTier) < 0
     : false;
   const rationale = stringList(forgetting.rationale);
-
   if (!semanticAction || !mutationAction || !targetTier || !transitionMovesColder) {
-    return decision({
-      surface: "forgetting",
-      target_id: args.row.id,
-      action: "monitor",
-      applied: false,
-      mode: args.mode,
+    return {
+      status: "monitor",
       reasons: [
         ...(semanticAction ? [`semantic_action_${semanticAction}`] : ["missing_semantic_forgetting_action"]),
         ...(targetTier && targetTier === currentTier ? ["already_at_target_tier"] : []),
         ...(rationale.length > 0 ? rationale : ["memory_not_ready_for_forgetting_mutation"]),
       ].slice(0, 24),
       confidence: 0.54,
-      policy_mutation_v1: null,
-      policy_mutation_adjudication_v1: null,
-      commit_id: null,
-    });
+    };
   }
-
   const reasons = [
     `semantic_action_${semanticAction}`,
     `tier_transition_${currentTier}_to_${targetTier}`,
@@ -1044,117 +1118,220 @@ async function processMemoryForgetting(args: {
     row: args.row,
     forgetting,
     now: args.now,
-    policy: args.forgettingMutationPolicy,
+    policy: args.policy,
   });
   if (!admissibility.admissible) {
+    return {
+      status: "monitor",
+      reasons: [
+        ...reasons,
+        ...admissibility.reasons,
+        "semantic_forgetting_signal_recorded_without_tier_mutation",
+      ].slice(0, 24),
+      confidence: 0.6,
+    };
+  }
+  return {
+    status: "admissible",
+    mutationAction,
+    semanticAction,
+    currentTier,
+    targetTier,
+    reasons,
+    admissibilityReasons: admissibility.reasons,
+    confidence: semanticAction === "archive" ? 0.8 : 0.72,
+    forgetting,
+    lifecycle,
+  };
+}
+
+async function processMemoryForgetting(args: {
+  liteWriteStore: LearningLoopLiteStore;
+  row: LiteFindNodeRow;
+  scope: string;
+  actor: string;
+  mode: "dry_run" | "apply";
+  forgettingMutationPolicy: ForgettingMutationPolicy;
+}): Promise<LearningLoopDecision> {
+  type ForgettingAuthorityValue =
+    | { status: "monitor"; reasons: string[]; confidence: number }
+    | { status: "dry_run"; evaluation: ForgettingAdmissibleEvaluation }
+    | { status: "applied"; evaluation: ForgettingAdmissibleEvaluation };
+
+  const authority = await runAppliedAuthorityMutationV2<ForgettingAuthorityValue>({
+    store: args.liteWriteStore,
+    scope: args.scope,
+    inputSha256: sha256Hex(stableStringify({
+      job: "learning_loop_controlled_forgetting",
+      node_id: args.row.id,
+      mode: args.mode,
+      forgetting_mutation_policy: args.forgettingMutationPolicy,
+    })),
+    actor: args.actor,
+    plan: async ({ appliedAt }) => {
+      const currentRows = await args.liteWriteStore.findNodes({
+        scope: args.scope,
+        id: args.row.id,
+        operatorView: true,
+        limit: 1,
+        offset: 0,
+      });
+      const current = currentRows.rows[0];
+      const currentState = (await args.liteWriteStore.nodeStatesByIds(
+        args.scope,
+        [args.row.id],
+      )).get(args.row.id);
+      if (!current || !currentState) {
+        return {
+          status: "no_op" as const,
+          value: {
+            status: "monitor" as const,
+            reasons: ["forgetting_target_missing"],
+            confidence: 0.54,
+          },
+        };
+      }
+      assertNodeDecisionRowMatchesAuthorityState(
+        current,
+        currentState,
+        "learning_loop_authority_decision_state_mismatch",
+      );
+      const evaluation = evaluateForgettingTarget({
+        row: current,
+        now: appliedAt,
+        policy: args.forgettingMutationPolicy,
+      });
+      if (evaluation.status === "monitor") {
+        return {
+          status: "no_op" as const,
+          value: {
+            status: "monitor" as const,
+            reasons: evaluation.reasons,
+            confidence: evaluation.confidence,
+          },
+        };
+      }
+      if (args.mode === "dry_run") {
+        return {
+          status: "no_op" as const,
+          value: { status: "dry_run" as const, evaluation },
+        };
+      }
+
+      const nextSlots = {
+        ...evaluation.lifecycle.slots,
+        controlled_forgetting_v1: {
+          schema_version: "controlled_forgetting_v1",
+          loop_version: "learning_loop_run_v1",
+          action: evaluation.mutationAction,
+          semantic_action: evaluation.semanticAction,
+          previous_tier: evaluation.currentTier,
+          target_tier: evaluation.targetTier,
+          retention_score: numberField(evaluation.forgetting.retention_score),
+          applied_at: appliedAt,
+          actor: args.actor,
+          source_code_change_allowed: false,
+        },
+        learning_loop_v1: {
+          loop_version: "learning_loop_run_v1",
+          action: evaluation.mutationAction,
+          status: "applied",
+          previous_tier: evaluation.currentTier,
+          target_tier: evaluation.targetTier,
+          semantic_action: evaluation.semanticAction,
+          applied_at: appliedAt,
+          actor: args.actor,
+        },
+      };
+      const patch: NodeAuthorityPatchV2 = {
+        id: current.id,
+        tier: evaluation.targetTier,
+        slots: nextSlots,
+        textSummary: current.text_summary,
+        salience: evaluation.lifecycle.salience,
+        importance: evaluation.lifecycle.importance,
+        confidence: evaluation.lifecycle.confidence,
+      };
+      return {
+        status: "mutate" as const,
+        authorityKind: "learning_loop_controlled_forgetting",
+        mutations: [buildNodeAuthorityMutationV2({
+          before: currentState,
+          patch,
+          requestedEvidence: {
+            side_effects: NODE_AUTHORITY_UPDATE_SIDE_EFFECTS,
+            operation_context: {
+              action: evaluation.mutationAction,
+              semantic_action: evaluation.semanticAction,
+              previous_tier: evaluation.currentTier,
+              target_tier: evaluation.targetTier,
+              retention_score: numberField(evaluation.forgetting.retention_score),
+              forgetting_mutation_policy: args.forgettingMutationPolicy,
+              source_code_change_allowed: false,
+            },
+          },
+        })],
+        apply: async ({ commitId }) => {
+          await applyNodeAuthorityPatchesV2({
+            store: args.liteWriteStore,
+            scope: args.scope,
+            patches: [patch],
+            commitId,
+          });
+          return { status: "applied" as const, evaluation };
+        },
+        verify: async ({ commitId }) => verifyNodeAuthorityPatchesV2({
+          store: args.liteWriteStore,
+          scope: args.scope,
+          patches: [patch],
+          commitId,
+          errorLabel: "learning_loop_authority",
+        }),
+      };
+    },
+  });
+
+  if (authority.value.status === "monitor") {
     return decision({
       surface: "forgetting",
       target_id: args.row.id,
       action: "monitor",
       applied: false,
       mode: args.mode,
-      reasons: [
-        `semantic_action_${semanticAction}`,
-        `tier_transition_${currentTier}_to_${targetTier}`,
-        ...rationale,
-        ...admissibility.reasons,
-        "semantic_forgetting_signal_recorded_without_tier_mutation",
-      ].slice(0, 24),
-      confidence: 0.6,
+      reasons: authority.value.reasons,
+      confidence: authority.value.confidence,
       policy_mutation_v1: null,
       policy_mutation_adjudication_v1: null,
       commit_id: null,
     });
   }
-  if (args.mode === "dry_run") {
+  const evaluation = authority.value.evaluation;
+  if (authority.value.status === "dry_run") {
     return decision({
       surface: "forgetting",
       target_id: args.row.id,
-      action: mutationAction,
+      action: evaluation.mutationAction,
       applied: false,
       mode: args.mode,
-      reasons: [...reasons, ...admissibility.reasons, "dry_run_no_mutation"].slice(0, 24),
-      confidence: semanticAction === "archive" ? 0.8 : 0.72,
+      reasons: [...evaluation.reasons, ...evaluation.admissibilityReasons, "dry_run_no_mutation"].slice(0, 24),
+      confidence: evaluation.confidence,
       policy_mutation_v1: null,
       policy_mutation_adjudication_v1: null,
       commit_id: null,
     });
   }
-
-  const nextSlots = {
-    ...lifecycle.slots,
-    controlled_forgetting_v1: {
-      schema_version: "controlled_forgetting_v1",
-      loop_version: "learning_loop_run_v1",
-      action: mutationAction,
-      semantic_action: semanticAction,
-      previous_tier: currentTier,
-      target_tier: targetTier,
-      retention_score: numberField(forgetting.retention_score),
-      applied_at: args.now,
-      actor: args.actor,
-      source_code_change_allowed: false,
-    },
-    learning_loop_v1: {
-      loop_version: "learning_loop_run_v1",
-      action: mutationAction,
-      status: "applied",
-      previous_tier: currentTier,
-      target_tier: targetTier,
-      semantic_action: semanticAction,
-      applied_at: args.now,
-      actor: args.actor,
-    },
-  };
-  const commitId = await args.liteWriteStore.withTx(async () => {
-    const nextCommitId = await insertLearningLoopMutationCommit({
-      liteWriteStore: args.liteWriteStore,
-      scope: args.scope,
-      actor: args.actor,
-      kind: "learning_loop_controlled_forgetting",
-      input: {
-        node_id: args.row.id,
-        action: mutationAction,
-        previous_tier: currentTier,
-        target_tier: targetTier,
-      },
-      diff: {
-        job: "learning_loop_controlled_forgetting",
-        node_id: args.row.id,
-        actor: args.actor,
-        action: mutationAction,
-        semantic_action: semanticAction,
-        previous_tier: currentTier,
-        target_tier: targetTier,
-        retention_score: numberField(forgetting.retention_score),
-        source_code_change_allowed: false,
-      },
-    });
-    await args.liteWriteStore.updateNodeAnchorState({
-      scope: args.scope,
-      id: args.row.id,
-      tier: targetTier,
-      slots: nextSlots,
-      textSummary: args.row.text_summary,
-      salience: lifecycle.salience,
-      importance: lifecycle.importance,
-      confidence: lifecycle.confidence,
-      commitId: nextCommitId,
-    });
-    return nextCommitId;
-  });
 
   return decision({
     surface: "forgetting",
     target_id: args.row.id,
-    action: mutationAction,
+    action: evaluation.mutationAction,
     applied: true,
     mode: args.mode,
-    reasons: [...reasons, ...admissibility.reasons, "memory_tier_mutated"].slice(0, 24),
-    confidence: semanticAction === "archive" ? 0.8 : 0.72,
+    reasons: [...evaluation.reasons, ...evaluation.admissibilityReasons, "memory_tier_mutated"].slice(0, 24),
+    confidence: evaluation.confidence,
     policy_mutation_v1: null,
     policy_mutation_adjudication_v1: null,
-    commit_id: commitId,
+    commit_id: authority.commitId,
   });
 }
 
@@ -1249,7 +1426,6 @@ export async function runLearningLoopLite(
         scope: tenancy.scope_key,
         actor,
         mode,
-        now,
       }));
     }
   }
@@ -1271,7 +1447,6 @@ export async function runLearningLoopLite(
         scope: tenancy.scope_key,
         actor,
         mode,
-        now,
         forgettingMutationPolicy,
       }));
     }

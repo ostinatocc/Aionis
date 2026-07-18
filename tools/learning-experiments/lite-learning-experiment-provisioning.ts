@@ -7,15 +7,15 @@ import {
   loadEnv,
   parseAdmissionCandidatePolicyProfileRules,
   type AionisAdmissionCandidatePolicyProfileRule,
-} from "../config.js";
+} from "../../src/config.js";
 import {
   resolveAdmissionCandidatePolicy,
   type AdmissionCandidatePolicyRegistryEntry,
-} from "../memory/admission-candidate-policy.js";
+} from "../../src/memory/admission-candidate-policy.js";
 import {
   PRODUCTION_LEARNING_EXTERNAL_EXECUTION_POLICY_REGISTRY,
   type LearningExternalExecutionPolicyRegistryEntry,
-} from "../memory/learning-external-execution-policy.js";
+} from "../../src/memory/learning-external-execution-policy.js";
 import {
   LEARNING_COLLECTION_SOURCE_POLICY_STRICT_VALIDATION_CONTRACT,
   LearningExperimentExternalInputSetV1Schema,
@@ -32,7 +32,7 @@ import {
   type LearningExperimentApplicabilityProfileProjectionV1,
   type LearningMemoryNamespaceManifestV1,
   type LearningExperimentProvisionReceiptV1,
-} from "../memory/learning-experiment-provisioning.js";
+} from "../../src/memory/learning-experiment-provisioning.js";
 import {
   ExternalExecutionPolicyV1Schema,
   asStoreScope,
@@ -40,14 +40,14 @@ import {
   externalExecutionPolicyDigest,
   learningAssignmentUnitSha256,
   learningMemoryNamespaceSha256,
-} from "../memory/learning-episode-ledger.js";
-import { learningCollectionSourcePolicyProjection } from "../memory/learning-experiment-resolver.js";
+} from "../../src/memory/learning-episode-ledger.js";
+import { learningCollectionSourcePolicyProjection } from "../../src/memory/learning-experiment-resolver.js";
 import {
   resolveLearningGatePolicy,
   type LearningGatePolicyRegistryEntry,
-} from "../memory/learning-gate-policy.js";
-import { sha256Hex } from "../util/crypto.js";
-import { resolveTenantScope } from "../memory/tenant.js";
+} from "../../src/memory/learning-gate-policy.js";
+import { sha256Hex } from "../../src/util/crypto.js";
+import { resolveTenantScope } from "../../src/memory/tenant.js";
 import {
   LITE_LEARNING_LEDGER_REQUIRED_COLUMNS,
   createLiteLearningEpisodeLedgerAccess,
@@ -60,28 +60,28 @@ import {
   type LiteLearningConfirmatoryPreTreatmentLineageSnapshot,
   type LiteLearningAuthorityRow,
   type LiteLearningEpisodeLedgerAccess,
-} from "./lite-learning-episode-ledger.js";
+} from "../../src/store/lite-learning-episode-ledger.js";
 import {
   buildApplicabilityManifestFromDatabase,
   buildConfirmatoryApplicabilityCohort,
-} from "./lite-learning-experiment-applicability.js";
+} from "../../src/store/lite-learning-experiment-applicability.js";
 import {
   createLiteRuntimeDatabase,
   type LiteRuntimeDatabase,
-} from "./lite-runtime-database.js";
+} from "../../src/store/lite-runtime-database.js";
 import {
   LiteTenantScopeAuthorityError,
   assertLiteTenantScopeEncodingAnchor,
   assertLiteTenantScopeEncodingAnchorSetIntegrity,
   ensureLiteTenantScopeEncodingAnchor,
   tenantScopeEncodingDigest,
-} from "./lite-tenant-scope-authority.js";
-import type { SqliteDatabase } from "./sqlite.js";
+} from "../../src/store/lite-tenant-scope-authority.js";
+import type { SqliteDatabase } from "../../src/store/sqlite.js";
 import {
   createLiteWriteStoreFromDatabase,
   type LiteWriteOperationRow,
   type LiteWriteStore,
-} from "./lite-write-store.js";
+} from "../../src/store/lite-write-store.js";
 
 export const LEARNING_EXPERIMENT_PROVISION_OPERATION_KIND =
   "learning_experiment_provision_v1" as const;

@@ -2487,7 +2487,7 @@ digest. It binds the projection, DB-binding receipt, and authority-head digests
 plus frozen attestor/launcher identities and attestation time.
 
 This checkpoint is D1, not the complete D authority. D2 must still reconstruct
-the projection and streaming head from the real v4 database, and D3 must run
+the projection and streaming head from the real current database, and D3 must run
 that projector inside the launcher-held deployment lease against an inherited
 descriptor after WAL checkpoint/truncation, using a private signer channel.
 The existing external-head CLI fence therefore remains fail-closed. Task 8.2D
@@ -2497,7 +2497,7 @@ contains `release_verdict`.
 
 **Implementation checkpoint (2026-07-17, Task 8.2D-2):** D2 now has the real
 same-snapshot database reconstruction layer, but still no signer or enabled
-external-head command. The fixed-manifest reader requires current v4 and one
+external-head command. The fixed-manifest reader now requires current v5 and one
 unchanged active Runtime transaction, reads TEXT/INTEGER from raw SQLite bytes,
 rejects invalid UTF-8, REAL/unsafe integers, and same-byte non-TEXT external
 scope aliases, and streams the 22 authority tables plus the entire external
@@ -2515,7 +2515,12 @@ is not terminal until D3 holds the writer fence. D3 must therefore supply opaque
 launcher DB-binding, coverage-final, tracked-hold-bundle, same-transaction head,
 and private-signer capabilities; its signer must not accept a plain D2 draft.
 
-The D2 replay receipt now freezes all 25 actual v4 verifier tables and rejects
+The v0.3.10 convergence migration keeps historical schema-v4 V1 evidence
+parseable, but every newly reconstructed projection and authority head binds
+schema v5. A projection whose top-level schema version disagrees with its
+ledger verification or authority-head body is rejected.
+
+The D2 replay receipt freezes the 25 ledger verifier tables shared by v4/v5 and rejects
 missing, extra, pseudo-table, unsafe, or internally inconsistent counts. The
 database-lineage instance ID must equal the live Runtime identity row. The only
 streaming operation visitor is fixed inside the reader; no exported caller
@@ -2825,8 +2830,8 @@ Files:
   `src/store/lite-runtime-deployment-slot-authority-worker-protocol.ts`
 - Add:
   `scripts/ci/lite-runtime-deployment-slot-authority-worker-protocol.test.ts`
-- Modify: `src/store/lite-runtime-deployment-slot-authority.ts`
-- Modify: `src/store/lite-runtime-deployment-slot-path-authority.ts`
+- Modify: `tools/runtime-deployment-authority/lite-runtime-deployment-slot-authority.ts`
+- Modify: `tools/runtime-deployment-authority/lite-runtime-deployment-slot-path-authority.ts`
 - Modify: `src/memory/learning-runtime-database-binding.ts`
 
 The protocol module must have no filesystem, SQLite, child-process, route, or

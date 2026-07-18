@@ -1,6 +1,4 @@
 import { randomUUID } from "node:crypto";
-import { mkdirSync } from "node:fs";
-import { dirname } from "node:path";
 import type { LiteRuntimeStore } from "./memory-store.js";
 import type {
   SandboxBudgetUsage,
@@ -9,7 +7,12 @@ import type {
   SandboxRunTelemetryInsertArgs,
   SandboxStoreAccess,
 } from "./sandbox-access.js";
-import { createSqliteDatabase, ignoreSqliteDuplicateColumnError, type SqliteDatabase } from "./sqlite.js";
+import {
+  createPrivateRuntimeSqliteDatabase,
+  hardenPrivateRuntimeSqliteArtifacts,
+  ignoreSqliteDuplicateColumnError,
+  type SqliteDatabase,
+} from "./sqlite.js";
 import { createSqliteTransactionRunner } from "./sqlite-transaction-runner.js";
 
 type SandboxSessionRecord = {
@@ -602,9 +605,9 @@ function initialize(db: SqliteDatabase) {
 }
 
 export function createLiteRuntimeStore(path: string): LiteRuntimeStore {
-  mkdirSync(dirname(path), { recursive: true });
-  const db = createSqliteDatabase(path);
+  const db = createPrivateRuntimeSqliteDatabase(path);
   initialize(db);
+  hardenPrivateRuntimeSqliteArtifacts(path);
   const session = createLiteRuntimeStoreSession(db);
   const transaction = createSqliteTransactionRunner({
     begin: () => db.exec("BEGIN IMMEDIATE"),

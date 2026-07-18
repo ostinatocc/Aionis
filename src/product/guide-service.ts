@@ -20,6 +20,7 @@ import type { MemoryWriteRouteService } from "../routes/memory-write.js";
 import { deferredPlanningToolDecision } from "../routes/memory-context-runtime.js";
 import type { DeferredToolsSelectDecision } from "../memory/tools-select.js";
 import { readToolRuleEvaluationProvenance } from "../memory/tool-rule-evaluation-provenance.js";
+import { persistInitialExecutionDecisionAuthority } from "../memory/execution-decision-authority.js";
 
 import {
   buildAionisMemoryPacket,
@@ -2885,7 +2886,25 @@ async function persistGuideExposure(args: {
       );
       const persisted = await args.dependencies.memoryWrite!.persist(selected.plan);
       if (args.deferredToolDecision) {
-        await args.dependencies.liteWriteStore.insertExecutionDecision(args.deferredToolDecision);
+        if (args.deferredToolDecision.scope !== args.storeScope) {
+          throw new Error("deferred tool decision scope changed before guide commit");
+        }
+        const decisionParentHead = await args.dependencies.liteWriteStore.readScopeHead(args.storeScope);
+        if (!decisionParentHead || decisionParentHead.commitId !== persisted.commit_id) {
+          throw new Error("deferred tool decision parent is not the persisted guide memory commit");
+        }
+        const decisionAuthority = await persistInitialExecutionDecisionAuthority({
+          store: args.dependencies.liteWriteStore,
+          decision: args.deferredToolDecision,
+          actor: args.parsed.consumer_agent_id ?? args.dependencies.env.LITE_LOCAL_ACTOR_ID,
+          expectedHeadRevision: decisionParentHead.revision,
+          expectedHeadCommitId: persisted.commit_id,
+        });
+        if (!args.toolSelection
+          || decisionAuthority.row.id !== args.toolSelection.decision_id
+          || decisionAuthority.row.created_at !== args.toolSelection.created_at) {
+          throw new Error("persisted tool decision does not match the guide receipt");
+        }
       }
       await args.dependencies.liteWriteStore.insertProductGuideReceipt({
         tenantId: args.tenantId,
@@ -3089,10 +3108,7 @@ async function executeProductGuide(args: {
   const deferredRuleEvaluationProvenance = deferredToolDecision
     ? readToolRuleEvaluationProvenance(deferredToolDecision.metadataJson)
     : null;
-  if (deferredToolDecision && !operationIdentity) {
-    return productServiceDependencyFailure("planning_context_service", 500);
-  }
-  if (operationIdentity && toolSelection && !deferredToolDecision) {
+  if (toolSelection && !deferredToolDecision) {
     return productServiceDependencyFailure("planning_context_service", 500);
   }
   if (deferredToolDecision && !toolSelection) {

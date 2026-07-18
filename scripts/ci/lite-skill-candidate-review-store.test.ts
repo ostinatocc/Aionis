@@ -449,7 +449,7 @@ test("normal Runtime assembly shares the main write transaction for fresh and up
         try {
           const report = inspectLiteRuntimeSchema(schemaDb);
           assert.equal(report.classification, "current");
-          assert.equal(report.detected_version, 4);
+          assert.equal(report.detected_version, 5);
         } finally {
           schemaDb.close();
         }

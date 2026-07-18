@@ -20,10 +20,10 @@ import {
   liteLearningExternalIngestionDatabaseProjectionDraftDigestV1,
   liteLearningExternalIngestionDatabaseProjectionDraftJsonV1,
   projectLiteLearningExternalIngestionDatabaseDraftV1,
-} from "../../src/store/lite-learning-external-ingestion-projector.js";
+} from "../../tools/learning-experiments/lite-learning-external-ingestion-projector.js";
 import {
   readLiteLearningRuntimeAuthorityExactRows,
-} from "../../src/store/lite-learning-runtime-authority-head.js";
+} from "../../tools/learning-experiments/lite-learning-runtime-authority-head.js";
 import {
   createLiteRuntimeDatabase,
   type LiteRuntimeDatabase,
@@ -173,7 +173,7 @@ function replaceProtectedDatabaseInstanceId(
   for (const trigger of triggers) database.db.exec(trigger.sql);
 }
 
-test("D2 external-ingestion projector reconstructs only a real same-snapshot v4 database draft", {
+test("D2 external-ingestion projector reconstructs only a real same-snapshot v5 database draft", {
   timeout: 900_000,
 }, async (t) => {
   const base = await createLearningExternalEvidenceIngestFixture();
@@ -250,8 +250,8 @@ test("D2 external-ingestion projector reconstructs only a real same-snapshot v4 
       });
     });
 
-    await t.test("rejects a real database whose Runtime metadata is no longer v4", async () => {
-      const fixture = cloneLearningExternalEvidenceIngestFixture(base, "projector-non-v4");
+    await t.test("rejects a real database whose Runtime metadata is no longer v5", async () => {
+      const fixture = cloneLearningExternalEvidenceIngestFixture(base, "projector-non-v5");
       const database = createLiteRuntimeDatabase(fixture.databasePath);
       try {
         assertRealCurrentWalDatabase(database);
@@ -265,7 +265,7 @@ test("D2 external-ingestion projector reconstructs only a real same-snapshot v4 
               tenantId: fixture.serviceInput.tenantId,
               confirmatoryAttemptId: CONFIRMATORY_ATTEMPT_ID,
             })),
-          /current_v4_database_required/,
+          /current_v5_database_required/,
         );
       } finally {
         await database.close();
@@ -463,7 +463,8 @@ test("D2 external-ingestion projector reconstructs only a real same-snapshot v4 
         assert.equal(draft.contract_version, "unsigned_d2_database_projection_draft_v1");
         assert.equal(draft.signing_eligible, false);
         assert.equal(draft.schema_component, "write_projection");
-        assert.equal(draft.schema_version, 4);
+        assert.equal(draft.schema_version, 5);
+        assert.equal(draft.ledger_verification.schema_version, 5);
         assert.equal(draft.tenant_id, "tenant-confirmatory");
         assert.equal(draft.task_family, "repository_change");
         assert.equal(draft.confirmatory_attempt_id, CONFIRMATORY_ATTEMPT_ID);

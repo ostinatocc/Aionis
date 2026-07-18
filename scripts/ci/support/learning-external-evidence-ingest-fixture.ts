@@ -73,7 +73,7 @@ import {
 } from "../../../src/store/lite-learning-external-authority.js";
 import {
   createLiteLearningExperimentProvisioner,
-} from "../../../src/store/lite-learning-experiment-provisioning.js";
+} from "../../../tools/learning-experiments/lite-learning-experiment-provisioning.js";
 import type { LiteRuntimeDatabase } from "../../../src/store/lite-runtime-database.js";
 import type {
   LiteLearningExternalEvidenceServiceInput,

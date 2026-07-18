@@ -51,6 +51,16 @@ const BoundedIdSchema = z.string().superRefine((value, context) => {
 });
 const PositiveSafeIntegerSchema = z.number().int().positive().max(Number.MAX_SAFE_INTEGER);
 const NonNegativeSafeIntegerSchema = z.number().int().nonnegative().max(Number.MAX_SAFE_INTEGER);
+/**
+ * V1 evidence remains readable for schema v4, while newly projected evidence
+ * binds the current v5 Runtime schema. The concrete version remains inside
+ * every signed digest, so accepting the historical value does not alias it to
+ * a v5 snapshot.
+ */
+export const LearningExternalRuntimeWriteSchemaVersionV1Schema = z.union([
+  z.literal(4),
+  z.literal(5),
+]);
 const CanonicalUnsigned64DecimalSchema = z.string().regex(/^(?:0|[1-9][0-9]{0,19})$/u)
   .refine((value) => BigInt(value) <= 0xffff_ffff_ffff_ffffn, {
     message: "Expected a canonical unsigned 64-bit decimal integer",
@@ -232,7 +242,7 @@ export const LearningExternalIngestionLedgerVerificationV1Schema = z.object({
     "aionis_learning_external_ingestion_ledger_verification_v1",
   ),
   schema_component: z.literal("write_projection"),
-  schema_version: z.literal(4),
+  schema_version: LearningExternalRuntimeWriteSchemaVersionV1Schema,
   database_instance_id: DigestSha256Schema,
   checked_at: LearningExternalCanonicalUtcMillisSchema,
   ledger_verifier_id: z.literal("aionis_lite_learning_ledger_replay"),
@@ -1530,7 +1540,7 @@ const DatabaseLineageV1Schema = z.object({
 export const LearningRuntimeAuthorityHeadBodyV1Schema = z.object({
   contract_version: z.literal("aionis_learning_runtime_authority_head_body_v1"),
   schema_component: z.literal("write_projection"),
-  schema_version: z.literal(4),
+  schema_version: LearningExternalRuntimeWriteSchemaVersionV1Schema,
   database_lineage: DatabaseLineageV1Schema,
   table_manifest_sha256: DigestSha256Schema,
   encoding_contract_version: z.literal("aionis_learning_runtime_authority_head_encoding_v1"),
@@ -1761,7 +1771,7 @@ export const ResultTupleV1Schema = z.object({
 export const LearningExternalIngestionProjectionV1Schema = z.object({
   contract_version: z.literal("aionis_learning_external_ingestion_projection_v1"),
   schema_component: z.literal("write_projection"),
-  schema_version: z.literal(4),
+  schema_version: LearningExternalRuntimeWriteSchemaVersionV1Schema,
   ledger_verifier_id: z.literal("aionis_lite_learning_ledger_replay"),
   ledger_verifier_version: z.literal(1),
   ledger_verification_sha256: DigestSha256Schema,
@@ -1785,6 +1795,8 @@ export const LearningExternalIngestionProjectionV1Schema = z.object({
   const status = value.required_series_status;
   const coverage = value.terminal_coverage_index;
   const identityBindings: ReadonlyArray<readonly [unknown, unknown, string]> = [
+    [value.authority_head.body.schema_version, value.schema_version,
+      "authority_head.body.schema_version"],
     [status.tenant_id, value.tenant_id, "required_series_status.tenant_id"],
     [coverage.tenant_id, value.tenant_id, "terminal_coverage_index.tenant_id"],
     [status.task_family, value.task_family, "required_series_status.task_family"],

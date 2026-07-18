@@ -11,12 +11,12 @@ import {
   prepareLiteRuntimeDeploymentSlotBindingCompletion,
   releaseLiteRuntimeDeploymentSlotExclusiveLease,
   reserveLiteRuntimeDeploymentSlotCheckpointGeneration,
-} from "../../../src/store/lite-runtime-deployment-slot-authority.js";
+} from "../../../tools/runtime-deployment-authority/lite-runtime-deployment-slot-authority.js";
 import {
   deriveLiteRuntimeDeploymentSlotPathCapability,
   inspectLiteRuntimeDeploymentSlotPathCapability,
   openLiteRuntimeDeploymentSlotPathAuthorityRoot,
-} from "../../../src/store/lite-runtime-deployment-slot-path-authority.js";
+} from "../../../tools/runtime-deployment-authority/lite-runtime-deployment-slot-path-authority.js";
 
 type ChildMode =
   | "commit_and_hold"

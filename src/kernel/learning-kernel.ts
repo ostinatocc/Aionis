@@ -152,6 +152,7 @@ export function createLearningKernel(args: LearningKernelArgs): LearningKernel {
         recallAccess: liteRecallAccess,
         embedder: queryEmbedder ?? embedder,
         liteWriteStore,
+        actor: env.LITE_LOCAL_ACTOR_ID,
       }),
 
     readToolDecision: (body) =>

@@ -1,19 +1,31 @@
 import { randomUUID } from "node:crypto";
-import stableStringify from "fast-json-stable-stringify";
 import { sha256Hex } from "../util/crypto.js";
 import { badRequest } from "../util/http.js";
 import { normalizeText } from "../util/normalize.js";
 import { redactPII } from "../util/redaction.js";
 import { RuleFeedbackRequest } from "./schemas.js";
 import { resolveTenantScope } from "./tenant.js";
+import {
+  runAppliedAuthorityMutationV2,
+  type AppliedAuthorityMutationCoordinatorStore,
+} from "./applied-authority-mutation.js";
+import {
+  ruleDefAuthorityRow,
+  ruleFeedbackAuthorityRow,
+} from "./rule-authority-mutation.js";
+import { normalizeSelfCommitReferences } from "../store/write-commit-authority.js";
 import type { LiteWriteStore } from "../store/lite-write-store.js";
 
 type FeedbackOptions = {
   maxTextLen: number;
   piiRedaction: boolean;
-  liteWriteStore?: Pick<
+  liteWriteStore?: AppliedAuthorityMutationCoordinatorStore & Pick<
     LiteWriteStore,
-    "resolveNode" | "latestCommit" | "insertCommit" | "insertRuleFeedback" | "updateRuleFeedbackAggregates" | "getRuleDef"
+    | "resolveNode"
+    | "insertRuleFeedback"
+    | "getRuleFeedback"
+    | "updateRuleFeedbackAggregates"
+    | "getRuleDef"
   > | null;
 };
 
@@ -41,67 +53,128 @@ export async function ruleFeedback(
   const noteNorm = parsed.note ? normalizeText(parsed.note, opts.maxTextLen) : undefined;
   const note = opts.piiRedaction && noteNorm ? redactPII(noteNorm).text : noteNorm;
 
-  const node = await liteWriteStore.resolveNode({
-    scope,
-    id: parsed.rule_node_id,
-    type: "rule",
-  });
-  if (!node) {
-    badRequest("rule_not_found_in_scope", "rule_node_id was not found in this scope", {
-      rule_node_id: parsed.rule_node_id,
-      scope: tenancy.scope,
-      tenant_id: tenancy.tenant_id,
-    });
-  }
-
-  const parent = await liteWriteStore.latestCommit(scope);
-  const parentHash = parent?.commit_hash ?? "";
-  const parentId = parent?.id ?? null;
-
   const feedbackId = randomUUID();
-  const diff = {
-    feedback: [{ id: feedbackId, rule_node_id: parsed.rule_node_id, outcome: parsed.outcome, run_id: parsed.run_id ?? null }],
-  };
-  const diffSha = sha256Hex(stableStringify(diff));
-  const commitHash = sha256Hex(
-    stableStringify({
-      parentHash,
-      inputSha,
-      diffSha,
-      scope,
-      actor,
-      kind: "rule_feedback",
-    }),
-  );
-  const commit_id = await liteWriteStore.insertCommit({
+  const authority = await runAppliedAuthorityMutationV2<string>({
+    store: liteWriteStore,
     scope,
-    parentCommitId: parentId,
     inputSha256: inputSha,
-    diffJson: JSON.stringify(diff),
     actor,
-    modelVersion: null,
-    promptVersion: null,
-    commitHash,
+    plan: async ({ appliedAt }) => {
+      const node = await liteWriteStore.resolveNode({
+        scope,
+        id: parsed.rule_node_id,
+        type: "rule",
+      });
+      if (!node) {
+        badRequest("rule_not_found_in_scope", "rule_node_id was not found in this scope", {
+          rule_node_id: parsed.rule_node_id,
+          scope: tenancy.scope,
+          tenant_id: tenancy.tenant_id,
+        });
+      }
+      const collision = await liteWriteStore.getRuleFeedback(scope, feedbackId);
+      if (collision) throw new Error("rule_feedback_id_collision");
+      const rule = await liteWriteStore.getRuleDef(scope, parsed.rule_node_id);
+      if (!rule) {
+        badRequest("rule_definition_not_found", "rule_node_id has no authoritative rule definition", {
+          rule_node_id: parsed.rule_node_id,
+          scope: tenancy.scope,
+          tenant_id: tenancy.tenant_id,
+        });
+      }
+
+      const feedbackIdentity = { scope, id: feedbackId };
+      const feedbackAfter = {
+        id: feedbackId,
+        scope,
+        rule_node_id: parsed.rule_node_id,
+        run_id: parsed.run_id ?? null,
+        outcome: parsed.outcome,
+        note: note ?? null,
+        source: "rule_feedback" as const,
+        decision_id: null,
+        commit_id: "$self",
+        created_at: appliedAt,
+      };
+      const ruleIdentity = { scope, rule_node_id: parsed.rule_node_id };
+      const ruleBefore = ruleDefAuthorityRow(rule);
+      const ruleAfter = {
+        ...ruleBefore,
+        positive_count: rule.positive_count + (parsed.outcome === "positive" ? 1 : 0),
+        negative_count: rule.negative_count + (parsed.outcome === "negative" ? 1 : 0),
+        commit_id: "$self",
+        updated_at: appliedAt,
+      };
+
+      return {
+        status: "mutate",
+        authorityKind: "rule_feedback",
+        mutations: [
+          {
+            table: "lite_memory_rule_defs",
+            identity: ruleIdentity,
+            operation: "update",
+            before: ruleBefore,
+            requested: ruleAfter,
+            after: ruleAfter,
+          },
+          {
+            table: "lite_memory_rule_feedback",
+            identity: feedbackIdentity,
+            operation: "insert",
+            before: null,
+            requested: feedbackAfter,
+            after: feedbackAfter,
+          },
+        ],
+        apply: async ({ commitId }) => {
+          await liteWriteStore.insertRuleFeedback({
+            id: feedbackId,
+            scope,
+            ruleNodeId: parsed.rule_node_id,
+            runId: parsed.run_id ?? null,
+            outcome: parsed.outcome,
+            note: note ?? null,
+            source: "rule_feedback",
+            decisionId: null,
+            commitId,
+            createdAt: appliedAt,
+          });
+          await liteWriteStore.updateRuleFeedbackAggregates({
+            scope,
+            outcome: parsed.outcome,
+            ruleNodeIds: [parsed.rule_node_id],
+            commitId,
+            updatedAt: appliedAt,
+          });
+          return feedbackId;
+        },
+        verify: async ({ commitId }) => {
+          const actualRule = await liteWriteStore.getRuleDef(scope, parsed.rule_node_id);
+          const actualFeedback = await liteWriteStore.getRuleFeedback(scope, feedbackId);
+          if (!actualRule || !actualFeedback) return [];
+          return [
+            {
+              table: "lite_memory_rule_defs",
+              identity: ruleIdentity,
+              after: normalizeSelfCommitReferences(ruleDefAuthorityRow(actualRule), commitId),
+            },
+            {
+              table: "lite_memory_rule_feedback",
+              identity: feedbackIdentity,
+              after: normalizeSelfCommitReferences(ruleFeedbackAuthorityRow(actualFeedback), commitId),
+            },
+          ];
+        },
+      };
+    },
   });
 
-  await liteWriteStore.insertRuleFeedback({
-    id: feedbackId,
-    scope,
-    ruleNodeId: parsed.rule_node_id,
-    runId: parsed.run_id ?? null,
-    outcome: parsed.outcome,
-    note: note ?? null,
-    source: "rule_feedback",
-    decisionId: null,
-    commitId: commit_id,
-  });
-
-
-  await liteWriteStore.updateRuleFeedbackAggregates({
-    scope,
-    outcome: parsed.outcome,
-    ruleNodeIds: [parsed.rule_node_id],
-  });
-
-  return { tenant_id: tenancy.tenant_id, scope: tenancy.scope, commit_id, commit_hash: commitHash, feedback_id: feedbackId };
+  return {
+    tenant_id: tenancy.tenant_id,
+    scope: tenancy.scope,
+    commit_id: authority.commitId,
+    commit_hash: authority.commitHash,
+    feedback_id: feedbackId,
+  };
 }

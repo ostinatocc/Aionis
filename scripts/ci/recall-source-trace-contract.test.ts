@@ -28,7 +28,7 @@ async function insertReadyConcept(args: {
   vector: number[];
   tier?: "hot" | "warm" | "cold";
 }): Promise<void> {
-  const commitId = await args.writeStore.insertCommit({
+  const commitId = await args.writeStore.insertLegacyV1CommitForMigrationOrTestFixture({
     scope: args.scope,
     parentCommitId: null,
     inputSha256: `source-trace-${args.id}`,

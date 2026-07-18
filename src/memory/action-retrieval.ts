@@ -1598,6 +1598,7 @@ export async function buildActionRetrievalLite(args: {
       liteWriteStore: args.liteWriteStore,
       recallAccess: args.liteRecallAccess,
       embedder: args.embedder,
+      actor: args.defaultActorId,
     },
   );
 

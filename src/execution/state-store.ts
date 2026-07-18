@@ -1,5 +1,3 @@
-import { mkdirSync } from "node:fs";
-import { dirname } from "node:path";
 import { z } from "zod";
 import {
   ExecutionStateV1Schema,
@@ -11,7 +9,11 @@ import {
   type ExecutionStateTransitionV1,
   type ExecutionTransitionType,
 } from "./transitions.js";
-import { createSqliteDatabase, type SqliteDatabase } from "../store/sqlite.js";
+import {
+  createPrivateRuntimeSqliteDatabase,
+  hardenPrivateRuntimeSqliteArtifacts,
+  type SqliteDatabase,
+} from "../store/sqlite.js";
 import { createLiteRuntimeReadDatabase } from "../store/lite-runtime-database.js";
 import type { SqliteTransactionRunner } from "../store/sqlite-transaction-runner.js";
 import { sha256Hex } from "../util/crypto.js";
@@ -98,8 +100,7 @@ export class LiteExecutionStateStore implements ExecutionStateStore {
   readonly transactionRunner: SqliteTransactionRunner | null;
 
   constructor(private readonly path: string, options: LiteExecutionStateStoreOptions = {}) {
-    mkdirSync(dirname(path), { recursive: true });
-    this.db = options.database ?? createSqliteDatabase(path);
+    this.db = options.database ?? createPrivateRuntimeSqliteDatabase(path);
     this.ownsDatabase = options.database == null;
     this.transactionMode = options.transactionMode ?? "self_managed";
     this.transactionRunner = options.transaction ?? null;
@@ -173,6 +174,7 @@ export class LiteExecutionStateStore implements ExecutionStateStore {
         eventAfterJsonColumn: "state_after_json",
         uniqueRevisionIndex: "idx_lite_execution_state_transitions_unique_revision",
       });
+      if (this.ownsDatabase) hardenPrivateRuntimeSqliteArtifacts(path);
     } catch (error) {
       if (this.ownsReadDatabase) {
         try {

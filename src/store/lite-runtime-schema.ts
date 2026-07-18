@@ -7,16 +7,21 @@ import {
 } from "./lite-learning-episode-ledger.js";
 import { LITE_LEARNING_LEDGER_V3_REQUIRED_TRIGGERS } from
   "./lite-learning-schema-migration.js";
+import {
+  LITE_MEMORY_COMMIT_SCOPE_REVISION_INDEX_SQL,
+  LITE_MEMORY_SCOPE_HEAD_TABLE_SQL,
+} from "./lite-memory-commit-authority.js";
 import { normalizeSqliteSchemaSql } from "./sqlite-schema-sql.js";
 
 export const LITE_RUNTIME_WRITE_SCHEMA_COMPONENT = "write_projection";
-export const LITE_RUNTIME_WRITE_SCHEMA_VERSION = 4;
+export const LITE_RUNTIME_WRITE_SCHEMA_VERSION = 5;
 
 export type LiteRuntimeSchemaClassification =
   | "uninitialized"
   | "legacy_v0_3_4"
   | "supported_previous_v2"
   | "supported_previous_v3"
+  | "supported_previous_v4"
   | "current"
   | "incompatible";
 
@@ -494,10 +499,52 @@ export const WRITE_SCHEMA_V4: LiteRuntimeWriteSchemaContract = {
   triggers: LITE_LEARNING_LEDGER_REQUIRED_TRIGGERS,
 };
 
+// Schema v5 makes commit order explicit without rewriting or pretending to
+// authenticate historical v1 commits. Migrated rows remain digest_version=1
+// with null revision/digest fields; the first v2 mutation records an explicit,
+// unauthenticated legacy boundary and creates the forward authority head.
+export const WRITE_SCHEMA_V5: LiteRuntimeWriteSchemaContract = {
+  columns: {
+    ...WRITE_SCHEMA_V4.columns,
+    lite_memory_commits: [
+      ...WRITE_SCHEMA_V4.columns.lite_memory_commits,
+      "digest_version",
+      "revision",
+      "mutation_digest",
+      "legacy_anchor_commit_id",
+    ],
+    lite_memory_scope_heads: [
+      "scope",
+      "commit_id",
+      "revision",
+      "updated_at",
+    ],
+  },
+  constraints: {
+    ...WRITE_SCHEMA_V4.constraints,
+    lite_memory_scope_heads: {
+      primaryKey: ["scope"],
+      sql: LITE_MEMORY_SCOPE_HEAD_TABLE_SQL,
+    },
+  },
+  indexes: {
+    ...WRITE_SCHEMA_V4.indexes,
+    idx_lite_memory_commits_scope_revision: {
+      table: "lite_memory_commits",
+      columns: [{ name: "scope" }, { name: "revision" }],
+      unique: true,
+      partial: true,
+      predicate: "revision IS NOT NULL",
+      sql: LITE_MEMORY_COMMIT_SCOPE_REVISION_INDEX_SQL,
+    },
+  },
+  triggers: WRITE_SCHEMA_V4.triggers,
+};
+
 const ACTIVE_WRITE_SCHEMA_TARGET: LiteRuntimeSchemaInspectionTarget = {
   currentVersion: LITE_RUNTIME_WRITE_SCHEMA_VERSION,
-  contracts: { 2: WRITE_SCHEMA_V2, 3: WRITE_SCHEMA_V3, 4: WRITE_SCHEMA_V4 },
-  supportedPreviousVersions: [2, 3],
+  contracts: { 2: WRITE_SCHEMA_V2, 3: WRITE_SCHEMA_V3, 4: WRITE_SCHEMA_V4, 5: WRITE_SCHEMA_V5 },
+  supportedPreviousVersions: [2, 3, 4],
 };
 
 function userTables(db: SqliteDatabase): Set<string> {
@@ -909,11 +956,13 @@ export function inspectLiteRuntimeSchemaAgainstTarget(
       ? "uninitialized"
       : detectedVersion === target.currentVersion
         ? "current"
-        : detectedVersion === 3 && target.supportedPreviousVersions.includes(3)
-          ? "supported_previous_v3"
-        : detectedVersion === 2 && target.supportedPreviousVersions.includes(2)
-          ? "supported_previous_v2"
-          : "legacy_v0_3_4";
+        : detectedVersion === 4 && target.supportedPreviousVersions.includes(4)
+          ? "supported_previous_v4"
+          : detectedVersion === 3 && target.supportedPreviousVersions.includes(3)
+            ? "supported_previous_v3"
+            : detectedVersion === 2 && target.supportedPreviousVersions.includes(2)
+              ? "supported_previous_v2"
+              : "legacy_v0_3_4";
 
   return {
     contract_version: "aionis_lite_runtime_schema_report_v1",
@@ -924,6 +973,7 @@ export function inspectLiteRuntimeSchemaAgainstTarget(
     upgrade_required: classification === "legacy_v0_3_4"
       || classification === "supported_previous_v2"
       || classification === "supported_previous_v3"
+      || classification === "supported_previous_v4"
       || classification === "uninitialized",
     user_table_count: tables.size,
     missing_tables: [...selectedMissing.missingTables].sort(),

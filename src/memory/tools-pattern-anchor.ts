@@ -1,7 +1,6 @@
 import stableStringify from "fast-json-stable-stringify";
 import type { EmbeddingProvider } from "../embeddings/types.js";
-import type { LiteFindNodeRow, LiteWriteStore } from "../store/lite-write-store.js";
-import type { WriteStoreAccess } from "../store/write-access.js";
+import type { LiteWriteStore } from "../store/lite-write-store.js";
 import { sha256Hex } from "../util/crypto.js";
 import {
   buildPatternMaintenanceMetadata,
@@ -12,12 +11,7 @@ import {
 import { buildExecutionContractFromProjection } from "./execution-contract.js";
 import { resolveNodePriorityProfile } from "./importance-dynamics.js";
 import { ExecutionNativeV1Schema, MemoryAnchorV1Schema, type MemoryAnchorV1 } from "./schemas.js";
-import {
-  completeLiteInlineEmbeddings,
-  persistLitePreparedWrite,
-  type LiteProjectedWriteStore,
-} from "./lite-projected-write-commit.js";
-import { applyPreparedMemoryWrite, prepareMemoryWrite, type PreparedWrite } from "./write.js";
+import { prepareMemoryWrite, type PreparedWrite } from "./write.js";
 import { buildPromotionEvidenceLedgerV1 } from "./promotion-evidence-ledger.js";
 import {
   buildTaskSignature,
@@ -67,7 +61,6 @@ export type WriteToolsDecisionPatternAnchorOptions = {
   piiRedaction: boolean;
   allowCrossScopeEdges?: boolean;
   embedder: EmbeddingProvider | null;
-  writeAccess?: WriteStoreAccess | null;
   liteWriteStore?: LiteWriteStore | null;
 };
 
@@ -726,31 +719,6 @@ function existingPatternAnchorSha256(node: ExistingPatternAnchorNode | null): st
   return node ? sha256Hex(stableStringify(node)) : null;
 }
 
-async function updateExistingPatternAnchorLite(
-  liteWriteStore: Pick<LiteWriteStore, "updateNodeAnchorState">,
-  args: {
-    scope: string;
-    id: string;
-    slots: Record<string, unknown>;
-    textSummary: string;
-    salience: number;
-    importance: number;
-    confidence: number;
-    commitId: string;
-  },
-): Promise<void> {
-  await liteWriteStore.updateNodeAnchorState({
-    scope: args.scope,
-    id: args.id,
-    slots: args.slots,
-    textSummary: args.textSummary,
-    salience: args.salience,
-    importance: args.importance,
-    confidence: args.confidence,
-    commitId: args.commitId,
-  });
-}
-
 export async function prepareToolsDecisionPatternAnchor(
   args: WriteToolsDecisionPatternAnchorArgs,
   opts: WriteToolsDecisionPatternAnchorOptions,
@@ -883,92 +851,16 @@ export async function prepareToolsDecisionPatternAnchor(
   };
 }
 
-export async function persistPreparedToolsDecisionPatternAnchor(
+export async function assertPreparedToolsDecisionPatternAnchorCurrent(
   prepared: PreparedToolsDecisionPatternAnchor,
-  opts: {
-    liteWriteStore: LiteProjectedWriteStore & Pick<LiteWriteStore, "findNodes" | "updateNodeAnchorState">;
-    maxTextLen: number;
-    piiRedaction: boolean;
-    allowCrossScopeEdges?: boolean;
-  },
-): Promise<PatternAnchorWriteResult> {
+  liteWriteStore: Pick<LiteWriteStore, "findNodes">,
+): Promise<void> {
   const current = await findExistingPatternAnchorLite(
-    opts.liteWriteStore,
+    liteWriteStore,
     prepared.scope,
     prepared.result.client_id,
   );
   if (existingPatternAnchorSha256(current) !== prepared.expected_existing_sha256) {
     throw new Error("tools_pattern_anchor_prepare_conflict");
   }
-  if (prepared.update) {
-    await updateExistingPatternAnchorLite(opts.liteWriteStore, {
-      scope: prepared.scope,
-      id: prepared.update.id,
-      slots: prepared.update.slots,
-      textSummary: prepared.update.text_summary,
-      salience: prepared.update.salience,
-      importance: prepared.update.importance,
-      confidence: prepared.update.confidence,
-      commitId: prepared.feedback_commit_id,
-    });
-  } else if (prepared.prepared_write) {
-    await persistLitePreparedWrite({
-      prepared: prepared.prepared_write,
-      liteWriteStore: opts.liteWriteStore,
-      writeOptions: {
-        maxTextLen: opts.maxTextLen,
-        piiRedaction: opts.piiRedaction,
-        allowCrossScopeEdges: opts.allowCrossScopeEdges ?? false,
-        associativeLinkOrigin: "memory_write",
-      },
-    });
-  }
-  return prepared.result;
-}
-
-export async function writeToolsDecisionPatternAnchor(
-  args: WriteToolsDecisionPatternAnchorArgs,
-  opts: WriteToolsDecisionPatternAnchorOptions,
-): Promise<PatternAnchorWriteResult | null> {
-  if (!opts.writeAccess) throw new Error("write_access_required_for_tools_pattern_anchor");
-  const liteWriteStore = opts.liteWriteStore ?? null;
-  if (liteWriteStore && opts.writeAccess !== liteWriteStore) {
-    throw new Error("tools pattern anchor write authorities must share one Lite store");
-  }
-  if (liteWriteStore?.transactionRunner().inTransaction()) {
-    throw new Error("writeToolsDecisionPatternAnchor must be entered outside a transaction");
-  }
-  const prepared = await prepareToolsDecisionPatternAnchor(args, opts);
-  if (!prepared) return null;
-  if (!liteWriteStore) {
-    const write = prepared.prepared_write;
-    if (!write) throw new Error("tools pattern anchor generic write plan is missing");
-    const planned = write.nodes.filter((node) => (
-      !node.embedding && typeof node.embed_text === "string" && node.embed_text.trim().length > 0
-    ));
-    if (opts.embedder && planned.length > 0) {
-      const vectors = await opts.embedder.embed(planned.map((node) => String(node.embed_text)));
-      for (let index = 0; index < planned.length; index += 1) {
-        planned[index]!.embedding = vectors[index] ?? planned[index]!.embedding;
-        planned[index]!.embedding_model = opts.embedder.name;
-      }
-    }
-    const out = await applyPreparedMemoryWrite(opts.writeAccess, write, {
-      maxTextLen: opts.maxTextLen,
-      piiRedaction: opts.piiRedaction,
-      allowCrossScopeEdges: opts.allowCrossScopeEdges ?? false,
-      associativeLinkOrigin: "memory_write",
-    });
-    return { ...prepared.result, node_id: out.nodes[0]!.id };
-  }
-  const result = await liteWriteStore.withTx(() => persistPreparedToolsDecisionPatternAnchor(prepared, {
-    liteWriteStore,
-    maxTextLen: opts.maxTextLen,
-    piiRedaction: opts.piiRedaction,
-    allowCrossScopeEdges: opts.allowCrossScopeEdges,
-  }));
-  if (prepared.prepared_write) {
-    await completeLiteInlineEmbeddings({ prepared: prepared.prepared_write, embedder: opts.embedder, liteWriteStore });
-  }
-  return result;
 }

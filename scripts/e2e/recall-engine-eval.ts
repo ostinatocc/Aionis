@@ -274,7 +274,7 @@ async function insertFixtureCase(args: {
   testCase: RecallEngineCase;
 }): Promise<void> {
   const scope = `recall-engine:${args.testCase.case_id}`;
-  const commitId = await args.writeStore.insertCommit({
+  const commitId = await args.writeStore.insertLegacyV1CommitForMigrationOrTestFixture({
     scope,
     parentCommitId: null,
     inputSha256: `recall-engine-${args.testCase.case_id}`,

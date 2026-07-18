@@ -24,7 +24,7 @@ import {
   inspectLiteRuntimeDeploymentSlotPathCapability,
   openLiteRuntimeDeploymentSlotPathAuthorityRoot,
   provisionLiteRuntimeDeploymentSlotPathAuthorityRoot,
-} from "../../src/store/lite-runtime-deployment-slot-path-authority.js";
+} from "../../tools/runtime-deployment-authority/lite-runtime-deployment-slot-path-authority.js";
 import {
   acquireLiteRuntimeDeploymentSlotProvisioningJournalLock,
   appendLiteRuntimeDeploymentSlotProvisioningPhaseReceipt,
@@ -35,7 +35,7 @@ import {
   releaseLiteRuntimeDeploymentSlotProvisioningJournalLock,
   type LiteRuntimeDeploymentSlotProvisioningIntent,
   type LiteRuntimeDeploymentSlotProvisioningIntentWithoutDigest,
-} from "../../src/store/lite-runtime-deployment-slot-provisioning-journal.js";
+} from "../../tools/runtime-deployment-authority/lite-runtime-deployment-slot-provisioning-journal.js";
 
 const INTENT_TABLE = "lite_runtime_deployment_slot_provisioning_intent";
 const CREATED_AT = "2026-07-18T04:00:00.000Z";

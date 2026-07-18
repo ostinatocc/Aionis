@@ -30,7 +30,7 @@ import {
   provisionLiteRuntimeDeploymentSlotAuthority,
   resumeLiteRuntimeDeploymentSlotAuthorityProvisioning,
   type LiteRuntimeDeploymentSlotProvisioningDurablePhase,
-} from "../../src/store/lite-runtime-deployment-slot-authority.js";
+} from "../../tools/runtime-deployment-authority/lite-runtime-deployment-slot-authority.js";
 import {
   closeLiteRuntimeDeploymentSlotPathAuthorityRoot,
   deriveLiteRuntimeDeploymentSlotPathCapability,
@@ -40,7 +40,7 @@ import {
   type LiteRuntimeDeploymentSlotPathAuthorityRootCapability,
   type LiteRuntimeDeploymentSlotPathCapability,
   type LiteRuntimeDeploymentSlotPathInspection,
-} from "../../src/store/lite-runtime-deployment-slot-path-authority.js";
+} from "../../tools/runtime-deployment-authority/lite-runtime-deployment-slot-path-authority.js";
 import {
   closeLiteRuntimeProtectedAuthorityDatabasePin,
   pinLiteRuntimeProtectedAuthorityDatabase,

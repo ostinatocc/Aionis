@@ -1,5 +1,17 @@
+import stableStringify from "fast-json-stable-stringify";
+
 import type { LiteWriteStore } from "../store/lite-write-store.js";
+import { sha256Hex } from "../util/crypto.js";
 import { HttpError } from "../util/http.js";
+import { runAppliedAuthorityMutationV2 } from "./applied-authority-mutation.js";
+import {
+  NODE_AUTHORITY_UPDATE_SIDE_EFFECTS,
+  applyNodeAuthorityPatchesV2,
+  assertNodeDecisionRowMatchesAuthorityState,
+  buildNodeAuthorityMutationV2,
+  verifyNodeAuthorityPatchesV2,
+  type NodeAuthorityPatchV2,
+} from "./node-authority-mutation.js";
 import {
   AnchorSuppressRequest,
   AnchorSuppressResponseSchema,
@@ -17,6 +29,26 @@ import {
 } from "./node-execution-surface.js";
 import { resolveTenantScope } from "./tenant.js";
 import { buildAionisUri } from "./uri.js";
+
+type OperatorOverrideAction =
+  | "pattern_suppress"
+  | "pattern_unsuppress"
+  | "anchor_suppress"
+  | "anchor_unsuppress";
+
+type OperatorOverrideAuthorityFence = {
+  expectedHeadRevision?: number;
+  expectedHeadCommitId?: string | null;
+};
+
+type OperatorOverrideMutationRequest = {
+  action: OperatorOverrideAction;
+  anchorId: string;
+  actor: string;
+  reason: string | null;
+  mode: "shadow_learn" | "hard_freeze";
+  until: string | null;
+};
 
 function asRecord(value: unknown): Record<string, unknown> {
   return value && typeof value === "object" && !Array.isArray(value) ? (value as Record<string, unknown>) : {};
@@ -80,7 +112,7 @@ async function loadPatternAnchorNode(args: {
   liteWriteStore: Pick<LiteWriteStore, "findNodes">;
   scope: string;
   anchorId: string;
-  actor: string | null;
+  actor: string;
 }) {
   const { rows } = await args.liteWriteStore.findNodes({
     scope: args.scope,
@@ -112,7 +144,7 @@ async function loadOperatorAnchorNode(args: {
   liteWriteStore: Pick<LiteWriteStore, "findNodes">;
   scope: string;
   anchorId: string;
-  actor: string | null;
+  actor: string;
 }) {
   const { rows } = await args.liteWriteStore.findNodes({
     scope: args.scope,
@@ -143,125 +175,257 @@ async function loadOperatorAnchorNode(args: {
   return { row, slots, anchorKind, patternSurface };
 }
 
-async function updatePatternOperatorOverride(args: {
-  liteWriteStore: Pick<LiteWriteStore, "findNodes" | "updateNodeAnchorState">;
-  scope: string;
+function normalizeOperatorActor(value: string | undefined): string {
+  const normalized = value?.normalize("NFC").trim() ?? "";
+  return normalized || "system";
+}
+
+function normalizeOperatorReason(value: string | null | undefined): string | null {
+  if (value === null || value === undefined) return null;
+  return value.normalize("NFC").trim();
+}
+
+function normalizeOperatorUntil(value: string | null | undefined): string | null {
+  return value ? new Date(value).toISOString() : null;
+}
+
+function suppressAction(action: OperatorOverrideAction): boolean {
+  return action === "pattern_suppress" || action === "anchor_suppress";
+}
+
+function operatorOverrideInputSha256(scope: string, request: OperatorOverrideMutationRequest): string {
+  return sha256Hex(stableStringify({
+    action: request.action,
+    scope,
+    anchor_id: request.anchorId,
+    reason: request.reason,
+    mode: request.mode,
+    until: request.until,
+  }));
+}
+
+function sameOperatorOverrideIntent(
+  current: PatternOperatorOverride | null,
+  request: OperatorOverrideMutationRequest,
+): current is PatternOperatorOverride {
+  if (!current) return false;
+  const isSuppress = suppressAction(request.action);
+  return current.suppressed === isSuppress
+    && current.reason === request.reason
+    && current.mode === request.mode
+    && current.until === request.until
+    && current.updated_by === request.actor
+    && current.last_action === (isSuppress ? "suppress" : "unsuppress");
+}
+
+function patternOverrideResponse(args: {
   tenantId: string;
-  actor: string | null;
-  anchorId: string;
-  nextOverride: PatternOperatorOverride;
+  scope: string;
+  row: Awaited<ReturnType<typeof loadPatternAnchorNode>>["row"];
+  patternSurface: Awaited<ReturnType<typeof loadPatternAnchorNode>>["patternSurface"];
+  override: PatternOperatorOverride;
 }) {
-  const { row, patternSurface } = await loadPatternAnchorNode({
-    liteWriteStore: args.liteWriteStore,
-    scope: args.scope,
-    anchorId: args.anchorId,
-    actor: args.actor,
-  });
-  const nextSlots = {
-    ...asRecord(row.slots),
-    operator_override_v1: args.nextOverride,
-  };
-  await args.liteWriteStore.updateNodeAnchorState({
-    scope: args.scope,
-    id: row.id,
-    slots: nextSlots,
-    textSummary: row.text_summary ?? "",
-    salience: row.salience,
-    importance: row.importance,
-    confidence: row.confidence,
-    commitId: row.commit_id ?? null,
-  });
   return PatternSuppressResponseSchema.parse({
     tenant_id: args.tenantId,
     scope: args.scope,
-    anchor_id: row.id,
+    anchor_id: args.row.id,
     anchor_uri: buildAionisUri({
       tenant_id: args.tenantId,
       scope: args.scope,
-      type: row.type,
-      id: row.id,
+      type: args.row.type,
+      id: args.row.id,
     }),
-    selected_tool: patternSurface.selected_tool,
-    pattern_state: patternSurface.pattern_state,
-    credibility_state: patternSurface.credibility_state,
-    operator_override: args.nextOverride,
+    selected_tool: args.patternSurface.selected_tool,
+    pattern_state: args.patternSurface.pattern_state,
+    credibility_state: args.patternSurface.credibility_state,
+    operator_override: args.override,
   });
 }
 
-async function updateAnchorOperatorOverride(args: {
-  liteWriteStore: Pick<LiteWriteStore, "findNodes" | "updateNodeAnchorState">;
-  scope: string;
+function anchorOverrideResponse(args: {
   tenantId: string;
-  actor: string | null;
-  anchorId: string;
-  nextOverride: PatternOperatorOverride;
+  scope: string;
+  row: Awaited<ReturnType<typeof loadOperatorAnchorNode>>["row"];
+  anchorKind: string | null;
+  patternSurface: Awaited<ReturnType<typeof loadOperatorAnchorNode>>["patternSurface"];
+  override: PatternOperatorOverride;
 }) {
-  const { row, slots, anchorKind, patternSurface } = await loadOperatorAnchorNode({
-    liteWriteStore: args.liteWriteStore,
-    scope: args.scope,
-    anchorId: args.anchorId,
-    actor: args.actor,
-  });
-  const nextSlots = {
-    ...slots,
-    operator_override_v1: args.nextOverride,
-  };
-  await args.liteWriteStore.updateNodeAnchorState({
-    scope: args.scope,
-    id: row.id,
-    slots: nextSlots,
-    textSummary: row.text_summary ?? "",
-    salience: row.salience,
-    importance: row.importance,
-    confidence: row.confidence,
-    commitId: row.commit_id ?? null,
-  });
   return AnchorSuppressResponseSchema.parse({
     tenant_id: args.tenantId,
     scope: args.scope,
-    anchor_id: row.id,
+    anchor_id: args.row.id,
     anchor_uri: buildAionisUri({
       tenant_id: args.tenantId,
       scope: args.scope,
-      type: row.type,
-      id: row.id,
+      type: args.row.type,
+      id: args.row.id,
     }),
-    anchor_kind: anchorKind,
-    node_type: row.type,
-    selected_tool: patternSurface.selected_tool,
-    pattern_state: patternSurface.pattern_state,
-    credibility_state: patternSurface.credibility_state,
-    operator_override: args.nextOverride,
+    anchor_kind: args.anchorKind,
+    node_type: args.row.type,
+    selected_tool: args.patternSurface.selected_tool,
+    pattern_state: args.patternSurface.pattern_state,
+    credibility_state: args.patternSurface.credibility_state,
+    operator_override: args.override,
   });
+}
+
+async function runOperatorOverrideAuthority(args: {
+  liteWriteStore: LiteWriteStore;
+  scope: string;
+  tenantId: string;
+  targetContract: "pattern" | "anchor";
+  request: OperatorOverrideMutationRequest;
+} & OperatorOverrideAuthorityFence) {
+  const authority = await runAppliedAuthorityMutationV2({
+    store: args.liteWriteStore,
+    scope: args.scope,
+    inputSha256: operatorOverrideInputSha256(args.scope, args.request),
+    actor: args.request.actor,
+    ...(args.expectedHeadRevision !== undefined
+      ? { expectedHeadRevision: args.expectedHeadRevision }
+      : {}),
+    ...(Object.prototype.hasOwnProperty.call(args, "expectedHeadCommitId")
+      ? { expectedHeadCommitId: args.expectedHeadCommitId ?? null }
+      : {}),
+    plan: async ({ appliedAt }) => {
+      const loaded = args.targetContract === "pattern"
+        ? await loadPatternAnchorNode({
+            liteWriteStore: args.liteWriteStore,
+            scope: args.scope,
+            anchorId: args.request.anchorId,
+            actor: args.request.actor,
+          }).then((entry) => ({
+            ...entry,
+            slots: asRecord(entry.row.slots),
+            anchorKind: "pattern" as string | null,
+          }))
+        : await loadOperatorAnchorNode({
+            liteWriteStore: args.liteWriteStore,
+            scope: args.scope,
+            anchorId: args.request.anchorId,
+            actor: args.request.actor,
+          });
+      const row = loaded.row;
+      const slots = loaded.slots;
+      const anchorKind = loaded.anchorKind;
+      const before = (await args.liteWriteStore.nodeStatesByIds(args.scope, [row.id])).get(row.id);
+      if (!before) throw new Error(`operator_override_authority_target_missing:${row.id}`);
+      assertNodeDecisionRowMatchesAuthorityState(row, before, "operator_override_authority_row_changed");
+
+      const currentOverride = readAnchorOperatorOverride(slots);
+      const buildResponse = (override: PatternOperatorOverride) => args.targetContract === "pattern"
+        ? patternOverrideResponse({
+            tenantId: args.tenantId,
+            scope: args.scope,
+            row,
+            patternSurface: loaded.patternSurface,
+            override,
+          })
+        : anchorOverrideResponse({
+            tenantId: args.tenantId,
+            scope: args.scope,
+            row,
+            anchorKind,
+            patternSurface: loaded.patternSurface,
+            override,
+          });
+      if (sameOperatorOverrideIntent(currentOverride, args.request)) {
+        return { status: "no_op" as const, value: buildResponse(currentOverride) };
+      }
+
+      const isSuppress = suppressAction(args.request.action);
+      const nextOverride = buildOperatorOverride({
+        suppressed: isSuppress,
+        reason: args.request.reason,
+        mode: args.request.mode,
+        until: args.request.until,
+        updatedAt: appliedAt,
+        updatedBy: args.request.actor,
+        lastAction: isSuppress ? "suppress" : "unsuppress",
+      });
+      const patch: NodeAuthorityPatchV2 = {
+        id: row.id,
+        slots: {
+          ...slots,
+          operator_override_v1: nextOverride,
+        },
+        textSummary: row.text_summary,
+        salience: row.salience,
+        importance: row.importance,
+        confidence: row.confidence,
+      };
+      const response = buildResponse(nextOverride);
+      return {
+        status: "mutate" as const,
+        authorityKind: "operator_anchor_override",
+        mutations: [buildNodeAuthorityMutationV2({
+          before,
+          patch,
+          requestedEvidence: {
+            operator_override_action: {
+              action: args.request.action,
+              target_contract: args.targetContract,
+              actor: args.request.actor,
+              reason: args.request.reason,
+              mode: args.request.mode,
+              until: args.request.until,
+              anchor_kind: anchorKind,
+            },
+            side_effects: NODE_AUTHORITY_UPDATE_SIDE_EFFECTS,
+          },
+        })],
+        apply: async ({ commitId }) => {
+          await applyNodeAuthorityPatchesV2({
+            store: args.liteWriteStore,
+            scope: args.scope,
+            patches: [patch],
+            commitId,
+          });
+          return response;
+        },
+        verify: async ({ commitId }) => verifyNodeAuthorityPatchesV2({
+          store: args.liteWriteStore,
+          scope: args.scope,
+          patches: [patch],
+          commitId,
+          errorLabel: "operator_override_authority",
+        }),
+      };
+    },
+  });
+  return authority.value;
 }
 
 export async function suppressPatternAnchorLite(args: {
   body: unknown;
   defaultScope: string;
   defaultTenantId: string;
-  liteWriteStore: Pick<LiteWriteStore, "findNodes" | "updateNodeAnchorState">;
-}) {
+  liteWriteStore: LiteWriteStore;
+} & OperatorOverrideAuthorityFence) {
   const parsed = PatternSuppressRequest.parse(args.body);
   const tenancy = resolveTenantScope(
     { scope: parsed.scope, tenant_id: parsed.tenant_id },
     { defaultScope: args.defaultScope, defaultTenantId: args.defaultTenantId },
   );
-  const now = new Date().toISOString();
-  return updatePatternOperatorOverride({
+  return runOperatorOverrideAuthority({
     liteWriteStore: args.liteWriteStore,
     scope: tenancy.scope_key,
     tenantId: tenancy.tenant_id,
-    actor: parsed.actor ?? null,
-    anchorId: parsed.anchor_id,
-    nextOverride: buildOperatorOverride({
-      suppressed: true,
-      reason: parsed.reason,
+    targetContract: "pattern",
+    request: {
+      action: "pattern_suppress",
+      anchorId: parsed.anchor_id,
+      actor: normalizeOperatorActor(parsed.actor),
+      reason: normalizeOperatorReason(parsed.reason),
       mode: parsed.mode,
-      until: parsed.until ?? null,
-      updatedAt: now,
-      updatedBy: parsed.actor ?? null,
-      lastAction: "suppress",
-    }),
+      until: normalizeOperatorUntil(parsed.until),
+    },
+    ...(args.expectedHeadRevision !== undefined
+      ? { expectedHeadRevision: args.expectedHeadRevision }
+      : {}),
+    ...(Object.prototype.hasOwnProperty.call(args, "expectedHeadCommitId")
+      ? { expectedHeadCommitId: args.expectedHeadCommitId ?? null }
+      : {}),
   });
 }
 
@@ -269,29 +433,32 @@ export async function suppressAnchorLite(args: {
   body: unknown;
   defaultScope: string;
   defaultTenantId: string;
-  liteWriteStore: Pick<LiteWriteStore, "findNodes" | "updateNodeAnchorState">;
-}) {
+  liteWriteStore: LiteWriteStore;
+} & OperatorOverrideAuthorityFence) {
   const parsed = AnchorSuppressRequest.parse(args.body);
   const tenancy = resolveTenantScope(
     { scope: parsed.scope, tenant_id: parsed.tenant_id },
     { defaultScope: args.defaultScope, defaultTenantId: args.defaultTenantId },
   );
-  const now = new Date().toISOString();
-  return updateAnchorOperatorOverride({
+  return runOperatorOverrideAuthority({
     liteWriteStore: args.liteWriteStore,
     scope: tenancy.scope_key,
     tenantId: tenancy.tenant_id,
-    actor: parsed.actor ?? null,
-    anchorId: parsed.anchor_id,
-    nextOverride: buildOperatorOverride({
-      suppressed: true,
-      reason: parsed.reason,
+    targetContract: "anchor",
+    request: {
+      action: "anchor_suppress",
+      anchorId: parsed.anchor_id,
+      actor: normalizeOperatorActor(parsed.actor),
+      reason: normalizeOperatorReason(parsed.reason),
       mode: parsed.mode,
-      until: parsed.until ?? null,
-      updatedAt: now,
-      updatedBy: parsed.actor ?? null,
-      lastAction: "suppress",
-    }),
+      until: normalizeOperatorUntil(parsed.until),
+    },
+    ...(args.expectedHeadRevision !== undefined
+      ? { expectedHeadRevision: args.expectedHeadRevision }
+      : {}),
+    ...(Object.prototype.hasOwnProperty.call(args, "expectedHeadCommitId")
+      ? { expectedHeadCommitId: args.expectedHeadCommitId ?? null }
+      : {}),
   });
 }
 
@@ -299,29 +466,32 @@ export async function unsuppressPatternAnchorLite(args: {
   body: unknown;
   defaultScope: string;
   defaultTenantId: string;
-  liteWriteStore: Pick<LiteWriteStore, "findNodes" | "updateNodeAnchorState">;
-}) {
+  liteWriteStore: LiteWriteStore;
+} & OperatorOverrideAuthorityFence) {
   const parsed = PatternUnsuppressRequest.parse(args.body);
   const tenancy = resolveTenantScope(
     { scope: parsed.scope, tenant_id: parsed.tenant_id },
     { defaultScope: args.defaultScope, defaultTenantId: args.defaultTenantId },
   );
-  const now = new Date().toISOString();
-  return updatePatternOperatorOverride({
+  return runOperatorOverrideAuthority({
     liteWriteStore: args.liteWriteStore,
     scope: tenancy.scope_key,
     tenantId: tenancy.tenant_id,
-    actor: parsed.actor ?? null,
-    anchorId: parsed.anchor_id,
-    nextOverride: buildOperatorOverride({
-      suppressed: false,
-      reason: parsed.reason ?? null,
+    targetContract: "pattern",
+    request: {
+      action: "pattern_unsuppress",
+      anchorId: parsed.anchor_id,
+      actor: normalizeOperatorActor(parsed.actor),
+      reason: normalizeOperatorReason(parsed.reason),
       mode: "shadow_learn",
       until: null,
-      updatedAt: now,
-      updatedBy: parsed.actor ?? null,
-      lastAction: "unsuppress",
-    }),
+    },
+    ...(args.expectedHeadRevision !== undefined
+      ? { expectedHeadRevision: args.expectedHeadRevision }
+      : {}),
+    ...(Object.prototype.hasOwnProperty.call(args, "expectedHeadCommitId")
+      ? { expectedHeadCommitId: args.expectedHeadCommitId ?? null }
+      : {}),
   });
 }
 
@@ -329,28 +499,31 @@ export async function unsuppressAnchorLite(args: {
   body: unknown;
   defaultScope: string;
   defaultTenantId: string;
-  liteWriteStore: Pick<LiteWriteStore, "findNodes" | "updateNodeAnchorState">;
-}) {
+  liteWriteStore: LiteWriteStore;
+} & OperatorOverrideAuthorityFence) {
   const parsed = AnchorUnsuppressRequest.parse(args.body);
   const tenancy = resolveTenantScope(
     { scope: parsed.scope, tenant_id: parsed.tenant_id },
     { defaultScope: args.defaultScope, defaultTenantId: args.defaultTenantId },
   );
-  const now = new Date().toISOString();
-  return updateAnchorOperatorOverride({
+  return runOperatorOverrideAuthority({
     liteWriteStore: args.liteWriteStore,
     scope: tenancy.scope_key,
     tenantId: tenancy.tenant_id,
-    actor: parsed.actor ?? null,
-    anchorId: parsed.anchor_id,
-    nextOverride: buildOperatorOverride({
-      suppressed: false,
-      reason: parsed.reason ?? null,
+    targetContract: "anchor",
+    request: {
+      action: "anchor_unsuppress",
+      anchorId: parsed.anchor_id,
+      actor: normalizeOperatorActor(parsed.actor),
+      reason: normalizeOperatorReason(parsed.reason),
       mode: "shadow_learn",
       until: null,
-      updatedAt: now,
-      updatedBy: parsed.actor ?? null,
-      lastAction: "unsuppress",
-    }),
+    },
+    ...(args.expectedHeadRevision !== undefined
+      ? { expectedHeadRevision: args.expectedHeadRevision }
+      : {}),
+    ...(Object.prototype.hasOwnProperty.call(args, "expectedHeadCommitId")
+      ? { expectedHeadCommitId: args.expectedHeadCommitId ?? null }
+      : {}),
   });
 }

@@ -1,7 +1,7 @@
 import {
   LearningExperimentProvisioningError,
   createLiteLearningExperimentProvisioner,
-} from "../../../src/store/lite-learning-experiment-provisioning.js";
+} from "../../../tools/learning-experiments/lite-learning-experiment-provisioning.js";
 import type { SqliteTransactionRunOptions } from
   "../../../src/store/sqlite-transaction-runner.js";
 import {

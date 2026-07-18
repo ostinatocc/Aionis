@@ -34,6 +34,21 @@ export type ReplayWriteMirror = {
   upsertReplayNodes(entries: ReplayMirrorNodeRecord[]): Promise<void>;
 };
 
+/**
+ * Replay writes participate in one complete SQLite authority transaction.
+ * Keeping this capability explicit prevents a structurally valid
+ * WriteStoreAccess from being used without the transaction runner that binds
+ * commit, mutations, exact read-after verification, outbox rows, and
+ * scope-head CAS together.
+ */
+export type ReplayMemoryWriteStoreAccess = WriteStoreAccess & {
+  withTx<T>(fn: () => Promise<T>): Promise<T>;
+  afterCommit(fn: () => Promise<void>): Promise<void>;
+  transactionRunner(): {
+    inTransaction(): boolean;
+  };
+};
+
 export type ReplayMemoryWriteOptions = {
   defaultScope: string;
   defaultTenantId: string;
@@ -42,7 +57,7 @@ export type ReplayMemoryWriteOptions = {
   allowCrossScopeEdges: boolean;
   embedder: EmbeddingProvider | null;
   replayMirror?: ReplayWriteMirror | null;
-  writeAccess?: WriteStoreAccess | null;
+  writeAccess?: ReplayMemoryWriteStoreAccess | null;
 };
 
 function asObject(value: unknown): Record<string, unknown> | null {
@@ -79,10 +94,19 @@ function sealReplayPreparedAuthorityReceipts(prepared: Awaited<ReturnType<typeof
   }
 }
 
-function replayWriteAccessForOptions(opts: ReplayMemoryWriteOptions): WriteStoreAccess {
+function replayWriteAccessForOptions(opts: ReplayMemoryWriteOptions): ReplayMemoryWriteStoreAccess {
   const writeAccess = opts.writeAccess ?? null;
   if (!writeAccess) {
     throw new Error("replay memory write requires explicit writeAccess");
+  }
+  if (typeof writeAccess.withTx !== "function") {
+    throw new Error("replay memory write requires transactional writeAccess");
+  }
+  if (typeof writeAccess.transactionRunner !== "function") {
+    throw new Error("replay memory write requires transaction state access");
+  }
+  if (typeof writeAccess.afterCommit !== "function") {
+    throw new Error("replay memory write requires post-commit scheduling access");
   }
   return writeAccess;
 }
@@ -154,6 +178,8 @@ export async function applyReplayMemoryWrite(
   prepared: unknown;
   out: WriteResult;
 }> {
+  const writeAccess = replayWriteAccessForOptions(opts);
+  const joinedAmbientTransaction = writeAccess.transactionRunner().inTransaction();
   const prepared = await prepareMemoryWrite(
     writeReq,
     opts.defaultScope,
@@ -166,16 +192,25 @@ export async function applyReplayMemoryWrite(
     opts.embedder,
   );
   sealReplayPreparedAuthorityReceipts(prepared);
-  const out = await applyPreparedMemoryWrite(replayWriteAccessForOptions(opts), prepared, {
+  const out = await writeAccess.withTx(() => applyPreparedMemoryWrite(writeAccess, prepared, {
     maxTextLen: opts.maxTextLen,
     piiRedaction: opts.piiRedaction,
     allowCrossScopeEdges: opts.allowCrossScopeEdges,
     associativeLinkOrigin: "replay_write",
-  });
-  if (opts.replayMirror) {
+  }));
+
+  // The replay mirror may be a separate SQLite connection or an external
+  // projection. It must never run while the authority transaction is open.
+  const replayMirror = opts.replayMirror ?? null;
+  if (replayMirror) {
     const replayNodes = extractReplayMirrorNodes(writeReq, prepared, out, opts);
     if (replayNodes.length > 0) {
-      await opts.replayMirror.upsertReplayNodes(replayNodes);
+      const applyMirror = () => replayMirror.upsertReplayNodes(replayNodes);
+      if (joinedAmbientTransaction) {
+        await writeAccess.afterCommit(applyMirror);
+      } else {
+        await applyMirror();
+      }
     }
   }
   return { prepared, out };

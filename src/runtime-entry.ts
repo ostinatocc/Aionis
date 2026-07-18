@@ -4,6 +4,7 @@ import {
   createHttpApp,
   listenHttpApp,
   registerBootstrapLifecycle,
+  registerRuntimeSignalShutdown,
 } from "./server/bootstrap.js";
 import { createRequestGuards } from "./app/request-guards.js";
 import { createHttpObservabilityHelpers } from "./app/http-observability.js";
@@ -306,11 +307,18 @@ export async function startAionisRuntime(): Promise<void> {
     executionTreeStore,
   });
 
-  await assertBootstrapStoreContracts({
-    liteRecallAccess,
-    liteReplayAccess,
-    liteWriteStore,
-  });
+  const signalShutdown = registerRuntimeSignalShutdown({ app });
 
-  await listenHttpApp(app, env);
+  try {
+    await assertBootstrapStoreContracts({
+      liteRecallAccess,
+      liteReplayAccess,
+      liteWriteStore,
+    });
+    if (signalShutdown.shutdownRequested()) await signalShutdown.waitForShutdown();
+    else await listenHttpApp(app, env);
+  } catch (error) {
+    await app.close().catch(() => undefined);
+    throw error;
+  }
 }

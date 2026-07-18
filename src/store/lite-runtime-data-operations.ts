@@ -1,6 +1,7 @@
 import { createHash } from "node:crypto";
 import {
   closeSync,
+  chmodSync,
   createReadStream,
   createWriteStream,
   existsSync,
@@ -49,7 +50,12 @@ import {
   LITE_RUNTIME_WRITE_SCHEMA_VERSION,
   type LiteRuntimeSchemaReport,
 } from "./lite-runtime-schema.js";
-import { createSqliteDatabase, type SqliteDatabase } from "./sqlite.js";
+import {
+  createSqliteReadOnlyDatabase,
+  createSqliteSnapshotSourceDatabase,
+  hardenPrivateRuntimeSqliteArtifacts,
+  type SqliteDatabase,
+} from "./sqlite.js";
 
 export type LiteExecutionHistoryVerification = {
   ok: boolean;
@@ -154,7 +160,7 @@ export function preflightLiteRuntimeDatabase(path: string): {
   schema: LiteRuntimeSchemaReport;
 } {
   const absolute = assertReadableDatabasePath(path);
-  const db = createSqliteDatabase(absolute);
+  const db = createSqliteReadOnlyDatabase(absolute);
   try {
     return {
       path: absolute,
@@ -290,7 +296,7 @@ function projectionPayloadInvalidCount(db: SqliteDatabase): number {
             payload_sha256, payload_json, status, attempt_count, available_at,
             lease_owner, lease_token, lease_expires_at, last_error, created_at, updated_at
      FROM lite_memory_projection_jobs
-     WHERE status <> 'succeeded'`,
+     WHERE status <> 'succeeded' OR job_kind = 'embedding_generate'`,
   ).all() as LiteProjectionJobRow[];
   return rows.filter((row) => (
     row.job_kind === "embedding_generate"
@@ -388,7 +394,7 @@ async function auditExecutionHistoryWithRuntimeStores(
 export async function verifyLiteRuntimeDatabase(path: string): Promise<LiteRuntimeDataVerification> {
   const absolute = assertReadableDatabasePath(path);
   const checkedAt = new Date().toISOString();
-  const db = createSqliteDatabase(absolute);
+  const db = createSqliteSnapshotSourceDatabase(absolute);
   let quickCheck: string[];
   let foreignKeyViolationCount: number;
   let schema: LiteRuntimeSchemaReport;
@@ -553,7 +559,7 @@ export async function verifyLiteRuntimeLearningArtifact(args: {
   const snapshotDirectory = mkdtempSync(join(tmpdir(), "aionis-learning-integrity-snapshot-"));
   const snapshotPath = join(snapshotDirectory, "runtime.sqlite");
   try {
-    const source = createSqliteDatabase(sourcePath);
+    const source = createSqliteSnapshotSourceDatabase(sourcePath);
     try {
       vacuumInto(source, snapshotPath);
     } finally {
@@ -567,7 +573,7 @@ export async function verifyLiteRuntimeLearningArtifact(args: {
     let proposalIntegrityError: string | null = null;
     if (verification.schema.classification === "current"
       && verification.schema.detected_version === LITE_RUNTIME_WRITE_SCHEMA_VERSION) {
-      const db = createSqliteDatabase(snapshotPath);
+      const db = createSqliteReadOnlyDatabase(snapshotPath);
       try {
         assertLearningLookProposalAgainstDatabase(db, proposal);
       } catch (error) {
@@ -683,7 +689,7 @@ async function copyManifestBoundBackupSnapshot(
     actualSize += typeof chunk === "string" ? Buffer.byteLength(chunk) : chunk.byteLength;
     hash.update(chunk);
   });
-  await pipeline(source, createWriteStream(snapshotPath, { flags: "wx" }));
+  await pipeline(source, createWriteStream(snapshotPath, { flags: "wx", mode: 0o600 }));
   const actualSha = hash.digest("hex");
   if (manifest.byte_size !== actualSize || manifest.sha256 !== actualSha) {
     throw new Error(`backup_manifest_mismatch:${JSON.stringify({
@@ -766,6 +772,12 @@ function vacuumInto(source: SqliteDatabase, destination: string): void {
   source.prepare("VACUUM INTO ?").run(destination);
 }
 
+function createPrivateStagingDirectory(parent: string, prefix: string): string {
+  const directory = mkdtempSync(join(parent, prefix));
+  chmodSync(directory, 0o700);
+  return directory;
+}
+
 export async function backupLiteRuntimeDatabase(args: {
   sourcePath: string;
   destinationPath: string;
@@ -777,19 +789,23 @@ export async function backupLiteRuntimeDatabase(args: {
     throw new Error(`backup destination already exists: ${destinationPath}`);
   }
 
-  mkdirSync(dirname(destinationPath), { recursive: true });
-  const source = createSqliteDatabase(sourcePath);
+  const destinationDirectory = dirname(destinationPath);
+  mkdirSync(destinationDirectory, { recursive: true });
+  const stagingDirectory = createPrivateStagingDirectory(
+    destinationDirectory,
+    ".aionis-runtime-backup-",
+  );
+  const snapshotPath = join(stagingDirectory, "runtime.sqlite");
   try {
-    vacuumInto(source, destinationPath);
-  } catch (error) {
-    if (existsSync(destinationPath)) rmSync(destinationPath, { force: true });
-    throw error;
-  } finally {
-    source.close();
-  }
+    const source = createSqliteSnapshotSourceDatabase(sourcePath);
+    try {
+      vacuumInto(source, snapshotPath);
+    } finally {
+      source.close();
+    }
+    hardenPrivateRuntimeSqliteArtifacts(snapshotPath);
 
-  try {
-    const verification = await verifyLiteRuntimeDatabase(destinationPath);
+    const verification = await verifyLiteRuntimeDatabase(snapshotPath);
     if (!verification.ok) {
       throw new Error(`source_database_verification_failed:${JSON.stringify(verification)}`);
     }
@@ -805,15 +821,23 @@ export async function backupLiteRuntimeDatabase(args: {
       counts: verification.counts,
       learning_table_counts: verification.learning.replay?.table_counts ?? null,
     };
-    writeFileSync(manifestPath(destinationPath), `${JSON.stringify(manifest, null, 2)}\n`, { flag: "wx" });
-    fsyncPath(destinationPath);
+    hardenPrivateRuntimeSqliteArtifacts(snapshotPath);
+    fsyncPath(snapshotPath);
+    linkSync(snapshotPath, destinationPath);
+    writeFileSync(
+      manifestPath(destinationPath),
+      `${JSON.stringify(manifest, null, 2)}\n`,
+      { flag: "wx", mode: 0o600 },
+    );
     fsyncPath(manifestPath(destinationPath));
-    fsyncPath(dirname(destinationPath));
+    fsyncPath(destinationDirectory);
     return { manifest, verification };
   } catch (error) {
     rmSync(destinationPath, { force: true });
     rmSync(manifestPath(destinationPath), { force: true });
     throw error;
+  } finally {
+    rmSync(stagingDirectory, { recursive: true, force: true });
   }
 }
 
@@ -833,19 +857,23 @@ export async function restoreLiteRuntimeDatabase(args: {
   const sourceManifest = readBackupManifest(backupPath);
   const destinationDirectory = dirname(destinationPath);
   mkdirSync(destinationDirectory, { recursive: true });
-  const stagingDirectory = mkdtempSync(join(destinationDirectory, ".aionis-runtime-restore-"));
+  const stagingDirectory = createPrivateStagingDirectory(
+    destinationDirectory,
+    ".aionis-runtime-restore-",
+  );
   const snapshotPath = join(stagingDirectory, "runtime.sqlite");
   try {
     if (sourceManifest) {
       await copyManifestBoundBackupSnapshot(backupPath, snapshotPath, sourceManifest);
     } else {
-      const source = createSqliteDatabase(backupPath);
+      const source = createSqliteSnapshotSourceDatabase(backupPath);
       try {
         vacuumInto(source, snapshotPath);
       } finally {
         source.close();
       }
     }
+    hardenPrivateRuntimeSqliteArtifacts(snapshotPath);
     const backupVerification = await verifyLiteRuntimeDatabase(snapshotPath);
     if (!backupVerification.ok) {
       throw new Error(`backup_database_verification_failed:${JSON.stringify(backupVerification)}`);
@@ -857,6 +885,7 @@ export async function restoreLiteRuntimeDatabase(args: {
     // path and fails atomically if another creator won the destination race.
     // Sync the file before publishing it, then sync the containing directory so
     // a successful restore is durable across a crash after this function returns.
+    hardenPrivateRuntimeSqliteArtifacts(snapshotPath);
     fsyncPath(snapshotPath);
     linkSync(snapshotPath, destinationPath);
     fsyncPath(destinationDirectory);

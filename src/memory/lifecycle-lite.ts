@@ -9,14 +9,112 @@ import { resolveNodeLifecycleSignals } from "./lifecycle-signals.js";
 import { MemoryArchiveRehydrateRequest, MemoryNodesActivateRequest } from "./schemas.js";
 import { resolveTenantScope } from "./tenant.js";
 import type { LiteFindNodeRow, LiteWriteStore } from "../store/lite-write-store.js";
+import { runAppliedAuthorityMutationV2 } from "./applied-authority-mutation.js";
+import {
+  NODE_AUTHORITY_UPDATE_SIDE_EFFECTS,
+  applyNodeAuthorityPatchesV2,
+  buildNodeAuthorityMutationV2,
+  captureNodeAuthorityHeadFence,
+  verifyNodeAuthorityPatchesV2,
+  type NodeAuthorityPatchV2,
+} from "./node-authority-mutation.js";
 
-type LifecycleLiteStore = Pick<LiteWriteStore, "findNodes" | "latestCommit" | "insertCommit" | "updateNodeAnchorState">;
+type LifecycleLiteStore = LiteWriteStore;
 
 type LifecycleOptions = {
   maxTextLen: number;
   piiRedaction: boolean;
   defaultActor: string;
+  expectedHeadRevision?: number;
+  expectedHeadCommitId?: string | null;
 };
+
+type LifecycleNodePatch = {
+  id: string;
+  tier: string;
+  slots: Record<string, unknown>;
+  textSummary: string | null;
+  salience: number;
+  importance: number;
+  confidence: number;
+  updateTier: boolean;
+};
+
+function lifecycleNodeAuthorityPatch(patch: LifecycleNodePatch): NodeAuthorityPatchV2 {
+  return {
+    id: patch.id,
+    ...(patch.updateTier ? { tier: patch.tier } : {}),
+    slots: patch.slots,
+    textSummary: patch.textSummary,
+    salience: patch.salience,
+    importance: patch.importance,
+    confidence: patch.confidence,
+  };
+}
+
+async function runLifecycleAuthorityMutation(args: {
+  store: LifecycleLiteStore;
+  scope: string;
+  actor: string;
+  inputSha256: string;
+  authorityKind: "archive_rehydrate" | "feedback_learning_control_inspect_before_use" | "nodes_activate";
+  patches: readonly LifecycleNodePatch[];
+  requestContext: Record<string, unknown>;
+  expectedHeadRevision?: number;
+  expectedHeadCommitId?: string | null;
+}) {
+  return await runAppliedAuthorityMutationV2<void>({
+    store: args.store,
+    scope: args.scope,
+    inputSha256: args.inputSha256,
+    actor: args.actor,
+    ...(args.expectedHeadRevision !== undefined ? { expectedHeadRevision: args.expectedHeadRevision } : {}),
+    ...(Object.prototype.hasOwnProperty.call(args, "expectedHeadCommitId")
+      ? { expectedHeadCommitId: args.expectedHeadCommitId ?? null }
+      : {}),
+    plan: async () => {
+      if (args.patches.length === 0) return { status: "no_op" as const, value: undefined };
+      const authorityPatches = args.patches.map(lifecycleNodeAuthorityPatch);
+      const beforeStates = await args.store.nodeStatesByIds(
+        args.scope,
+        args.patches.map((patch) => patch.id),
+      );
+      const mutations = args.patches.map((patch) => {
+        const before = beforeStates.get(patch.id);
+        if (!before) throw new Error(`lifecycle_node_patch_target_missing:${patch.id}`);
+        return buildNodeAuthorityMutationV2({
+          before,
+          patch: lifecycleNodeAuthorityPatch(patch),
+          requestedEvidence: {
+            update_tier: patch.updateTier,
+            side_effects: NODE_AUTHORITY_UPDATE_SIDE_EFFECTS,
+            operation_context: args.requestContext,
+          },
+        });
+      });
+      return {
+        status: "mutate" as const,
+        authorityKind: args.authorityKind,
+        mutations,
+        apply: async ({ commitId }) => {
+          await applyNodeAuthorityPatchesV2({
+            store: args.store,
+            scope: args.scope,
+            patches: authorityPatches,
+            commitId,
+          });
+        },
+        verify: async ({ commitId }) => verifyNodeAuthorityPatchesV2({
+          store: args.store,
+          scope: args.scope,
+          patches: authorityPatches,
+          commitId,
+          errorLabel: "lifecycle_node_patch",
+        }),
+      };
+    },
+  });
+}
 
 function uniqStrings(values: string[]): string[] {
   return Array.from(new Set(values));
@@ -148,6 +246,7 @@ export async function rehydrateArchiveNodesLite(
   const reason = normalizeMaybeRedact(parsed.reason, opts) ?? null;
   const inputText = normalizeMaybeRedact(parsed.input_text, opts);
   const inputSha = parsed.input_sha256 ?? sha256Hex(inputText ?? "");
+  const headFence = await captureNodeAuthorityHeadFence(liteWriteStore, scope, opts);
 
   const requestedNodeIds = uniqStrings((parsed.node_ids ?? []).map((id) => id.toLowerCase()));
   const requestedClientIds = uniqStrings((parsed.client_ids ?? []).map((id) => id.trim()).filter((id) => id.length > 0));
@@ -195,46 +294,7 @@ export async function rehydrateArchiveNodesLite(
     };
   }
 
-  const parent = await liteWriteStore.latestCommit(scope);
-  const diff = {
-    job: "archive_rehydrate",
-    started_at: startedAt,
-    scope,
-    actor,
-    target_tier: parsed.target_tier,
-    reason,
-    requested: {
-      node_ids: requestedNodeIds,
-      client_ids: requestedClientIds,
-    },
-    resolved_by_client: resolvedByClient,
-    moved_ids: movableRows.map((row) => row.id),
-    unchanged_ids: unchangedIds,
-    missing_node_ids: missingNodeIds,
-    missing_client_ids: missingClientIds,
-  };
-  const diffJson = stableStringify(diff);
-  const diffSha = sha256Hex(diffJson);
-  const commitHash = sha256Hex(stableStringify({
-    parentHash: parent?.commit_hash ?? "",
-    inputSha,
-    diffSha,
-    scope,
-    actor,
-    kind: "archive_rehydrate",
-  }));
-  const commitId = await liteWriteStore.insertCommit({
-    scope,
-    parentCommitId: parent?.id ?? null,
-    inputSha256: inputSha,
-    diffJson,
-    actor,
-    modelVersion: null,
-    promptVersion: null,
-    commitHash,
-  });
-
-  for (const row of movableRows) {
+  const patches: LifecycleNodePatch[] = movableRows.map((row) => {
     const lifecycle = resolveNodeLifecycleSignals({
       type: row.type,
       tier: parsed.target_tier,
@@ -256,8 +316,7 @@ export async function rehydrateArchiveNodesLite(
       evidence_ref: row.evidence_ref ?? null,
       reference_time: startedAt,
     });
-    await liteWriteStore.updateNodeAnchorState({
-      scope,
+    return {
       id: row.id,
       tier: parsed.target_tier,
       slots: lifecycle.slots,
@@ -265,16 +324,45 @@ export async function rehydrateArchiveNodesLite(
       salience: lifecycle.salience,
       importance: lifecycle.importance,
       confidence: lifecycle.confidence,
-      commitId,
-    });
-  }
+      updateTier: true,
+    };
+  });
+
+  const requestContext = {
+    job: "archive_rehydrate",
+    started_at: startedAt,
+    scope,
+    actor,
+    target_tier: parsed.target_tier,
+    reason,
+    requested: {
+      node_ids: requestedNodeIds,
+      client_ids: requestedClientIds,
+    },
+    resolved_by_client: resolvedByClient,
+    moved_ids: movableRows.map((row) => row.id),
+    unchanged_ids: unchangedIds,
+    missing_node_ids: missingNodeIds,
+    missing_client_ids: missingClientIds,
+  };
+  const authority = await runLifecycleAuthorityMutation({
+    store: liteWriteStore,
+    scope,
+    actor,
+    inputSha256: inputSha,
+    authorityKind: "archive_rehydrate",
+    patches,
+    requestContext,
+    expectedHeadRevision: headFence.expectedHeadRevision,
+    expectedHeadCommitId: headFence.expectedHeadCommitId,
+  });
 
   return {
     scope: tenancy.scope,
     tenant_id: tenancy.tenant_id,
     target_tier: parsed.target_tier,
-    commit_id: commitId,
-    commit_hash: commitHash,
+    commit_id: authority.commitId,
+    commit_hash: authority.commitHash,
     rehydrated: {
       requested_node_ids: requestedNodeIds.length,
       requested_client_ids: requestedClientIds.length,
@@ -317,6 +405,7 @@ export async function applyUnusedExposureLearningControlLite(
     reason,
     memory_stats: input.memory_stats,
   }));
+  const headFence = await captureNodeAuthorityHeadFence(liteWriteStore, scope, opts);
   const candidateStats = input.memory_stats.filter((entry) =>
     entry.repeated_without_positive_attribution
     && entry.memory_id
@@ -350,48 +439,7 @@ export async function applyUnusedExposureLearningControlLite(
     rowsToUpdate.push(row);
   }
 
-  const parent = await liteWriteStore.latestCommit(scope);
-  const diff = {
-    job: "feedback_learning_control_inspect_before_use",
-    learning_control_job_id: input.job_id ?? null,
-    source_episode_id: input.source_episode_id ?? null,
-    source_feedback_event_id: input.source_feedback_event_id ?? null,
-    evidence_cutoff_event_row_id: input.evidence_cutoff_event_row_id ?? null,
-    started_at: startedAt,
-    scope,
-    actor,
-    run_id: input.run_id ?? null,
-    guide_trace_id: input.guide_trace_id ?? null,
-    reason,
-    requested_node_ids: requestedNodeIds,
-    resolved_node_ids: resolvedNodeIds,
-    applied_node_ids: rowsToUpdate.map((row) => row.id),
-    skipped_positive_attribution_memory_ids: skippedPositive,
-    missing_node_ids: missingNodeIds,
-    evidence_source: "repeated_unused_without_positive_attribution",
-  };
-  const diffJson = stableStringify(diff);
-  const diffSha = sha256Hex(diffJson);
-  const commitHash = sha256Hex(stableStringify({
-    parentHash: parent?.commit_hash ?? "",
-    inputSha,
-    diffSha,
-    scope,
-    actor,
-    kind: "feedback_learning_control_inspect_before_use",
-  }));
-  const commitId = await liteWriteStore.insertCommit({
-    scope,
-    parentCommitId: parent?.id ?? null,
-    inputSha256: inputSha,
-    diffJson,
-    actor,
-    modelVersion: null,
-    promptVersion: null,
-    commitHash,
-  });
-
-  for (const row of rowsToUpdate) {
+  const patches: LifecycleNodePatch[] = rowsToUpdate.map((row) => {
     const stat = statById.get(row.id);
     const nextSlots = mergeNodeFeedbackLearningControlSlots({
       slots: row.slots ?? {},
@@ -418,17 +466,48 @@ export async function applyUnusedExposureLearningControlLite(
       evidence_ref: row.evidence_ref ?? null,
       reference_time: startedAt,
     });
-    await liteWriteStore.updateNodeAnchorState({
-      scope,
+    return {
       id: row.id,
+      tier: row.tier,
       slots: lifecycle.slots,
       textSummary: row.text_summary,
       salience: lifecycle.salience,
       importance: lifecycle.importance,
       confidence: lifecycle.confidence,
-      commitId,
-    });
-  }
+      updateTier: false,
+    };
+  });
+
+  const requestContext = {
+    job: "feedback_learning_control_inspect_before_use",
+    learning_control_job_id: input.job_id ?? null,
+    source_episode_id: input.source_episode_id ?? null,
+    source_feedback_event_id: input.source_feedback_event_id ?? null,
+    evidence_cutoff_event_row_id: input.evidence_cutoff_event_row_id ?? null,
+    started_at: startedAt,
+    scope,
+    actor,
+    run_id: input.run_id ?? null,
+    guide_trace_id: input.guide_trace_id ?? null,
+    reason,
+    requested_node_ids: requestedNodeIds,
+    resolved_node_ids: resolvedNodeIds,
+    applied_node_ids: rowsToUpdate.map((row) => row.id),
+    skipped_positive_attribution_memory_ids: skippedPositive,
+    missing_node_ids: missingNodeIds,
+    evidence_source: "repeated_unused_without_positive_attribution",
+  };
+  const authority = await runLifecycleAuthorityMutation({
+    store: liteWriteStore,
+    scope,
+    actor,
+    inputSha256: inputSha,
+    authorityKind: "feedback_learning_control_inspect_before_use",
+    patches,
+    requestContext,
+    expectedHeadRevision: headFence.expectedHeadRevision,
+    expectedHeadCommitId: headFence.expectedHeadCommitId,
+  });
 
   return {
     contract_version: "aionis_feedback_learning_control_persistence_v1",
@@ -440,8 +519,8 @@ export async function applyUnusedExposureLearningControlLite(
     changed_memory_ids: rowsToUpdate.map((row) => row.id),
     skipped_positive_attribution_memory_ids: skippedPositive,
     missing_node_ids: missingNodeIds,
-    commit_id: commitId,
-    commit_hash: commitHash,
+    commit_id: authority.commitId,
+    commit_hash: authority.commitHash,
     reason: rowsToUpdate.length > 0
       ? "Repeated exposure without positive host attribution persisted an inspect-before-use memory posture."
       : skippedPositive.length > 0
@@ -469,6 +548,7 @@ export async function activateMemoryNodesLite(
   const reason = normalizeMaybeRedact(parsed.reason, opts) ?? null;
   const inputText = normalizeMaybeRedact(parsed.input_text, opts);
   const inputSha = parsed.input_sha256 ?? sha256Hex(inputText ?? "");
+  const headFence = await captureNodeAuthorityHeadFence(liteWriteStore, scope, opts);
 
   const requestedNodeIds = uniqStrings((parsed.node_ids ?? []).map((id) => id.toLowerCase()));
   const requestedClientIds = uniqStrings((parsed.client_ids ?? []).map((id) => id.trim()).filter((id) => id.length > 0));
@@ -516,60 +596,8 @@ export async function activateMemoryNodesLite(
       memory_id: row.id,
       boundary_ignored: boundaryIgnoredMemoryIds.has(row.id),
     }));
-  const parent = await liteWriteStore.latestCommit(scope);
-  const diff = {
-    job: "nodes_activate",
-    started_at: startedAt,
-    scope,
-    actor,
-    run_id: parsed.run_id ?? null,
-    guide_trace_id: parsed.guide_trace_id ?? null,
-    learning_episode_id: parsed.learning_episode_id ?? null,
-    feedback_operation_id: parsed.feedback_operation_id ?? null,
-    outcome: parsed.outcome,
-    activate: parsed.activate,
-    feedback: {
-      used_surface: parsed.used_surface ?? null,
-      verifier_status: verifierStatus,
-      tool_status: parsed.tool_status ?? null,
-      runtime_signal_refs: runtimeSignalRefs,
-      boundary_ignored_memory_ids: boundaryIgnoredIds,
-      verified_host_receipt: parsed.verified_host_receipt ?? false,
-      subjects: feedbackSubjects,
-    },
-    reason,
-    requested: {
-      node_ids: requestedNodeIds,
-      client_ids: requestedClientIds,
-    },
-    resolved_by_client: resolvedByClient,
-    found_node_ids: foundRows.map((row) => row.id),
-    missing_node_ids: missingNodeIds,
-    missing_client_ids: missingClientIds,
-  };
-  const diffJson = stableStringify(diff);
-  const diffSha = sha256Hex(diffJson);
-  const commitHash = sha256Hex(stableStringify({
-    parentHash: parent?.commit_hash ?? "",
-    inputSha,
-    diffSha,
-    scope,
-    actor,
-    kind: "nodes_activate",
-  }));
-  const commitId = await liteWriteStore.insertCommit({
-    scope,
-    parentCommitId: parent?.id ?? null,
-    inputSha256: inputSha,
-    diffJson,
-    actor,
-    modelVersion: null,
-    promptVersion: null,
-    commitHash,
-  });
-
   const feedbackAttributions: Array<Record<string, unknown>> = [];
-  for (const row of foundRows) {
+  const patches: LifecycleNodePatch[] = foundRows.map((row) => {
     const nextState = computeFeedbackUpdatedNodeState({
       node: row,
       feedback: {
@@ -629,23 +657,64 @@ export async function activateMemoryNodesLite(
       evidence_ref: row.evidence_ref ?? null,
       reference_time: startedAt,
     });
-    await liteWriteStore.updateNodeAnchorState({
-      scope,
+    return {
       id: row.id,
+      tier: row.tier,
       slots: lifecycle.slots,
       textSummary: row.text_summary,
       salience: lifecycle.salience,
       importance: lifecycle.importance,
       confidence: lifecycle.confidence,
-      commitId,
-    });
-  }
+      updateTier: false,
+    };
+  });
+  const requestContext = {
+    job: "nodes_activate",
+    started_at: startedAt,
+    scope,
+    actor,
+    run_id: parsed.run_id ?? null,
+    guide_trace_id: parsed.guide_trace_id ?? null,
+    learning_episode_id: parsed.learning_episode_id ?? null,
+    feedback_operation_id: parsed.feedback_operation_id ?? null,
+    outcome: parsed.outcome,
+    activate: parsed.activate,
+    feedback: {
+      used_surface: parsed.used_surface ?? null,
+      verifier_status: verifierStatus,
+      tool_status: parsed.tool_status ?? null,
+      runtime_signal_refs: runtimeSignalRefs,
+      boundary_ignored_memory_ids: boundaryIgnoredIds,
+      verified_host_receipt: parsed.verified_host_receipt ?? false,
+      subjects: feedbackSubjects,
+    },
+    reason,
+    requested: {
+      node_ids: requestedNodeIds,
+      client_ids: requestedClientIds,
+    },
+    resolved_by_client: resolvedByClient,
+    found_node_ids: foundRows.map((row) => row.id),
+    missing_node_ids: missingNodeIds,
+    missing_client_ids: missingClientIds,
+  };
+  const authority = await runLifecycleAuthorityMutation({
+    store: liteWriteStore,
+    scope,
+    actor,
+    inputSha256: inputSha,
+    authorityKind: "nodes_activate",
+    patches,
+    requestContext,
+    expectedHeadRevision: headFence.expectedHeadRevision,
+    expectedHeadCommitId: headFence.expectedHeadCommitId,
+  });
 
   return {
     scope: tenancy.scope,
     tenant_id: tenancy.tenant_id,
-    commit_id: commitId,
-    commit_hash: commitHash,
+    commit_id: authority.commitId,
+    commit_hash: authority.commitHash,
     activated: {
       requested_node_ids: requestedNodeIds.length,
       requested_client_ids: requestedClientIds.length,

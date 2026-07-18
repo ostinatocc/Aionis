@@ -1806,6 +1806,8 @@ test("policy learning_control core keeps advisory policy memory contested until 
     const policyMemoryId = feedback.policy_memory?.node_id;
     assert.ok(policyMemoryId);
     assert.equal(feedback.policy_memory?.policy_memory_state, "contested");
+    const authorityHeadBeforeLearningControl = await liteWriteStore.latestCommit("default");
+    assert.ok(authorityHeadBeforeLearningControl);
 
     const reactivated = await applyPolicyMemoryLearningControlLite(liteWriteStore, {
       tenant_id: "default",
@@ -1822,6 +1824,15 @@ test("policy learning_control core keeps advisory policy memory contested until 
     assert.equal(reactivated.policy_memory.policy_memory_state, "contested");
     assert.equal(reactivated.policy_memory.policy_contract.contract_trust, "advisory");
     assert.equal(reactivated.policy_memory.policy_contract.activation_mode, "hint");
+    const authorityHeadAfterLearningControl = await liteWriteStore.latestCommit("default");
+    assert.ok(authorityHeadAfterLearningControl);
+    assert.equal(
+      authorityHeadAfterLearningControl!.revision,
+      authorityHeadBeforeLearningControl!.revision + 1,
+    );
+    assert.notEqual(authorityHeadAfterLearningControl!.id, authorityHeadBeforeLearningControl!.id);
+    assert.equal(authorityHeadAfterLearningControl!.digest_version, 2);
+    assert.equal(authorityHeadAfterLearningControl!.persisted_head, true);
     const persisted = await liteWriteStore.findNodes({
       scope: "default",
       id: policyMemoryId!,

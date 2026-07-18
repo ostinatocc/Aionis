@@ -9,6 +9,20 @@ repair creates durable work that the normal Runtime worker later executes.
 
 ## Safety model
 
+- Runtime SQLite paths must live inside a dedicated data directory (for example
+  `/var/lib/aionis/runtime.sqlite` or `.tmp/runtime.sqlite`). A bare filename,
+  SQLite URI, filesystem root, shared sticky directory such as `/tmp`, or a
+  symbolic-link main/sidecar file fails closed instead of changing a shared
+  parent or following the link.
+- On POSIX hosts, startup corrects an existing Runtime data directory to `0700`
+  and the SQLite main, WAL, SHM, and rollback-journal files to `0600`. The main
+  file is safely pre-created before SQLite opens it; Runtime does not change the
+  process-wide umask. Windows mode bits are not an ACL equivalent, so a Windows
+  deployment still requires an owner-private volume/ACL policy.
+- The first `SIGTERM` or `SIGINT` stops HTTP service through Fastify `app.close`,
+  waits for active workers and sandbox finalization, closes every store, and
+  exits `0` after a clean drain. A second signal or the 30-second shutdown
+  deadline forces exit using the corresponding `128 + signal` status.
 - Runtime startup performs a schema preflight before write/projection schema
   changes. A database from v0.3.4 is accepted for upgrade. A future, malformed,
   or partially missing schema that already claims the current version fails

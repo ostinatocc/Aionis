@@ -41,15 +41,16 @@ import {
   resolveNodeTaskSignature,
   resolveNodeWorkflowSignature,
 } from "./node-execution-surface.js";
+import { prepareMemoryWrite, type PreparedWrite } from "./write.js";
+import { runAppliedAuthorityMutationV2 } from "./applied-authority-mutation.js";
 import {
-  completeLiteInlineEmbeddings,
-  persistLitePreparedWrite,
-  type LiteProjectedWriteStore,
-} from "./lite-projected-write-commit.js";
-import { applyPreparedMemoryWrite, prepareMemoryWrite, type PreparedWrite } from "./write.js";
+  applyNodeAuthorityPatchesV2,
+  buildNodeAuthorityMutationV2,
+  verifyNodeAuthorityPatchesV2,
+} from "./node-authority-mutation.js";
 import type { EmbeddingProvider } from "../embeddings/types.js";
 import type { LiteWriteStore } from "../store/lite-write-store.js";
-import type { WriteStoreAccess } from "../store/write-access.js";
+import type { WriteExistingNodeState } from "../store/write-access.js";
 
 export type ExistingPolicyMemoryNode = {
   id: string;
@@ -86,7 +87,6 @@ type WritePolicyMemorySnapshotOptions = {
   piiRedaction: boolean;
   allowCrossScopeEdges?: boolean;
   embedder: EmbeddingProvider | null;
-  writeAccess: WriteStoreAccess;
   liteWriteStore?: LiteWriteStore | null;
 };
 
@@ -168,6 +168,22 @@ export type PolicyMemoryLearningControlApplyResult = {
   next_state: PolicyMemoryLifecycleState;
 };
 
+export type PreparedPolicyMemoryLearningControlLite = {
+  scope: string;
+  expected_node_sha256: string;
+  current_node: ExistingPolicyMemoryNode;
+  update: {
+    id: string;
+    client_id: string | null;
+    slots: Record<string, unknown>;
+    text_summary: string;
+    salience: number;
+    importance: number;
+    confidence: number;
+  };
+  result: PolicyMemoryLearningControlApplyResult;
+};
+
 function asRecord(value: unknown): Record<string, unknown> | null {
   return value && typeof value === "object" && !Array.isArray(value) ? (value as Record<string, unknown>) : null;
 }
@@ -181,7 +197,7 @@ function firstString(...values: unknown[]): string | null {
   return null;
 }
 
-function sealPolicyAuthoritySlots(args: {
+export function sealPolicyAuthoritySlots(args: {
   scope: string;
   id: string;
   clientId: string | null;
@@ -573,6 +589,24 @@ function existingPolicyMemorySha256(node: ExistingPolicyMemoryNode | null): stri
   return node ? sha256Hex(stableStringify(node)) : null;
 }
 
+function policyMemoryNodeFromAuthorityState(state: WriteExistingNodeState): ExistingPolicyMemoryNode {
+  const slots = JSON.parse(state.slotsJson) as unknown;
+  if (!slots || typeof slots !== "object" || Array.isArray(slots)) {
+    throw new Error(`policy_memory_authority_slots_invalid:${state.id}`);
+  }
+  return {
+    id: state.id,
+    client_id: state.clientId,
+    title: state.title,
+    text_summary: state.textSummary,
+    slots: slots as Record<string, unknown>,
+    tier: state.tier,
+    salience: state.salience,
+    importance: state.importance,
+    confidence: state.confidence,
+  };
+}
+
 async function loadPolicyMemoryNodeLite(
   liteWriteStore: Pick<LiteWriteStore, "findNodes">,
   args: { scope: string; id: string },
@@ -636,38 +670,6 @@ async function listPolicyMemoryLite(
     importance: row.importance,
     confidence: row.confidence,
   }));
-}
-
-async function updateExistingPolicyMemoryLite(
-  liteWriteStore: Pick<LiteWriteStore, "updateNodeAnchorState">,
-  args: {
-    scope: string;
-    id: string;
-    clientId?: string | null;
-    slots: Record<string, unknown>;
-    textSummary: string;
-    salience: number;
-    importance: number;
-    confidence: number;
-    commitId: string | null;
-  },
-): Promise<void> {
-  const slots = sealPolicyAuthoritySlots({
-    scope: args.scope,
-    id: args.id,
-    clientId: args.clientId ?? null,
-    slots: args.slots,
-  });
-  await liteWriteStore.updateNodeAnchorState({
-    scope: args.scope,
-    id: args.id,
-    slots,
-    textSummary: args.textSummary,
-    salience: args.salience,
-    importance: args.importance,
-    confidence: args.confidence,
-    commitId: args.commitId,
-  });
 }
 
 function derivePolicyMemoryStateFromSlots(slots: Record<string, unknown> | null | undefined): PolicyMemoryLifecycleState {
@@ -1011,47 +1013,6 @@ async function applyPolicyMemoryFeedbackToNodes(args: {
   return best;
 }
 
-export async function applyPolicyMemoryFeedbackLite(
-  liteWriteStore: Pick<LiteWriteStore, "findNodes" | "updateNodeAnchorState">,
-  args: PolicyMemoryFeedbackUpdateArgs,
-): Promise<PolicyMemoryFeedbackUpdateResult | null> {
-  const matched = (await listPolicyMemoryLite(liteWriteStore, args.scope, args.selected_tool))
-    .map((node) => ({
-      node,
-      score: scorePolicyMemoryMatch(node, {
-        selectedTool: args.selected_tool,
-        taskSignature: firstString(args.task_signature),
-        errorSignature: firstString(args.error_signature),
-        workflowSignature: firstString(args.workflow_signature),
-      }),
-    }))
-    .filter((entry) => entry.score >= 0)
-    .sort((a, b) => b.score - a.score)
-    .map((entry) => entry.node);
-  if (matched.length === 0) return null;
-  return applyPolicyMemoryFeedbackToNodes({
-    tenantId: args.tenant_id,
-    scope: args.scope,
-    nodes: matched,
-    outcome: args.outcome,
-    runId: args.run_id ?? null,
-    reason: args.reason ?? null,
-    inputSha256: args.input_sha256,
-    feedbackAt: args.feedback_at,
-    updateNode: (node, next) => updateExistingPolicyMemoryLite(liteWriteStore, {
-      scope: args.scope,
-      id: node.id,
-      clientId: node.client_id,
-      slots: next.slots,
-      textSummary: next.textSummary,
-      salience: next.salience,
-      importance: next.importance,
-      confidence: next.confidence,
-      commitId: args.commit_id,
-    }),
-  });
-}
-
 export async function preparePolicyMemoryFeedbackLite(
   liteWriteStore: Pick<LiteWriteStore, "findNodes">,
   args: PolicyMemoryFeedbackUpdateArgs,
@@ -1118,10 +1079,10 @@ export async function preparePolicyMemoryFeedbackLite(
   };
 }
 
-export async function persistPreparedPolicyMemoryFeedback(
+export async function assertPreparedPolicyMemoryFeedbackCurrent(
   prepared: PreparedPolicyMemoryFeedback,
-  liteWriteStore: Pick<LiteWriteStore, "findNodes" | "updateNodeAnchorState">,
-): Promise<PolicyMemoryFeedbackUpdateResult | null> {
+  liteWriteStore: Pick<LiteWriteStore, "findNodes">,
+): Promise<void> {
   for (const expected of prepared.expected_nodes) {
     const { rows } = await liteWriteStore.findNodes({
       scope: prepared.scope,
@@ -1148,20 +1109,6 @@ export async function persistPreparedPolicyMemoryFeedback(
       throw new Error("policy_memory_feedback_prepare_conflict");
     }
   }
-  for (const update of prepared.updates) {
-    await updateExistingPolicyMemoryLite(liteWriteStore, {
-      scope: prepared.scope,
-      id: update.id,
-      clientId: update.client_id,
-      slots: update.slots,
-      textSummary: update.text_summary,
-      salience: update.salience,
-      importance: update.importance,
-      confidence: update.confidence,
-      commitId: prepared.commit_id,
-    });
-  }
-  return prepared.result;
 }
 
 function requireMatchingLivePolicyContract(args: {
@@ -1469,15 +1416,16 @@ async function applyPolicyMemoryLearningControlToNode(args: {
   };
 }
 
-export async function applyPolicyMemoryLearningControlLite(
-  liteWriteStore: Pick<LiteWriteStore, "findNodes" | "updateNodeAnchorState">,
+export async function preparePolicyMemoryLearningControlLite(
+  liteWriteStore: Pick<LiteWriteStore, "findNodes">,
   args: PolicyMemoryLearningControlApplyArgs,
-): Promise<PolicyMemoryLearningControlApplyResult> {
+): Promise<PreparedPolicyMemoryLearningControlLite> {
   const node = await loadPolicyMemoryNodeLite(liteWriteStore, {
     scope: args.scope,
     id: args.policy_memory_id,
   });
-  return applyPolicyMemoryLearningControlToNode({
+  let preparedUpdate: PreparedPolicyMemoryLearningControlLite["update"] | null = null;
+  const result = await applyPolicyMemoryLearningControlToNode({
     tenantId: args.tenant_id,
     scope: args.scope,
     node,
@@ -1489,18 +1437,129 @@ export async function applyPolicyMemoryLearningControlLite(
     liveDerivedPolicy: args.live_derived_policy ?? null,
     appliedAt: firstString(args.applied_at) ?? new Date().toISOString(),
     commitId: args.commit_id ?? null,
-    updateNode: (currentNode, next) => updateExistingPolicyMemoryLite(liteWriteStore, {
-      scope: args.scope,
-      id: currentNode.id,
-      clientId: currentNode.client_id,
-      slots: next.slots,
-      textSummary: next.textSummary,
-      salience: next.salience,
-      importance: next.importance,
-      confidence: next.confidence,
-      commitId: args.commit_id ?? null,
-    }),
+    updateNode: async (currentNode, next) => {
+      preparedUpdate = {
+        id: currentNode.id,
+        client_id: currentNode.client_id,
+        slots: next.slots,
+        text_summary: next.textSummary,
+        salience: next.salience,
+        importance: next.importance,
+        confidence: next.confidence,
+      };
+    },
   });
+  if (!preparedUpdate) throw new Error("policy_memory_learning_control_prepare_update_missing");
+  return {
+    scope: args.scope,
+    expected_node_sha256: existingPolicyMemorySha256(node)!,
+    current_node: node,
+    update: preparedUpdate,
+    result,
+  };
+}
+
+export async function assertPreparedPolicyMemoryLearningControlCurrent(
+  prepared: PreparedPolicyMemoryLearningControlLite,
+  liteWriteStore: Pick<LiteWriteStore, "findNodes">,
+): Promise<void> {
+  const current = await loadPolicyMemoryNodeLite(liteWriteStore, {
+    scope: prepared.scope,
+    id: prepared.current_node.id,
+  });
+  if (existingPolicyMemorySha256(current) !== prepared.expected_node_sha256) {
+    throw new Error("policy_memory_learning_control_prepare_conflict");
+  }
+}
+
+export async function applyPolicyMemoryLearningControlLite(
+  liteWriteStore: LiteWriteStore,
+  args: PolicyMemoryLearningControlApplyArgs,
+): Promise<PolicyMemoryLearningControlApplyResult> {
+  const actor = firstString(args.actor) ?? "policy_learning_control";
+  const inputSha256 = sha256Hex(stableStringify({
+    contract: "policy_memory_learning_control_input_v2",
+    tenant_id: args.tenant_id,
+    scope: args.scope,
+    policy_memory_id: args.policy_memory_id,
+    action: args.action,
+    actor,
+    reason: firstString(args.reason),
+    learning_control_contract: args.learning_control_contract ?? null,
+    live_policy_contract: args.live_policy_contract ?? null,
+    live_derived_policy: args.live_derived_policy ?? null,
+    requested_applied_at: firstString(args.applied_at),
+    source_commit_id: firstString(args.commit_id),
+  }));
+  const applied = await runAppliedAuthorityMutationV2({
+    store: liteWriteStore,
+    scope: args.scope,
+    inputSha256,
+    actor,
+    plan: async ({ appliedAt }) => {
+      const prepared = await preparePolicyMemoryLearningControlLite(liteWriteStore, {
+        ...args,
+        actor,
+        applied_at: appliedAt,
+        commit_id: null,
+      });
+      const current = (await liteWriteStore.nodeStatesByIds(
+        args.scope,
+        [prepared.update.id],
+      )).get(prepared.update.id);
+      if (!current) throw new Error("policy_memory_learning_control_authority_target_missing");
+      if (existingPolicyMemorySha256(policyMemoryNodeFromAuthorityState(current))
+        !== prepared.expected_node_sha256) {
+        throw new Error("policy_memory_learning_control_authority_projection_mismatch");
+      }
+      const patch = {
+        id: prepared.update.id,
+        slots: sealPolicyAuthoritySlots({
+          scope: args.scope,
+          id: prepared.update.id,
+          clientId: prepared.update.client_id,
+          slots: prepared.update.slots,
+          issuedAt: appliedAt,
+        }),
+        textSummary: prepared.update.text_summary,
+        salience: prepared.update.salience,
+        importance: prepared.update.importance,
+        confidence: prepared.update.confidence,
+      };
+      return {
+        status: "mutate" as const,
+        authorityKind: "policy_memory_learning_control",
+        mutations: [buildNodeAuthorityMutationV2({
+          before: current,
+          patch,
+          requestedEvidence: {
+            action: args.action,
+            reason: firstString(args.reason),
+            requested_applied_at: firstString(args.applied_at),
+            source_commit_id: firstString(args.commit_id),
+            learning_control_contract: args.learning_control_contract ?? null,
+          },
+        })],
+        apply: async ({ commitId }) => {
+          await applyNodeAuthorityPatchesV2({
+            store: liteWriteStore,
+            scope: args.scope,
+            patches: [patch],
+            commitId,
+          });
+          return prepared.result;
+        },
+        verify: async ({ commitId }) => await verifyNodeAuthorityPatchesV2({
+          store: liteWriteStore,
+          scope: args.scope,
+          patches: [patch],
+          commitId,
+          errorLabel: "policy_memory_learning_control",
+        }),
+      };
+    },
+  });
+  return applied.value;
 }
 
 export async function preparePolicyMemorySnapshot(
@@ -1687,99 +1746,16 @@ export async function preparePolicyMemorySnapshot(
   };
 }
 
-export async function persistPreparedPolicyMemorySnapshot(
+export async function assertPreparedPolicyMemorySnapshotCurrent(
   prepared: PreparedPolicyMemorySnapshot,
-  opts: {
-    liteWriteStore: LiteProjectedWriteStore & Pick<LiteWriteStore, "findNodes" | "updateNodeAnchorState">;
-    maxTextLen: number;
-    piiRedaction: boolean;
-    allowCrossScopeEdges?: boolean;
-  },
-): Promise<PolicyMemorySnapshotWriteResult> {
+  liteWriteStore: Pick<LiteWriteStore, "findNodes">,
+): Promise<void> {
   const current = await findExistingPolicyMemoryLite(
-    opts.liteWriteStore,
+    liteWriteStore,
     prepared.scope,
     prepared.result.client_id,
   );
   if (existingPolicyMemorySha256(current) !== prepared.expected_existing_sha256) {
     throw new Error("policy_memory_snapshot_prepare_conflict");
   }
-  if (prepared.update) {
-    await updateExistingPolicyMemoryLite(opts.liteWriteStore, {
-      scope: prepared.scope,
-      id: prepared.update.id,
-      clientId: prepared.update.client_id,
-      slots: prepared.update.slots,
-      textSummary: prepared.update.text_summary,
-      salience: prepared.update.salience,
-      importance: prepared.update.importance,
-      confidence: prepared.update.confidence,
-      commitId: prepared.feedback_commit_id,
-    });
-  } else if (prepared.prepared_write) {
-    await persistLitePreparedWrite({
-      prepared: prepared.prepared_write,
-      liteWriteStore: opts.liteWriteStore,
-      writeOptions: {
-        maxTextLen: opts.maxTextLen,
-        piiRedaction: opts.piiRedaction,
-        allowCrossScopeEdges: opts.allowCrossScopeEdges ?? false,
-        associativeLinkOrigin: "memory_write",
-      },
-    });
-  }
-  return prepared.result;
-}
-
-export async function writePolicyMemorySnapshot(
-  args: WritePolicyMemorySnapshotArgs,
-  opts: WritePolicyMemorySnapshotOptions,
-): Promise<PolicyMemorySnapshotWriteResult> {
-  const liteWriteStore = opts.liteWriteStore ?? null;
-  if (liteWriteStore && opts.writeAccess !== liteWriteStore) {
-    throw new Error("policy memory write authorities must share one Lite store");
-  }
-  if (liteWriteStore?.transactionRunner().inTransaction()) {
-    throw new Error("writePolicyMemorySnapshot must be entered outside a transaction");
-  }
-  const prepared = await preparePolicyMemorySnapshot(args, opts);
-  if (!liteWriteStore) {
-    const write = prepared.prepared_write;
-    if (!write) throw new Error("policy memory generic write plan is missing");
-    const planned = write.nodes.filter((node) => (
-      !node.embedding && typeof node.embed_text === "string" && node.embed_text.trim().length > 0
-    ));
-    if (opts.embedder && planned.length > 0) {
-      const vectors = await opts.embedder.embed(planned.map((node) => String(node.embed_text)));
-      for (let index = 0; index < planned.length; index += 1) {
-        planned[index]!.embedding = vectors[index] ?? planned[index]!.embedding;
-        planned[index]!.embedding_model = opts.embedder.name;
-      }
-    }
-    const out = await applyPreparedMemoryWrite(opts.writeAccess, write, {
-      maxTextLen: opts.maxTextLen,
-      piiRedaction: opts.piiRedaction,
-      allowCrossScopeEdges: opts.allowCrossScopeEdges ?? false,
-      associativeLinkOrigin: "memory_write",
-    });
-    const nodeId = out.nodes[0]!.id;
-    return {
-      ...prepared.result,
-      node_id: nodeId,
-      policy_contract: PolicyContractSchema.parse({
-        ...prepared.result.policy_contract,
-        policy_memory_id: nodeId,
-      }),
-    };
-  }
-  const result = await liteWriteStore.withTx(() => persistPreparedPolicyMemorySnapshot(prepared, {
-    liteWriteStore,
-    maxTextLen: opts.maxTextLen,
-    piiRedaction: opts.piiRedaction,
-    allowCrossScopeEdges: opts.allowCrossScopeEdges,
-  }));
-  if (prepared.prepared_write) {
-    await completeLiteInlineEmbeddings({ prepared: prepared.prepared_write, embedder: opts.embedder, liteWriteStore });
-  }
-  return result;
 }

@@ -1200,6 +1200,10 @@ test("D1 aggregate projection binds passed, failed, and inconclusive result bran
   changedRegisteredSeries.registered_evidence_series.runtime_integrity = "different-series";
   assert.throws(() => LearningExternalIngestionProjectionV1Schema.parse(changedRegisteredSeries));
 
+  const mismatchedRuntimeSchema = clone(parsed);
+  mismatchedRuntimeSchema.schema_version = 5;
+  assert.throws(() => LearningExternalIngestionProjectionV1Schema.parse(mismatchedRuntimeSchema));
+
   const missingRevisionRow = clone(parsed) as unknown as Record<string, unknown>;
   const registeredRevision = clone(parsed.registered_revision) as unknown as Record<string, unknown>;
   delete registeredRevision.revision_row_sha256;

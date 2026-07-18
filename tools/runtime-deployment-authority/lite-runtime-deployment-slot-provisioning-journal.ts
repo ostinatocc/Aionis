@@ -24,13 +24,13 @@ import stableStringify from "fast-json-stable-stringify";
 import {
   assertLiteRuntimeProtectedFilesystemNoDelegatedAccessControlList,
   assertLiteRuntimeProtectedFilesystemTrustedDirectoryChain,
-} from "./lite-runtime-protected-authority-database.js";
+} from "../../src/store/lite-runtime-protected-authority-database.js";
 import {
   createSqliteReadOnlyDatabase,
   createSqliteReadWriteExistingDatabase,
   type SqliteDatabase,
-} from "./sqlite.js";
-import { normalizeSqliteSchemaSql } from "./sqlite-schema-sql.js";
+} from "../../src/store/sqlite.js";
+import { normalizeSqliteSchemaSql } from "../../src/store/sqlite-schema-sql.js";
 
 const JOURNAL_APPLICATION_ID = 0x4149504a;
 const JOURNAL_SCHEMA_VERSION = 1;

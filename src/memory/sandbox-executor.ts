@@ -72,6 +72,7 @@ export class SandboxExecutor {
   private readonly queue: string[] = [];
   private readonly queued = new Set<string>();
   private readonly active = new Map<string, ActiveRunState>();
+  private readonly inFlight = new Set<Promise<unknown>>();
   private readonly heartbeatTimers = new Map<string, NodeJS.Timeout>();
   private readonly recoveryTimer: NodeJS.Timeout | null;
   private readonly remoteAllowedCidrs: ParsedCidr[];
@@ -79,6 +80,7 @@ export class SandboxExecutor {
   private pumping = false;
   private shuttingDown = false;
   private recoveryInFlight = false;
+  private shutdownPromise: Promise<void> | null = null;
 
   constructor(
     private readonly store: SandboxStore,
@@ -90,7 +92,9 @@ export class SandboxExecutor {
     this.recoveryTimer =
       this.config.enabled && this.config.recoveryPollIntervalMs > 0
         ? setInterval(() => {
-            void this.recoverStaleRuns();
+            void this.track(this.recoverStaleRuns()).catch(() => {
+              // Recovery remains best-effort; shutdown still waits for it.
+            });
           }, this.config.recoveryPollIntervalMs)
         : null;
   }
@@ -106,7 +110,10 @@ export class SandboxExecutor {
 
   async executeSync(runId: string): Promise<void> {
     if (!this.config.enabled) throw new HttpError(400, "sandbox_disabled", "sandbox interface is disabled");
-    await this.processRun(String(runId ?? "").trim());
+    if (this.shuttingDown) {
+      throw new HttpError(503, "sandbox_shutting_down", "sandbox executor is shutting down");
+    }
+    await this.track(this.processRun(String(runId ?? "").trim()));
   }
 
   healthSnapshot() {
@@ -157,7 +164,8 @@ export class SandboxExecutor {
     return true;
   }
 
-  shutdown(): void {
+  shutdown(): Promise<void> {
+    if (this.shutdownPromise) return this.shutdownPromise;
     this.shuttingDown = true;
     if (this.recoveryTimer) clearInterval(this.recoveryTimer);
     for (const t of this.heartbeatTimers.values()) clearInterval(t);
@@ -178,9 +186,22 @@ export class SandboxExecutor {
         }
       }
     }
-    this.active.clear();
     this.queue.length = 0;
     this.queued.clear();
+    const pending = [...this.inFlight];
+    this.shutdownPromise = Promise.allSettled(pending).then(() => {
+      this.active.clear();
+    });
+    return this.shutdownPromise;
+  }
+
+  private track<T>(task: Promise<T>): Promise<T> {
+    this.inFlight.add(task);
+    void task.then(
+      () => this.inFlight.delete(task),
+      () => this.inFlight.delete(task),
+    );
+    return task;
   }
 
   private kick(): void {
@@ -192,10 +213,10 @@ export class SandboxExecutor {
           const nextId = this.queue.shift()!;
           this.queued.delete(nextId);
           this.running += 1;
-          void this.processRun(nextId).finally(() => {
+          void this.track(this.processRun(nextId)).finally(() => {
             this.running = Math.max(0, this.running - 1);
             this.kick();
-          });
+          }).catch(() => undefined);
         }
       } finally {
         this.pumping = false;

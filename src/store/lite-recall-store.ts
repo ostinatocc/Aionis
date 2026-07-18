@@ -1,6 +1,4 @@
 import { createHash } from "node:crypto";
-import { mkdirSync } from "node:fs";
-import { dirname } from "node:path";
 import { toVectorLiteral } from "../util/vector-literal.js";
 import { hasNodeWorkflowAnchorSurface } from "../memory/node-execution-surface.js";
 import { mergeRecallCandidatesByRrf } from "../memory/recall-hybrid-merge.js";
@@ -34,7 +32,11 @@ import type {
   RecallStoreAccess,
   RecallStoreCapabilities,
 } from "./recall-access.js";
-import { createSqliteDatabase } from "./sqlite.js";
+import {
+  createPrivateRuntimeSqliteDatabase,
+  hardenPrivateRuntimeSqliteArtifacts,
+  type SqliteDatabase,
+} from "./sqlite.js";
 
 type LiteRecallNodeRow = {
   id: string;
@@ -771,7 +773,7 @@ function nodeToAssociativeRow(row: LiteRecallNodeRow): RecallAssociativeNodeRow 
 }
 
 function recallSurfaceAllowed(args: {
-  db: ReturnType<typeof createSqliteDatabase>;
+  db: SqliteDatabase;
   scope: string;
   row: LiteRecallNodeRow;
   slots: Record<string, unknown>;
@@ -806,8 +808,7 @@ export function createLiteRecallStore(
     substrateSidecar?: LiteRecallSubstrateSidecarOptions | null;
   } = {},
 ): LiteRecallStore {
-  mkdirSync(dirname(path), { recursive: true });
-  const db = createSqliteDatabase(path);
+  const db = createPrivateRuntimeSqliteDatabase(path);
   const capabilities = resolveRecallCapabilities(opts.capabilities);
   const ann = opts.ann ?? null;
   const annMaxCandidates = Math.max(1, Math.min(10000, Math.trunc(ann?.maxCandidates ?? 200)));
@@ -1891,6 +1892,7 @@ export function createLiteRecallStore(
     });
   };
 
+  hardenPrivateRuntimeSqliteArtifacts(path);
   return {
     createRecallAccess(): RecallStoreAccess {
       return {

@@ -179,10 +179,10 @@ function listJobs(
     current_node_commit_id: string | null;
   }>;
   return rows.map((row) => {
-    const payloadValid = row.status === "succeeded" && row.payload_json === null
-      ? true
-      : row.job_kind === "embedding_generate"
-        ? parseEmbeddingProjectionPayload(row) !== null
+    const payloadValid = row.job_kind === "embedding_generate"
+      ? parseEmbeddingProjectionPayload(row) !== null
+      : row.status === "succeeded" && row.payload_json === null
+        ? true
         : parseAnnProjectionPayload(row) !== null;
     const sourceCommitMatches = row.job_kind === "embedding_generate"
       ? row.current_node_commit_id !== null && row.current_node_commit_id === row.source_commit_id
@@ -207,12 +207,18 @@ function legacyCandidates(
   const params: unknown[] = [];
   if (hasProjectionTable) {
     where.push(
-      `NOT EXISTS (
-        SELECT 1 FROM lite_memory_projection_jobs AS job
-        WHERE job.scope = node.scope
-          AND job.node_id = node.id
-          AND job.job_kind = 'embedding_generate'
-      )`,
+      `(NOT EXISTS (
+          SELECT 1 FROM lite_memory_projection_jobs AS job
+          WHERE job.scope = node.scope
+            AND job.node_id = node.id
+            AND job.job_kind = 'embedding_generate'
+        ) OR EXISTS (
+          SELECT 1 FROM lite_memory_projection_jobs AS job
+          WHERE job.scope = node.scope
+            AND job.node_id = node.id
+            AND job.job_kind = 'embedding_generate'
+            AND job.status = 'succeeded'
+        ))`,
     );
   }
   if (args.scope) {
@@ -304,18 +310,28 @@ export async function repairLiteProjectionState(args: {
     annProjectionEnabled: false,
   });
 
-  try {
-    const operation = await store.withTx(async () => {
+  const operation = await (async () => {
+    try {
+      return await store.withTx(async () => {
       const legacyRows = repairLegacy && repairEmbedding
         ? database.db.prepare(
             `SELECT node.scope, node.id, node.type, node.title, node.text_summary, node.commit_id
              FROM lite_memory_nodes AS node
              WHERE node.embedding_status = 'pending'
-               AND NOT EXISTS (
-                 SELECT 1 FROM lite_memory_projection_jobs AS job
-                 WHERE job.scope = node.scope
-                   AND job.node_id = node.id
-                   AND job.job_kind = 'embedding_generate'
+               AND (
+                 NOT EXISTS (
+                   SELECT 1 FROM lite_memory_projection_jobs AS job
+                   WHERE job.scope = node.scope
+                     AND job.node_id = node.id
+                     AND job.job_kind = 'embedding_generate'
+                 )
+                 OR EXISTS (
+                   SELECT 1 FROM lite_memory_projection_jobs AS job
+                   WHERE job.scope = node.scope
+                     AND job.node_id = node.id
+                     AND job.job_kind = 'embedding_generate'
+                     AND job.status = 'succeeded'
+                 )
                )
                ${args.scope ? "AND node.scope = ?" : ""}
                ${args.nodeId ? "AND node.id = ?" : ""}
@@ -465,28 +481,29 @@ export async function repairLiteProjectionState(args: {
         unrecoverableMarkedFailed,
         skipped,
       };
-    });
+      });
+    } finally {
+      await store.close();
+    }
+  })();
 
-    return {
-      contract_version: "aionis_lite_projection_repair_result_v1",
+  return {
+    contract_version: "aionis_lite_projection_repair_result_v1",
+    path: absolute,
+    repaired: {
+      legacy_embedding: operation.legacyEmbedding,
+      dead_letter_embedding: operation.deadLetterEmbedding,
+      dead_letter_ann: operation.deadLetterAnn,
+      unrecoverable_marked_failed: operation.unrecoverableMarkedFailed,
+    },
+    skipped: operation.skipped,
+    after: await inspectLiteProjectionRepairState({
       path: absolute,
-      repaired: {
-        legacy_embedding: operation.legacyEmbedding,
-        dead_letter_embedding: operation.deadLetterEmbedding,
-        dead_letter_ann: operation.deadLetterAnn,
-        unrecoverable_marked_failed: operation.unrecoverableMarkedFailed,
-      },
-      skipped: operation.skipped,
-      after: await inspectLiteProjectionRepairState({
-        path: absolute,
-        statuses: ["pending", "retry", "running", "dead_letter"],
-        ...(args.scope ? { scope: args.scope } : {}),
-        ...(args.nodeId ? { nodeId: args.nodeId } : {}),
-        limit,
-        maxTextLen,
-      }),
-    };
-  } finally {
-    await store.close();
-  }
+      statuses: ["pending", "retry", "running", "dead_letter"],
+      ...(args.scope ? { scope: args.scope } : {}),
+      ...(args.nodeId ? { nodeId: args.nodeId } : {}),
+      limit,
+      maxTextLen,
+    }),
+  };
 }

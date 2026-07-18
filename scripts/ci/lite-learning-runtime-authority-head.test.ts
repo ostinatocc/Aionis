@@ -12,7 +12,7 @@ import {
 import {
   buildLiteLearningRuntimeAuthorityHeadV1,
   readLiteLearningRuntimeAuthorityExactRows,
-} from "../../src/store/lite-learning-runtime-authority-head.js";
+} from "../../tools/learning-experiments/lite-learning-runtime-authority-head.js";
 import { assertLiteRuntimeAuthorityIdentity } from
   "../../src/store/lite-learning-episode-ledger.js";
 import {
@@ -138,8 +138,8 @@ test("D2 authority head rejects reads outside an active Runtime transaction", as
   }
 });
 
-test("D2 authority head commits an empty 22-table v4 snapshot inside one transaction", async () => {
-  const fixture = createFileBackedRuntime("empty-v4");
+test("D2 authority head commits an empty 22-table v5 snapshot inside one transaction", async () => {
+  const fixture = createFileBackedRuntime("empty-v5");
   try {
     const head = await fixture.database.withTx(async () =>
       buildLiteLearningRuntimeAuthorityHeadV1({
@@ -148,6 +148,7 @@ test("D2 authority head commits an empty 22-table v4 snapshot inside one transac
       }));
 
     assert.equal(LEARNING_RUNTIME_AUTHORITY_HEAD_V1_TABLE_SPECS.length, 22);
+    assert.equal(head.body.schema_version, 5);
     assert.equal(head.body.tables.length, 22);
     assert.deepEqual(
       head.body.tables.map((table) => [table.table, table.row_count]),
@@ -472,15 +473,15 @@ test("D2 authority head rejects an uninitialized Runtime schema", async () => {
           },
         });
       }),
-      /lite_learning_runtime_authority_head_current_v4_database_required/,
+      /lite_learning_runtime_authority_head_current_v5_database_required/,
     );
   } finally {
     await fixture.close();
   }
 });
 
-test("D2 authority head rejects a database labeled with a non-v4 Runtime schema", async () => {
-  const fixture = createFileBackedRuntime("non-v4");
+test("D2 authority head rejects a database labeled with a non-v5 Runtime schema", async () => {
+  const fixture = createFileBackedRuntime("non-v5");
   try {
     fixture.database.db.prepare(
       `UPDATE lite_runtime_schema_metadata
@@ -495,7 +496,7 @@ test("D2 authority head rejects a database labeled with a non-v4 Runtime schema"
           databaseLineage: databaseLineage(fixture.database),
         });
       }),
-      /lite_learning_runtime_authority_head_current_v4_database_required/,
+      /lite_learning_runtime_authority_head_current_v5_database_required/,
     );
   } finally {
     await fixture.close();

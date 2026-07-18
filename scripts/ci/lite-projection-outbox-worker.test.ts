@@ -241,7 +241,8 @@ test("durable projection resumes embedding and ANN after commit-time process los
       job.node_id === committedNode.id && job.job_kind === "ann_reconcile"
     ));
     assert.equal(embeddingJob?.status, "succeeded");
-    assert.equal(embeddingJob?.payload_json, null);
+    assert.ok(embeddingJob?.payload_json);
+    assert.ok(embeddingJob && parseEmbeddingProjectionPayload(embeddingJob));
     assert.equal(annJob?.status, "succeeded");
     assert.equal(annJob?.payload_json, null);
     assert.equal(

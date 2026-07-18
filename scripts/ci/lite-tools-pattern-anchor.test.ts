@@ -13,11 +13,16 @@ import { extractTaskFamily, resolvePatternTaskAffinity } from "../../src/memory/
 import { buildExecutionContractFromProjection, parseExecutionContract } from "../../src/memory/execution-contract.ts";
 import { memoryRecallParsed } from "../../src/memory/recall.ts";
 import { selectTools } from "../../src/memory/tools-select.ts";
-import { toolSelectionFeedback } from "../../src/memory/tools-feedback.ts";
+import {
+  persistToolSelectionFeedback,
+  prepareToolSelectionFeedback,
+  toolSelectionFeedback,
+} from "../../src/memory/tools-feedback.ts";
 import { createEvidenceFormPatternLearningControlReviewProvider } from "../../src/memory/learning-control-provider-evidence.ts";
 import { applyMemoryWrite, prepareMemoryWrite } from "../../src/memory/write.ts";
 import { createLiteRecallStore } from "../../src/store/lite-recall-store.ts";
 import { createLiteWriteStore } from "../../src/store/lite-write-store.ts";
+import { createSqliteDatabase } from "../../src/store/sqlite.ts";
 
 function uniqueStrings(values: Array<string | null | undefined>) {
   return [...new Set(values.filter((value): value is string => typeof value === "string" && value.length > 0))];
@@ -697,6 +702,133 @@ test("positive tools feedback writes a provisional recallable pattern anchor", a
     assert.ok((recall as any).action_recall_packet.rehydration_candidates.some((entry: any) => entry.anchor_id === feedback.pattern_anchor?.node_id));
   } finally {
     await liteRecallStore.close();
+    await liteWriteStore.close();
+  }
+});
+
+test("prepared tools feedback rejects a stale scope head without leaking any mutation", async () => {
+  const dbPath = tmpDbPath("tool-feedback-stale-scope-head");
+  const { liteWriteStore } = await seedActiveRule(dbPath);
+  const runId = randomUUID();
+  const context = {
+    task_kind: "workflow_validation_recovery",
+    goal: "recover durable workflow from failed validation",
+    error: { signature: "workflow-validation-mismatch" },
+  };
+  try {
+    const selection = await selectTools({
+      tenant_id: "default",
+      scope: "default",
+      run_id: runId,
+      context,
+      candidates: ["bash", "edit", "test"],
+      include_shadow: false,
+      rules_limit: 20,
+      strict: true,
+      reorder_candidates: false,
+    }, "default", "default", { liteWriteStore });
+    const feedbackOptions = {
+      maxTextLen: 10_000,
+      piiRedaction: false,
+      embedder: DeterministicEmbeddingProvider,
+      liteWriteStore,
+    };
+    const preparedFeedback = await prepareToolSelectionFeedback(null, {
+      tenant_id: "default",
+      scope: "default",
+      actor: "local-user",
+      run_id: runId,
+      decision_id: selection.decision.decision_id,
+      outcome: "positive",
+      context,
+      candidates: ["bash", "edit", "test"],
+      selected_tool: "edit",
+      target: "tool",
+      note: "Edit-based repair succeeded",
+      input_text: "recover durable workflow from failed validation",
+    }, "default", "default", feedbackOptions);
+
+    const unrelatedWrite = await prepareMemoryWrite({
+      tenant_id: "default",
+      scope: "default",
+      actor: "local-user",
+      input_text: "advance the authoritative head with an unrelated observation",
+      auto_embed: false,
+      memory_lane: "shared",
+      nodes: [{
+        client_id: `stale-head-advance:${runId}`,
+        type: "event",
+        title: "Unrelated head advance",
+        text_summary: "An unrelated observation advances the scope head after feedback preparation.",
+        slots: { source: "stale_head_conflict_test" },
+      }],
+      edges: [],
+    }, "default", "default", {
+      maxTextLen: 10_000,
+      piiRedaction: false,
+      allowCrossScopeEdges: false,
+    }, null);
+    sealAuthorityReceiptsForPreparedWrite(unrelatedWrite);
+    await liteWriteStore.withTx(() => applyMemoryWrite(unrelatedWrite, {
+      maxTextLen: 10_000,
+      piiRedaction: false,
+      allowCrossScopeEdges: false,
+      associativeLinkOrigin: "memory_write",
+      write_access: liteWriteStore,
+    }));
+
+    const advancedHead = await liteWriteStore.readScopeHead("default");
+    assert.ok(advancedHead);
+    assert.equal(advancedHead.revision, preparedFeedback.expected_head_revision + 1);
+    const snapshot = (): string => {
+      const db = createSqliteDatabase(dbPath);
+      try {
+        return JSON.stringify({
+          head: db.prepare(
+            `SELECT scope, commit_id, revision, updated_at
+             FROM lite_memory_scope_heads WHERE scope = 'default'`,
+          ).get(),
+          commit_count: db.prepare("SELECT COUNT(*) AS count FROM lite_memory_commits").get(),
+          decision: db.prepare(
+            `SELECT id, commit_id, run_id, selected_tool, candidates_json, metadata_json
+             FROM lite_memory_execution_decisions WHERE id = ?`,
+          ).get(selection.decision.decision_id),
+          rule_feedback: db.prepare(
+            `SELECT id, rule_node_id, commit_id
+             FROM lite_memory_rule_feedback WHERE decision_id = ? ORDER BY id`,
+          ).all(selection.decision.decision_id),
+          rule_defs: db.prepare(
+            `SELECT rule_node_id, positive_count, negative_count, commit_id, updated_at
+             FROM lite_memory_rule_defs ORDER BY rule_node_id`,
+          ).all(),
+          target_nodes: db.prepare(
+            `SELECT id, commit_id, slots_json FROM lite_memory_nodes
+             WHERE id IN (?, ?) ORDER BY id`,
+          ).all(
+            preparedFeedback.pattern?.result.node_id ?? "",
+            preparedFeedback.policy_snapshot?.result.node_id ?? "",
+          ),
+          projection_jobs: db.prepare(
+            `SELECT scope, node_id, job_kind, source_commit_id, status, generation
+             FROM lite_memory_projection_jobs ORDER BY scope, node_id, job_kind`,
+          ).all(),
+        });
+      } finally {
+        db.close();
+      }
+    };
+    const beforePersist = snapshot();
+    await assert.rejects(
+      () => persistToolSelectionFeedback(preparedFeedback, feedbackOptions),
+      (error: any) => {
+        assert.equal(error?.statusCode, 409);
+        assert.equal(error?.code, "scope_head_conflict");
+        return true;
+      },
+    );
+    assert.equal(snapshot(), beforePersist);
+    assert.deepEqual(await liteWriteStore.readScopeHead("default"), advancedHead);
+  } finally {
     await liteWriteStore.close();
   }
 });

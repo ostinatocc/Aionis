@@ -13,7 +13,7 @@ function tmpDbPath(name: string): string {
 }
 
 async function insertCommit(store: ReturnType<typeof createLiteWriteStore>, scope: string, suffix: string): Promise<string> {
-  return store.insertCommit({
+  return store.insertLegacyV1CommitForMigrationOrTestFixture({
     scope,
     parentCommitId: null,
     inputSha256: `input-${suffix}`,
@@ -284,15 +284,6 @@ test("ordinary memory relation facts protect QA evidence in hybrid recall", asyn
     assert.ok(JSON.stringify(ordinary?.relation_facts).includes("sister"));
     assert.ok(JSON.stringify(ordinary?.relation_facts).includes("Camping"));
 
-    await writeStore.withTx(() =>
-      applyMemoryWrite(prepared, {
-        maxTextLen: 10_000,
-        piiRedaction: false,
-        allowCrossScopeEdges: false,
-        write_access: writeStore,
-      }),
-    );
-
     await writeStore.withTx(async () => {
       const commitId = await insertCommit(writeStore, "ordinary/qa", "ordinary-memory-relation-qa-distractors");
       for (let index = 0; index < 4; index += 1) {
@@ -308,6 +299,15 @@ test("ordinary memory relation facts protect QA evidence in hybrid recall", asyn
         });
       }
     });
+
+    await writeStore.withTx(() =>
+      applyMemoryWrite(prepared, {
+        maxTextLen: 10_000,
+        piiRedaction: false,
+        allowCrossScopeEdges: false,
+        write_access: writeStore,
+      }),
+    );
 
     const hybrid = await recallStore.createRecallAccess().stage1HybridCandidates({
       queryText: "What hobby does my sister enjoy?",

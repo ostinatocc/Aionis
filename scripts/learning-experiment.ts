@@ -39,11 +39,11 @@ import {
 import {
   LearningExperimentClosingError,
   closeLiteLearningExperiment,
-} from "../src/store/lite-learning-experiment-closing.js";
+} from "../tools/learning-experiments/lite-learning-experiment-closing.js";
 import {
   LearningExperimentProvisioningError,
   provisionLiteLearningExperiment,
-} from "../src/store/lite-learning-experiment-provisioning.js";
+} from "../tools/learning-experiments/lite-learning-experiment-provisioning.js";
 
 const MAX_PROFILE_RULE_BYTES = 512 * 1024;
 const MAX_EXTERNAL_INPUT_SET_BYTES = 512 * 1024;

@@ -43,12 +43,12 @@ import {
   LiteRuntimeDeploymentSlotAuthorityError,
   type LiteRuntimeDeploymentSlotProvisioningDurablePhase,
   type LiteRuntimeDeploymentSlotProvisioningPhysicalMutation,
-} from "../../src/store/lite-runtime-deployment-slot-authority.js";
+} from "../../tools/runtime-deployment-authority/lite-runtime-deployment-slot-authority.js";
 import {
   installLiteRuntimeDeploymentSlotProvisioningJournalFaultObserverForTesting,
   PROVISIONING_JOURNAL_FAULT_POINTS,
   type LiteRuntimeDeploymentSlotProvisioningJournalFaultPoint,
-} from "../../src/store/lite-runtime-deployment-slot-provisioning-journal.js";
+} from "../../tools/runtime-deployment-authority/lite-runtime-deployment-slot-provisioning-journal.js";
 import {
   closeLiteRuntimeDeploymentSlotPathAuthorityRoot,
   deriveLiteRuntimeDeploymentSlotPathCapability,
@@ -59,7 +59,7 @@ import {
   type LiteRuntimeDeploymentSlotPathAuthorityRootCapability,
   type LiteRuntimeDeploymentSlotPathCapability,
   type LiteRuntimeDeploymentSlotPathInspection,
-} from "../../src/store/lite-runtime-deployment-slot-path-authority.js";
+} from "../../tools/runtime-deployment-authority/lite-runtime-deployment-slot-path-authority.js";
 import {
   closeLiteRuntimeProtectedAuthorityDatabasePin,
   pinLiteRuntimeProtectedAuthorityDatabase,

@@ -31,7 +31,7 @@ import {
   provisionLiteRuntimeDeploymentSlotPathAuthorityRoot,
   type LiteRuntimeDeploymentSlotPathAuthorityRootCapability,
   type LiteRuntimeDeploymentSlotPathCapability,
-} from "../../src/store/lite-runtime-deployment-slot-path-authority.js";
+} from "../../tools/runtime-deployment-authority/lite-runtime-deployment-slot-path-authority.js";
 
 type Fixture = Readonly<{
   rootPath: string;

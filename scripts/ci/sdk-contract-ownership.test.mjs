@@ -85,13 +85,19 @@ function exportedClientSurface(source, file) {
 }
 
 function trackedRuntimeSources() {
-  const listed = spawnSync("git", ["ls-files", "src/**/*.ts"], {
+  const listed = spawnSync(
+    "git",
+    ["ls-files", "--cached", "--others", "--exclude-standard", "src/**/*.ts"],
+    {
     cwd: ROOT,
     encoding: "utf8",
     env: { ...process.env, GIT_GLOB_PATHSPECS: "1" },
-  });
+    },
+  );
   assert.equal(listed.status, 0, listed.stderr);
-  return listed.stdout.split(/\r?\n/).filter(Boolean);
+  return listed.stdout
+    .split(/\r?\n/)
+    .filter((relativePath) => relativePath.length > 0 && fs.existsSync(path.join(ROOT, relativePath)));
 }
 
 function relativeModuleSpecifiers(source, file) {

@@ -4,6 +4,7 @@ import type { LiteWriteStore } from "../store/lite-write-store.js";
 import type { WriteStoreAccess } from "../store/write-access.js";
 import { sha256Hex } from "../util/crypto.js";
 import { HttpError } from "../util/http.js";
+import { runAppliedAuthorityMutationV2 } from "./applied-authority-mutation.js";
 import {
   REPLAY_LEARNING_WORKFLOW_REQUIRED_OBSERVATIONS,
   buildReplayLearningProjectionArtifacts,
@@ -13,6 +14,15 @@ import {
   type ReplayLearningProjectionSource,
 } from "./replay-learning-artifacts.js";
 import { resolveNodeLifecycleSignals } from "./lifecycle-signals.js";
+import {
+  NODE_AUTHORITY_UPDATE_SIDE_EFFECTS,
+  applyNodeAuthorityPatchesV2,
+  assertNodeDecisionRowMatchesAuthorityState,
+  buildNodeAuthorityMutationV2,
+  captureNodeAuthorityHeadFence,
+  verifyNodeAuthorityPatchesV2,
+  type NodeAuthorityPatchV2,
+} from "./node-authority-mutation.js";
 import { resolveNodeWorkflowSignature } from "./node-execution-surface.js";
 import { updateRuleState } from "./rules.js";
 import { buildAionisUri } from "./uri.js";
@@ -143,6 +153,168 @@ function parseSuccessRatio(sourceMetrics?: { success_ratio?: number }): number {
 
 function fingerprintJson(v: unknown): string {
   return sha256Hex(stableStringify(v ?? {}));
+}
+
+async function attachReplayLearningSourceRule(args: {
+  store: LiteWriteStore;
+  source: ReplayLearningProjectionSource;
+  episodeNodeId: string;
+  ruleNodeId: string;
+}) {
+  const actor = args.source.actor || "replay_learning_projection";
+  const headFence = await captureNodeAuthorityHeadFence(args.store, args.source.scope_key, {});
+  return await runAppliedAuthorityMutationV2<void>({
+    store: args.store,
+    scope: args.source.scope_key,
+    inputSha256: sha256Hex(stableStringify({
+      operation: "replay_learning_source_rule_attachment_v2",
+      scope: args.source.scope_key,
+      episode_node_id: args.episodeNodeId,
+      rule_node_id: args.ruleNodeId,
+      source_playbook_id: args.source.playbook_id,
+      source_playbook_version: args.source.playbook_version,
+    })),
+    actor,
+    expectedHeadRevision: headFence.expectedHeadRevision,
+    expectedHeadCommitId: headFence.expectedHeadCommitId,
+    plan: async ({ appliedAt }) => {
+      const episodeRows = await args.store.findNodes({
+        scope: args.source.scope_key,
+        id: args.episodeNodeId,
+        type: "event",
+        consumerAgentId: actor,
+        consumerTeamId: null,
+        limit: 1,
+        offset: 0,
+      });
+      const ruleRows = await args.store.findNodes({
+        scope: args.source.scope_key,
+        id: args.ruleNodeId,
+        type: "rule",
+        consumerAgentId: actor,
+        consumerTeamId: null,
+        limit: 1,
+        offset: 0,
+      });
+      const episode = episodeRows.rows[0] ?? null;
+      const rule = ruleRows.rows[0] ?? null;
+      if (!episode || !rule) {
+        throw new HttpError(
+          404,
+          "replay_learning_attachment_target_not_found",
+          "replay learning episode or source rule was not found in this scope/visibility",
+          {
+            episode_node_id: args.episodeNodeId,
+            rule_node_id: args.ruleNodeId,
+            scope: args.source.scope_key,
+          },
+        );
+      }
+
+      const states = await args.store.nodeStatesByIds(args.source.scope_key, [episode.id, rule.id]);
+      const episodeState = states.get(episode.id);
+      const ruleState = states.get(rule.id);
+      if (!episodeState || !ruleState) {
+        throw new Error("replay_learning_attachment_authority_target_missing");
+      }
+      assertNodeDecisionRowMatchesAuthorityState(
+        episode, episodeState, "replay_learning_attachment_episode_state_changed",
+      );
+      assertNodeDecisionRowMatchesAuthorityState(rule, ruleState, "replay_learning_attachment_rule_state_changed");
+
+      const episodeSlots = asObject(episode.slots) ?? {};
+      const episodeLearning = asObject(episodeSlots.replay_learning) ?? {};
+      const ruleLearning = asObject(rule.slots?.replay_learning) ?? {};
+      const samePlaybook =
+        episodeSlots.replay_learning_episode === true
+        && episodeLearning.generated_by === "replay_learning_v1"
+        && episodeLearning.source_playbook_id === args.source.playbook_id
+        && Number(episodeLearning.source_playbook_version) === args.source.playbook_version
+        && ruleLearning.generated_by === "replay_learning_v1"
+        && ruleLearning.source_playbook_id === args.source.playbook_id;
+      if (!samePlaybook) {
+        throw new HttpError(
+          409,
+          "replay_learning_attachment_target_changed",
+          "replay learning attachment targets no longer match the requested playbook",
+          {
+            episode_node_id: episode.id,
+            rule_node_id: rule.id,
+            source_playbook_id: args.source.playbook_id,
+            source_playbook_version: args.source.playbook_version,
+          },
+        );
+      }
+
+      if (
+        episodeSlots.source_rule_node_id === rule.id
+        && episodeLearning.source_rule_node_id === rule.id
+      ) {
+        return { status: "no_op" as const, value: undefined };
+      }
+
+      const lifecycle = resolveNodeLifecycleSignals({
+        type: episode.type,
+        tier: episode.tier,
+        title: episode.title,
+        text_summary: episode.text_summary,
+        slots: {
+          ...episodeSlots,
+          source_rule_node_id: rule.id,
+          replay_learning: {
+            ...episodeLearning,
+            source_rule_node_id: rule.id,
+          },
+        },
+        salience: episode.salience,
+        importance: episode.importance,
+        confidence: episode.confidence,
+        raw_ref: episode.raw_ref ?? null,
+        evidence_ref: episode.evidence_ref ?? null,
+        reference_time: appliedAt,
+      });
+      const patch: NodeAuthorityPatchV2 = {
+        id: episode.id,
+        slots: lifecycle.slots,
+        textSummary: episode.text_summary,
+        salience: lifecycle.salience,
+        importance: lifecycle.importance,
+        confidence: lifecycle.confidence,
+      };
+      return {
+        status: "mutate" as const,
+        authorityKind: "replay_learning_source_rule_attachment",
+        mutations: [buildNodeAuthorityMutationV2({
+          before: episodeState,
+          patch,
+          requestedEvidence: {
+            side_effects: NODE_AUTHORITY_UPDATE_SIDE_EFFECTS,
+            operation_context: {
+              source_playbook_id: args.source.playbook_id,
+              source_playbook_version: args.source.playbook_version,
+              episode_node_id: episode.id,
+              rule_node_id: rule.id,
+            },
+          },
+        })],
+        apply: async ({ commitId }) => {
+          await applyNodeAuthorityPatchesV2({
+            store: args.store,
+            scope: args.source.scope_key,
+            patches: [patch],
+            commitId,
+          });
+        },
+        verify: async ({ commitId }) => verifyNodeAuthorityPatchesV2({
+          store: args.store,
+          scope: args.source.scope_key,
+          patches: [patch],
+          commitId,
+          errorLabel: "replay_learning_attachment",
+        }),
+      };
+    },
+  });
 }
 
 async function listExistingReplayLearningRules(
@@ -422,6 +594,7 @@ export async function applyReplayLearningProjection(
   const { ruleClientId, episodeClientId, workflowClientId, nodes, edges } = plan;
 
   if (nodes.length > 0) {
+    if (!liteWriteStore) throw new Error("replay learning projection requires lite write store");
     const writeReq = {
       tenant_id: source.tenant_id,
       scope: source.scope,
@@ -445,11 +618,15 @@ export async function applyReplayLearningProjection(
       },
       writeOpts.embedder,
     );
-    const out = await applyPreparedMemoryWrite(projectionWriteAccessForClient(writeOpts), prepared, {
-      maxTextLen: writeOpts.maxTextLen,
-      piiRedaction: writeOpts.piiRedaction,
-      allowCrossScopeEdges: writeOpts.allowCrossScopeEdges,
-    });
+    const out = await liteWriteStore.withTx(() => applyPreparedMemoryWrite(
+      projectionWriteAccessForClient(writeOpts),
+      prepared,
+      {
+        maxTextLen: writeOpts.maxTextLen,
+        piiRedaction: writeOpts.piiRedaction,
+        allowCrossScopeEdges: writeOpts.allowCrossScopeEdges,
+      },
+    ));
     const createdRule = out.nodes.find((n) => n.client_id === ruleClientId);
     const createdEpisode = out.nodes.find((n) => n.client_id === episodeClientId);
     const createdWorkflow = out.nodes.find((n) => n.client_id === workflowClientId);
@@ -482,44 +659,19 @@ export async function applyReplayLearningProjection(
 
   if (generatedRuleNodeId && generatedEpisodeNodeId) {
     if (!liteWriteStore) throw new Error("replay learning source-rule attachment requires lite write store");
-    const episodeNode = await liteWriteStore.resolveNode({
-      scope: source.scope_key,
-      id: generatedEpisodeNodeId,
-      type: "event",
-      consumerAgentId: source.actor,
-      consumerTeamId: null,
+    const attachment = await attachReplayLearningSourceRule({
+      store: liteWriteStore,
+      source,
+      episodeNodeId: generatedEpisodeNodeId,
+      ruleNodeId: generatedRuleNodeId,
     });
-    if (episodeNode) {
-      const lifecycle = resolveNodeLifecycleSignals({
-        type: episodeNode.type,
-        tier: episodeNode.tier,
-        title: episodeNode.title,
-        text_summary: episodeNode.text_summary,
-        slots: {
-          ...(asObject(episodeNode.slots) ?? {}),
-          source_rule_node_id: generatedRuleNodeId,
-          replay_learning: {
-            ...(asObject(asObject(episodeNode.slots)?.replay_learning) ?? {}),
-            source_rule_node_id: generatedRuleNodeId,
-          },
-        },
-        salience: episodeNode.salience,
-        importance: episodeNode.importance,
-        confidence: episodeNode.confidence,
-        raw_ref: episodeNode.raw_ref ?? null,
-        evidence_ref: episodeNode.evidence_ref ?? null,
-      });
-      await liteWriteStore.updateNodeAnchorState({
-        scope: source.scope_key,
-        id: generatedEpisodeNodeId,
-        slots: lifecycle.slots,
-        textSummary: episodeNode.text_summary,
-        salience: lifecycle.salience,
-        importance: lifecycle.importance,
-        confidence: lifecycle.confidence,
-        commitId: commitId ?? null,
-      });
-    }
+    commitId = attachment.commitId;
+    commitUri = buildAionisUri({
+      tenant_id: source.tenant_id,
+      scope: source.scope,
+      type: "commit",
+      id: attachment.commitId,
+    });
   }
 
   const ruleUri =

@@ -101,7 +101,7 @@ test("product lifecycle service can rehydrate archived nodes into active tiers",
       }),
       "rehydrate",
     );
-    assert.equal(response.ok, true);
+    assert.equal(response.ok, true, JSON.stringify(response));
     assert.equal(response.statusCode, 200);
     const body = response.body as any;
     assert.equal(body.result.target_tier, "hot");
@@ -147,7 +147,7 @@ test("product lifecycle service can record activation feedback on nodes", async 
       }),
       "feedback",
     );
-    assert.equal(response.ok, true);
+    assert.equal(response.ok, true, JSON.stringify(response));
     assert.equal(response.statusCode, 200);
     const body = response.body as any;
     assert.equal(body.result.activated.updated_nodes, 1);

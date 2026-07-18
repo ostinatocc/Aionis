@@ -174,7 +174,7 @@ export function registerProductFacadeRoutes(args: ProductFacadeArgs): void {
             body: input,
             principal,
             principalAlreadyChecked: true,
-            deferToolDecisionPersistence: parsed.operation_id !== undefined,
+            deferToolDecisionPersistence: true,
           });
         },
         applyIdentity: (input, kind) => withIdentityFromRequest(req, input, principal, kind),

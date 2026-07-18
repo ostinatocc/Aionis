@@ -1,9 +1,7 @@
-import { mkdirSync } from "node:fs";
-import { dirname } from "node:path";
-
 import {
-  createSqliteDatabase,
+  createPrivateRuntimeSqliteDatabase,
   createSqliteReadWriteExistingDatabase,
+  hardenPrivateRuntimeSqliteArtifacts,
   type SqliteDatabase,
 } from "./sqlite.js";
 import {
@@ -34,7 +32,7 @@ function assertCommittedReadPath(path: string): void {
 
 export function createLiteRuntimeReadDatabase(path: string): SqliteDatabase {
   assertCommittedReadPath(path);
-  const readDb = createSqliteDatabase(path);
+  const readDb = createPrivateRuntimeSqliteDatabase(path);
   try {
     readDb.exec(`
       PRAGMA journal_mode = WAL;
@@ -52,8 +50,7 @@ export function createLiteRuntimeDatabase(
   options: { faultInjector?: LiteRuntimeDatabaseFaultInjector } = {},
 ): LiteRuntimeDatabase {
   assertCommittedReadPath(path);
-  mkdirSync(dirname(path), { recursive: true });
-  const db = createSqliteDatabase(path);
+  const db = createPrivateRuntimeSqliteDatabase(path);
   let readDb: SqliteDatabase;
   try {
     db.exec(`
@@ -61,6 +58,7 @@ export function createLiteRuntimeDatabase(
       PRAGMA synchronous = FULL;
     `);
     readDb = createLiteRuntimeReadDatabase(path);
+    hardenPrivateRuntimeSqliteArtifacts(path);
   } catch (error) {
     db.close();
     throw error;

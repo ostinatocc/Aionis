@@ -15,7 +15,7 @@ import {
 import {
   LearningExperimentProvisioningError,
   createLiteLearningExperimentProvisioner,
-} from "../../src/store/lite-learning-experiment-provisioning.js";
+} from "../../tools/learning-experiments/lite-learning-experiment-provisioning.js";
 import { createLiteLearningEpisodeLedgerAccess } from
   "../../src/store/lite-learning-episode-ledger.js";
 import { LiteTenantScopeAuthorityError } from

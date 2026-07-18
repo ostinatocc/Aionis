@@ -157,11 +157,11 @@ test("learning loop promotes evidence-gated workflow candidates into stable work
       null,
     );
     sealAuthorityReceiptsForPreparedWrite(prepared);
-    await applyPreparedMemoryWrite(store, prepared, {
+    await store.withTx(() => applyPreparedMemoryWrite(store, prepared, {
       maxTextLen: writeOpts.maxTextLen,
       piiRedaction: writeOpts.piiRedaction,
       allowCrossScopeEdges: writeOpts.allowCrossScopeEdges,
-    });
+    }));
 
     const dryRun = await runLearningLoopLite(store, {
       tenant_id: "default",
@@ -291,11 +291,11 @@ test("learning loop applies controlled forgetting tier transitions without delet
       null,
     );
     sealAuthorityReceiptsForPreparedWrite(prepared);
-    await applyPreparedMemoryWrite(store, prepared, {
+    await store.withTx(() => applyPreparedMemoryWrite(store, prepared, {
       maxTextLen: writeOpts.maxTextLen,
       piiRedaction: writeOpts.piiRedaction,
       allowCrossScopeEdges: writeOpts.allowCrossScopeEdges,
-    });
+    }));
 
     const dryRun = await runLearningLoopLite(store, {
       tenant_id: "default",

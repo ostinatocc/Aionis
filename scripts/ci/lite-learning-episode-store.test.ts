@@ -156,7 +156,7 @@ import {
 } from "../../src/memory/learning-gate-policy.ts";
 import { createLiteRuntimeDatabase } from "../../src/store/lite-runtime-database.ts";
 import { createLiteLearningExperimentCloser } from
-  "../../src/store/lite-learning-experiment-closing.ts";
+  "../../tools/learning-experiments/lite-learning-experiment-closing.ts";
 import { buildApplicabilityManifestFromDatabase } from
   "../../src/store/lite-learning-experiment-applicability.ts";
 import {
@@ -1693,18 +1693,18 @@ test("randomization pair identity is server-derived from tenant, unordered membe
   }));
 });
 
-test("fresh Runtime initialization atomically installs the current v4 learning schema", async () => {
-  const temp = tempDatabase("fresh-v4");
+test("fresh Runtime initialization atomically installs the current v5 learning schema", async () => {
+  const temp = tempDatabase("fresh-v5");
   try {
     const store = createLiteWriteStore(temp.path, { annProjectionEnabled: false });
     await store.close();
 
     const db = createSqliteDatabase(temp.path);
     try {
-      assert.equal(LITE_RUNTIME_WRITE_SCHEMA_VERSION, 4);
+      assert.equal(LITE_RUNTIME_WRITE_SCHEMA_VERSION, 5);
       const report = inspectLiteRuntimeSchema(db);
       assert.equal(report.classification, "current");
-      assert.equal(report.detected_version, 4);
+      assert.equal(report.detected_version, 5);
       assert.deepEqual(report.missing_tables, []);
       assert.deepEqual(report.missing_columns, {});
       assert.deepEqual(report.constraint_problems, []);
@@ -1787,7 +1787,7 @@ test("historical fixed override keeps its none/unassigned cache valid after reop
         ["feedback_attributed", "unassigned"],
       ]);
       assert.equal(JSON.parse(String(rows[0]?.payload_json)).assignment_algorithm, "none");
-      assert.equal(inspectLiteRuntimeSchema(reopenedDatabase.db).detected_version, 4);
+      assert.equal(inspectLiteRuntimeSchema(reopenedDatabase.db).detected_version, 5);
     } finally {
       await reopenedStore.close();
       await reopenedDatabase.close();
@@ -2057,7 +2057,7 @@ test("schema preflight rejects a real partial-index predicate comment spoof", as
   }
 });
 
-test("exact legacy v3 active-lease trigger migrates atomically to v4 on reopen", async () => {
+test("exact legacy v3 active-lease trigger migrates atomically through v5 on reopen", async () => {
   const temp = tempDatabase("v3-active-lease-trigger-upgrade");
   try {
     const initialized = createLiteWriteStore(temp.path, { annProjectionEnabled: false });
@@ -2087,7 +2087,7 @@ test("exact legacy v3 active-lease trigger migrates atomically to v4 on reopen",
       const report = inspectLiteRuntimeSchema(before);
       assert.equal(report.classification, "supported_previous_v3");
       assert.equal(report.detected_version, 3);
-      assert.equal(report.current_version, 4);
+      assert.equal(report.current_version, 5);
       assert.equal(report.upgrade_required, true);
       const trigger = before.prepare(
         `SELECT sql FROM sqlite_schema
@@ -2107,7 +2107,7 @@ test("exact legacy v3 active-lease trigger migrates atomically to v4 on reopen",
     try {
       const report = inspectLiteRuntimeSchema(after);
       assert.equal(report.classification, "current");
-      assert.equal(report.detected_version, 4);
+      assert.equal(report.detected_version, 5);
       assert.equal(report.upgrade_required, false);
       const trigger = after.prepare(
         `SELECT sql FROM sqlite_schema
@@ -2207,7 +2207,7 @@ test("v3-to-v4 migration rejects missing or substituted active-lease triggers", 
   }
 });
 
-test("process death cannot expose a partial v3-to-v4 trigger migration", async () => {
+test("process death cannot expose a partial v3-to-v5 trigger migration", async () => {
   const temp = tempDatabase("v3-trigger-kill-rollback");
   try {
     const initialized = createLiteWriteStore(temp.path, { annProjectionEnabled: false });
@@ -2251,7 +2251,7 @@ test("process death cannot expose a partial v3-to-v4 trigger migration", async (
         (current.prepare(
           "SELECT version FROM lite_runtime_schema_metadata WHERE component = 'write_projection'",
         ).get() as { version: number }).version,
-        4,
+        5,
       );
     } finally {
       current.close();
@@ -2400,7 +2400,7 @@ test("structural ledger corruption fails closed on access, reopen, verify, backu
   }
 });
 
-test("v2-to-v4 migration preserves all eight authority and semantic row families", async () => {
+test("v2-to-v5 migration preserves all eight authority and semantic row families", async () => {
   const temp = tempDatabase("preservation");
   try {
     await createV2Fixture(temp.path);
@@ -2445,7 +2445,7 @@ test("v2-to-v4 migration preserves all eight authority and semantic row families
   }
 });
 
-test("v2-to-v4 migration fault rolls back every DDL group and metadata update", async () => {
+test("v2-to-v5 migration fault rolls back every DDL group and metadata update", async () => {
   const temp = tempDatabase("fault-rollback");
   try {
     await createV2Fixture(temp.path);
@@ -2465,11 +2465,11 @@ test("v2-to-v4 migration fault rolls back every DDL group and metadata update", 
           annProjectionEnabled: false,
           schemaMigrationFaultInjector(phase) {
             if (phase === "before_metadata_update") {
-              throw new Error("injected v4 migration failure before metadata");
+              throw new Error("injected v5 migration failure before metadata");
             }
           },
         }),
-        /injected v4 migration failure before metadata/,
+        /injected v5 migration failure before metadata/,
       );
     } finally {
       await database.close();
@@ -9357,12 +9357,13 @@ test("v3 preflight rejects missing or substituted immutable triggers before repa
   }
 });
 
-test("every v4 schema fault phase leaves a complete v2 database", async (t) => {
+test("every v5 schema fault phase leaves a complete v2 database", async (t) => {
   const phases = [
     "after_v2_structures",
     "after_shared_measurement_structures",
     "after_authority_identity",
     "after_learning_ledger_structures",
+    "after_commit_authority_structures",
     "after_v3_shape_verification",
     "before_metadata_update",
     "after_metadata_update_before_commit",
@@ -9407,7 +9408,7 @@ test("every v4 schema fault phase leaves a complete v2 database", async (t) => {
   }
 });
 
-test("a real process kill cannot expose DDL or metadata from an uncommitted v4 migration", async (t) => {
+test("a real process kill cannot expose DDL or metadata from an uncommitted v5 migration", async (t) => {
   for (const phase of ["before_metadata_update", "after_metadata_update_before_commit"] as const) {
     await t.test(phase, async () => {
       const temp = tempDatabase(`kill-${phase}`);
@@ -9451,7 +9452,7 @@ test("a real process kill cannot expose DDL or metadata from an uncommitted v4 m
   }
 });
 
-test("concurrent v2-to-v4 openers converge on one committed lineage identity", async () => {
+test("concurrent v2-to-v5 openers converge on one committed lineage identity", async () => {
   const temp = tempDatabase("concurrent-migration");
   try {
     await createV2Fixture(temp.path);

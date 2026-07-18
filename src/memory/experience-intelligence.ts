@@ -176,6 +176,7 @@ export async function buildExperienceIntelligenceLite(args: {
       liteWriteStore: args.liteWriteStore,
       recallAccess: args.liteRecallAccess,
       embedder: args.embedder,
+      actor: args.defaultActorId,
     },
   );
   const recommendedWorkflows = Array.isArray(introspection.recommended_workflows) ? introspection.recommended_workflows : [];

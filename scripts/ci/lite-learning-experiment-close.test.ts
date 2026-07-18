@@ -14,7 +14,7 @@ import {
   LearningExperimentClosingError,
   createLiteLearningExperimentCloser,
   type LearningExperimentCloseInput,
-} from "../../src/store/lite-learning-experiment-closing.js";
+} from "../../tools/learning-experiments/lite-learning-experiment-closing.js";
 import { createLiteLearningEpisodeLedgerAccess } from
   "../../src/store/lite-learning-episode-ledger.js";
 import {
@@ -1170,7 +1170,7 @@ test("cross-database signed approval rejection preserves target bytes and create
     const restoreEnvironment = installCloseProcessEnvironment();
     try {
       const { closeLiteLearningExperiment } = await import(
-        "../../src/store/lite-learning-experiment-closing.js"
+        "../../tools/learning-experiments/lite-learning-experiment-closing.js"
       );
       await assert.rejects(
         closeLiteLearningExperiment({
@@ -1233,7 +1233,7 @@ test("writable ancestor directory fails protected close without any close mutati
     const restoreEnvironment = installCloseProcessEnvironment();
     try {
       const { closeLiteLearningExperiment } = await import(
-        "../../src/store/lite-learning-experiment-closing.js"
+        "../../tools/learning-experiments/lite-learning-experiment-closing.js"
       );
       await assert.rejects(
         closeLiteLearningExperiment({
@@ -1294,7 +1294,7 @@ test("world-writable SQLite sidecar fails protected close without touching the d
     const restoreEnvironment = installCloseProcessEnvironment();
     try {
       const { closeLiteLearningExperiment } = await import(
-        "../../src/store/lite-learning-experiment-closing.js"
+        "../../tools/learning-experiments/lite-learning-experiment-closing.js"
       );
       await assert.rejects(
         closeLiteLearningExperiment({
@@ -1364,7 +1364,7 @@ test("macOS write ACL fails protected close without any close mutation", {
     const restoreEnvironment = installCloseProcessEnvironment();
     try {
       const { closeLiteLearningExperiment } = await import(
-        "../../src/store/lite-learning-experiment-closing.js"
+        "../../tools/learning-experiments/lite-learning-experiment-closing.js"
       );
       await assert.rejects(
         closeLiteLearningExperiment({
@@ -1447,7 +1447,7 @@ test("Linux default ACL on a non-direct ancestor does not block protected close"
     const restoreRejectedEnvironment = installCloseProcessEnvironment();
     try {
       const { closeLiteLearningExperiment } = await import(
-        "../../src/store/lite-learning-experiment-closing.js"
+        "../../tools/learning-experiments/lite-learning-experiment-closing.js"
       );
       await assert.rejects(
         closeLiteLearningExperiment({
@@ -1500,7 +1500,7 @@ test("Linux default ACL on a non-direct ancestor does not block protected close"
     const restoreEnvironment = installCloseProcessEnvironment();
     try {
       const { closeLiteLearningExperiment } = await import(
-        "../../src/store/lite-learning-experiment-closing.js"
+        "../../tools/learning-experiments/lite-learning-experiment-closing.js"
       );
       const result = await closeLiteLearningExperiment({
         path: databasePath,
@@ -1577,7 +1577,7 @@ test("Linux base and extended default ACLs on the database parent remain rejecte
       const restoreEnvironment = installCloseProcessEnvironment();
       try {
         const { closeLiteLearningExperiment } = await import(
-          "../../src/store/lite-learning-experiment-closing.js"
+          "../../tools/learning-experiments/lite-learning-experiment-closing.js"
         );
         await assert.rejects(
           closeLiteLearningExperiment({
@@ -1657,7 +1657,7 @@ test("Linux extended ACL fails protected close even when mode has no write bit",
     const restoreEnvironment = installCloseProcessEnvironment();
     try {
       const { closeLiteLearningExperiment } = await import(
-        "../../src/store/lite-learning-experiment-closing.js"
+        "../../tools/learning-experiments/lite-learning-experiment-closing.js"
       );
       await assert.rejects(
         closeLiteLearningExperiment({
@@ -1722,7 +1722,7 @@ test("protected close and exact replay read a live Runtime WAL without checkpoin
     const restoreEnvironment = installCloseProcessEnvironment();
     try {
       const { closeLiteLearningExperiment } = await import(
-        "../../src/store/lite-learning-experiment-closing.js"
+        "../../tools/learning-experiments/lite-learning-experiment-closing.js"
       );
       const input = {
         path: temp.path,

@@ -228,11 +228,12 @@ test("runtime maintenance reports before and after learning, reuse, and forgetti
       null,
     );
     sealAuthorityReceiptsForPreparedWrite(prepared);
-    await applyPreparedMemoryWrite(store, prepared, {
+    await store.withTx(() => applyPreparedMemoryWrite(store, prepared, {
       maxTextLen: writeOpts.maxTextLen,
       piiRedaction: writeOpts.piiRedaction,
       allowCrossScopeEdges: writeOpts.allowCrossScopeEdges,
-    });
+    }));
+    // Fixture-only tamper: simulate historical age without creating a Runtime mutation.
     const directDb = createSqliteDatabase(dbPath);
     try {
       directDb.prepare("UPDATE lite_memory_nodes SET created_at = ? WHERE scope = ? AND id = ?")
@@ -358,12 +359,13 @@ test("runtime maintenance profiles apply different low-level forgetting horizons
       null,
     );
     sealAuthorityReceiptsForPreparedWrite(prepared);
-    await applyPreparedMemoryWrite(store, prepared, {
+    await store.withTx(() => applyPreparedMemoryWrite(store, prepared, {
       maxTextLen: writeOpts.maxTextLen,
       piiRedaction: writeOpts.piiRedaction,
       allowCrossScopeEdges: writeOpts.allowCrossScopeEdges,
-    });
+    }));
     const twoDaysOld = new Date(Date.now() - (48 * 60 * 60 * 1000)).toISOString();
+    // Fixture-only tamper: simulate historical age without creating a Runtime mutation.
     const directDb = createSqliteDatabase(dbPath);
     try {
       directDb.prepare("UPDATE lite_memory_nodes SET created_at = ? WHERE scope = ? AND id = ?")

@@ -391,7 +391,7 @@ test("batch guide prior lookup distinguishes empty, missing, and invisible nodes
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), "aionis-guide-learning-prior-"));
   const store = createLiteWriteStore(path.join(dir, "runtime.sqlite"));
   try {
-    const commitId = await store.insertCommit({
+    const commitId = await store.insertLegacyV1CommitForMigrationOrTestFixture({
       scope: "repo-a",
       parentCommitId: null,
       inputSha256: "guide-learning-prior-input",

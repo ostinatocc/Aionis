@@ -9,6 +9,7 @@ import {
 } from "./learning-control-model-client-http-contract.js";
 import type {
   AdjudicableMemoryEntry,
+  MemoryLifecycleRelation,
   MemoryLifecycleRelationCandidate,
   MemoryLifecycleRelationCandidateProducer,
 } from "./memory-lifecycle-adjudicator.js";
@@ -18,7 +19,7 @@ import {
   extractJsonValueFromText,
 } from "./http-model-json.js";
 
-const LIFECYCLE_RELATION_MODEL_PROMPT_VERSION = "memory_lifecycle_relation_candidate_prompt_v1";
+const LIFECYCLE_RELATION_MODEL_PROMPT_VERSION = "memory_lifecycle_relation_candidate_prompt_v2";
 
 const CandidateSchema = z.object({
   source_memory_id: z.string().min(1),
@@ -49,22 +50,74 @@ function compactEntry(entry: AdjudicableMemoryEntry) {
     confidence: entry.confidence,
     lifecycle_state: entry.lifecycle_state,
     observed_at: entry.observed_at ?? null,
+    target_files: entry.target_files ?? [],
     source_index: entry.source_index,
   };
+}
+
+type LifecycleRelationCandidatePair = {
+  source: ReturnType<typeof compactEntry>;
+  target: ReturnType<typeof compactEntry>;
+  hint?: {
+    kind: "ephemeral_rule_cue_hint";
+    authority: "none";
+    relation: MemoryLifecycleRelation["relation"];
+    confidence: number;
+    reasons: string[];
+    signals: MemoryLifecycleRelation["evidence"]["signals"];
+  };
+};
+
+function candidatePairKey(sourceMemoryId: string, targetMemoryId: string): string {
+  return `${sourceMemoryId}\0${targetMemoryId}`;
 }
 
 function candidatePairs(args: {
   entries: AdjudicableMemoryEntry[];
   sourceMemoryIds: Set<string>;
   maxPairs: number;
-}) {
+  relationHints: MemoryLifecycleRelation[];
+}): LifecycleRelationCandidatePair[] {
   const sources = args.entries.filter((entry) => args.sourceMemoryIds.has(entry.memory_id));
-  const out: Array<{ source: ReturnType<typeof compactEntry>; target: ReturnType<typeof compactEntry> }> = [];
+  const historicalTargets = args.entries.filter((entry) => !args.sourceMemoryIds.has(entry.memory_id));
+  const entriesById = new Map(args.entries.map((entry) => [entry.memory_id, entry]));
+  const out: LifecycleRelationCandidatePair[] = [];
+  const seen = new Set<string>();
+  const append = (
+    source: AdjudicableMemoryEntry,
+    target: AdjudicableMemoryEntry,
+    hint?: LifecycleRelationCandidatePair["hint"],
+  ): boolean => {
+    const key = candidatePairKey(source.memory_id, target.memory_id);
+    if (source.memory_id === target.memory_id || seen.has(key)) return false;
+    seen.add(key);
+    out.push({
+      source: compactEntry(source),
+      target: compactEntry(target),
+      ...(hint ? { hint } : {}),
+    });
+    return out.length >= args.maxPairs;
+  };
+
+  for (const relation of args.relationHints) {
+    if (!args.sourceMemoryIds.has(relation.source_memory_id)
+      || args.sourceMemoryIds.has(relation.target_memory_id)) continue;
+    const source = entriesById.get(relation.source_memory_id);
+    const target = entriesById.get(relation.target_memory_id);
+    if (!source || !target) continue;
+    if (append(source, target, {
+      kind: "ephemeral_rule_cue_hint",
+      authority: "none",
+      relation: relation.relation,
+      confidence: relation.confidence,
+      reasons: relation.reasons.slice(0, 4),
+      signals: relation.evidence.signals,
+    })) return out;
+  }
+
   for (const source of sources) {
-    for (const target of args.entries) {
-      if (source.memory_id === target.memory_id) continue;
-      out.push({ source: compactEntry(source), target: compactEntry(target) });
-      if (out.length >= args.maxPairs) return out;
+    for (const target of historicalTargets) {
+      if (append(source, target)) return out;
     }
   }
   return out;
@@ -141,11 +194,11 @@ export function createHttpMemoryLifecycleRelationCandidateProducer(args: {
   maxPairs?: number;
 }): MemoryLifecycleRelationCandidateProducer {
   return async ({ entries, source_memory_ids, deterministic_relations }) => {
-    if (deterministic_relations.length > 0) return [];
     const pairs = candidatePairs({
       entries,
       sourceMemoryIds: new Set(source_memory_ids),
-      maxPairs: args.maxPairs ?? 60,
+      maxPairs: Math.min(200, Math.max(1, Math.floor(args.maxPairs ?? 60))),
+      relationHints: deterministic_relations,
     });
     if (pairs.length === 0) return [];
     const parsed = await postCandidateJson({
@@ -154,6 +207,7 @@ export function createHttpMemoryLifecycleRelationCandidateProducer(args: {
         "You produce semantic lifecycle relation candidates for Aionis memory. "
         + "Return strict JSON only: {\"candidates\":[...]}. "
         + "You may only propose supersedes, contradicts, or invalidates relations between supplied memory ids. "
+        + "Pairs may include an ephemeral lexical rule-cue hint with authority=none; review it as a lead, never as a decision. "
         + "Do not output lifecycle_state, authority, actions, edits, filters, or final decisions. "
         + "Be conservative: propose a relation only when the source memory is a later/follow-up memory that clearly says a prior route, approach, assumption, or first-pass work area was abandoned, disproven, replaced, or should be treated as no longer usable. "
         + "If evidence is weak or both memories can coexist, return {\"candidates\":[]}.",
@@ -165,14 +219,24 @@ export function createHttpMemoryLifecycleRelationCandidateProducer(args: {
           schema_note:
             "Return {candidates:[{source_memory_id,target_memory_id,relation,confidence,reasons}]} or {candidates:[]}.",
         },
+        pair_order_policy: "ephemeral_hinted_pairs_first_then_bounded_recency_candidates",
         candidate_pairs: pairs,
       },
     });
     const result = CandidateResponseSchema.safeParse(parsed);
     if (!result.success) return [];
-    return result.data.candidates.map((candidate): MemoryLifecycleRelationCandidate => ({
-      ...candidate,
-      producer: "llm_semantic_lifecycle",
-    }));
+    const suppliedPairs = new Set(pairs.map((pair) => candidatePairKey(
+      pair.source.memory_id,
+      pair.target.memory_id,
+    )));
+    return result.data.candidates
+      .filter((candidate) => suppliedPairs.has(candidatePairKey(
+        candidate.source_memory_id,
+        candidate.target_memory_id,
+      )))
+      .map((candidate): MemoryLifecycleRelationCandidate => ({
+        ...candidate,
+        producer: "llm_semantic_lifecycle",
+      }));
   };
 }

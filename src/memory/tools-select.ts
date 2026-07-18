@@ -46,6 +46,9 @@ import {
   buildToolRuleEvaluationProvenance,
   TOOL_RULE_EVALUATION_PROVENANCE_METADATA_KEY,
 } from "./tool-rule-evaluation-provenance.js";
+import { persistInitialExecutionDecisionAuthority } from "./execution-decision-authority.js";
+
+const TOOLS_SELECT_AUTHORITY_ACTOR = "aionis-runtime:tools-select";
 
 function inferBroadToolKind(name: string): "scan" | "test" | null {
   const lowered = name.toLowerCase();
@@ -431,11 +434,12 @@ export async function selectTools(
   defaultScope: string,
   defaultTenantId: string,
   opts: {
-    liteWriteStore?: Pick<LiteWriteStore, "insertExecutionDecision" | "listRuleCandidates"> | null;
+    liteWriteStore?: LiteWriteStore | null;
     recallAccess?: RecallStoreAccess | null;
     embedder?: EmbeddingProvider | null;
     persistDecision?: boolean;
     onDecisionPrepared?: (decision: DeferredToolsSelectDecision) => void;
+    actor?: string | null;
   } = {},
 ): Promise<ToolsSelectRouteContract> {
   const parsed = ToolsSelectRequest.parse(body);
@@ -575,18 +579,30 @@ export async function selectTools(
     metadataJson: decisionMetadata,
     commitId: null,
   };
-  const decisionRes: { id: string; created_at: string | null } = opts.persistDecision === false
-    ? (() => {
-        if (!opts.onDecisionPrepared) return { id: decision_id, created_at: null };
-        const createdAt = new Date().toISOString();
-        opts.onDecisionPrepared({ ...decisionWrite, createdAt });
-        return { id: decision_id, created_at: createdAt };
-      })()
-    : opts.liteWriteStore
-      ? await opts.liteWriteStore.insertExecutionDecision(decisionWrite)
-      : (() => {
-        throw new Error("selectTools decision persistence requires liteWriteStore");
-      })();
+  let decisionRes: { id: string; created_at: string | null };
+  if (opts.persistDecision === false) {
+    if (!opts.onDecisionPrepared) {
+      decisionRes = { id: decision_id, created_at: null };
+    } else {
+      const createdAt = new Date().toISOString();
+      opts.onDecisionPrepared({ ...decisionWrite, createdAt });
+      decisionRes = { id: decision_id, created_at: createdAt };
+    }
+  } else {
+    if (!opts.liteWriteStore) {
+      throw new Error("selectTools decision persistence requires liteWriteStore");
+    }
+    const createdAt = new Date().toISOString();
+    const persisted = await persistInitialExecutionDecisionAuthority({
+      store: opts.liteWriteStore,
+      decision: { ...decisionWrite, createdAt },
+      actor: opts.actor?.trim() || TOOLS_SELECT_AUTHORITY_ACTOR,
+    });
+    decisionRes = {
+      id: persisted.row.id,
+      created_at: persisted.row.created_at,
+    };
+  }
   const decision_created_at = decisionRes.created_at ?? null;
 
 

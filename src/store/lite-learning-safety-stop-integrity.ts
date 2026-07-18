@@ -40,6 +40,13 @@ import {
 } from "./lite-learning-feedback-digest.js";
 import type { LiteLearningAuthorityRow } from "./lite-learning-confirmatory-authority.js";
 import type { SqliteDatabase } from "./sqlite.js";
+import {
+  assertCanonicalV2MutationJson,
+  canonicalV2CommitHash,
+  materializeSelfCommitReferences,
+  type CanonicalAppliedAuthorityMutationV2,
+  type CanonicalAuthorityTableMutationV2,
+} from "./write-commit-authority.js";
 
 type Row = Record<string, unknown>;
 
@@ -280,7 +287,8 @@ function protectedFeedbackCommitRoot(args: {
   const { db, event, payload, attributions, hostUseReceipt } = args;
   const commit = db.prepare(
     `SELECT id, scope, parent_commit_id, input_sha256, diff_json, actor,
-            model_version, prompt_version, commit_hash, created_at
+            model_version, prompt_version, commit_hash, created_at,
+            digest_version, revision, mutation_digest, legacy_anchor_commit_id
      FROM lite_memory_commits WHERE id = ?`,
   ).get(event.source_commit_id) as Row | undefined;
   if (!commit
@@ -443,6 +451,188 @@ function protectedFeedbackCommitRoot(args: {
   return { commit, diff, feedback, subjectIds, expectedAttributionStrength };
 }
 
+const TOOL_FEEDBACK_REQUEST_FIELDS = [
+  "decision_id",
+  "decision_link_mode",
+  "run_id",
+  "outcome",
+  "selected_tool",
+  "candidates",
+  "rule_node_ids",
+  "target",
+  "include_shadow",
+] as const;
+
+function sameCanonicalValue(left: unknown, right: unknown): boolean {
+  return stableStringify(left) === stableStringify(right);
+}
+
+function assertOnlyAuthorityFieldsChanged(args: {
+  before: Row;
+  after: Row;
+  allowed: readonly string[];
+  errorCode: string;
+}): void {
+  const allowed = new Set(args.allowed);
+  for (const field of Object.keys(args.before)) {
+    if (!allowed.has(field) && !sameCanonicalValue(args.before[field], args.after[field])) {
+      throw new Error(`lite_learning_integrity_failed:${args.errorCode}`);
+    }
+  }
+}
+
+export function assertToolFeedbackAuthorityMutationRoot(args: {
+  mutation: unknown;
+  scope: string;
+  decisionId: string;
+  runId: string;
+  outcome: "positive" | "negative" | "neutral";
+}): {
+  feedback: Row;
+  decisionAfter: Row;
+} {
+  const mutation = exactObject(
+    args.mutation,
+    ["contract", "digest_version", "applied_at", "authority_kind", "policy", "mutations"],
+    "tool_feedback_source_commit_diff",
+  );
+  if (mutation.contract !== "aionis_applied_authority_mutation_v2"
+    || mutation.digest_version !== 2
+    || mutation.authority_kind !== "tool_feedback"
+    || typeof mutation.applied_at !== "string"
+    || !Array.isArray(mutation.mutations)) {
+    throw new Error("lite_learning_integrity_failed:tool_feedback_source_commit_diff");
+  }
+  const mutations = mutation.mutations as CanonicalAuthorityTableMutationV2[];
+  if (mutations.some((entry) => ![
+    "lite_memory_execution_decisions",
+    "lite_memory_rule_feedback",
+    "lite_memory_rule_defs",
+    "lite_memory_nodes",
+  ].includes(entry.table))) {
+    throw new Error("lite_learning_integrity_failed:tool_feedback_source_commit_mutation_table");
+  }
+  const allDecisionMutations = mutations.filter((entry) => (
+    entry.table === "lite_memory_execution_decisions"
+  ));
+  const decisionMutations = allDecisionMutations.filter((entry) => (
+    entry.identity.scope === args.scope
+    && entry.identity.id === args.decisionId
+  ));
+  if (allDecisionMutations.length !== 1 || decisionMutations.length !== 1) {
+    throw new Error("lite_learning_integrity_failed:tool_feedback_source_commit_decision_mutation");
+  }
+  const decisionMutation = decisionMutations[0]!;
+  const requestedRoot = exactObject(
+    decisionMutation.requested,
+    ["tool_feedback"],
+    "tool_feedback_source_commit_requested",
+  );
+  const feedback = exactObject(
+    requestedRoot.tool_feedback,
+    TOOL_FEEDBACK_REQUEST_FIELDS,
+    "tool_feedback_source_commit_requested_feedback",
+  );
+  const candidates = stringArray(feedback.candidates, "tool_feedback_source_commit_candidates");
+  const ruleNodeIds = stringArray(feedback.rule_node_ids, "tool_feedback_source_commit_rule_node_ids");
+  requiredEnum(
+    feedback.decision_link_mode,
+    ["provided", "inferred", "created_from_feedback"] as const,
+    "tool_feedback_source_commit_decision_link_mode",
+  );
+  requiredEnum(feedback.target, ["tool", "all"] as const, "tool_feedback_source_commit_target");
+  if (feedback.decision_id !== args.decisionId
+    || feedback.run_id !== args.runId
+    || feedback.outcome !== args.outcome
+    || typeof feedback.selected_tool !== "string"
+    || feedback.selected_tool.length === 0
+    || typeof feedback.include_shadow !== "boolean") {
+    throw new Error("lite_learning_integrity_failed:tool_feedback_source_commit_inputs");
+  }
+  const decisionAfter = requiredObject(
+    decisionMutation.after,
+    "tool_feedback_source_commit_decision_after",
+  );
+  if (decisionAfter.id !== args.decisionId
+    || decisionAfter.scope !== args.scope
+    || decisionAfter.decision_kind !== "tools_select"
+    || decisionAfter.run_id !== args.runId
+    || decisionAfter.selected_tool !== feedback.selected_tool
+    || !sameCanonicalValue(decisionAfter.candidates_json, candidates)
+    || decisionAfter.commit_id !== "$self") {
+    throw new Error("lite_learning_integrity_failed:tool_feedback_source_commit_decision_after");
+  }
+
+  const feedbackMutations = mutations.filter((entry) => entry.table === "lite_memory_rule_feedback");
+  const rootedFeedbackRuleIds = feedbackMutations.map((entry) => {
+    const after = requiredObject(entry.after, "tool_feedback_source_commit_rule_feedback_after");
+    if (entry.operation !== "insert"
+      || entry.before !== null
+      || after.scope !== args.scope
+      || after.rule_node_id === undefined
+      || after.run_id !== args.runId
+      || after.outcome !== args.outcome
+      || after.source !== "tools_feedback"
+      || after.decision_id !== args.decisionId
+      || after.commit_id !== "$self") {
+      throw new Error("lite_learning_integrity_failed:tool_feedback_source_commit_rule_feedback_mutation");
+    }
+    return requiredString(after, "rule_node_id");
+  });
+  if (!sameCanonicalValue(canonicalStrings(rootedFeedbackRuleIds), canonicalStrings(ruleNodeIds))) {
+    throw new Error("lite_learning_integrity_failed:tool_feedback_source_commit_rule_feedback_set");
+  }
+
+  const ruleDefMutations = mutations.filter((entry) => entry.table === "lite_memory_rule_defs");
+  const rootedRuleDefIds = ruleDefMutations.map((entry) => {
+    const before = requiredObject(entry.before, "tool_feedback_source_commit_rule_def_before");
+    const after = requiredObject(entry.after, "tool_feedback_source_commit_rule_def_after");
+    const ruleNodeId = requiredString(after, "rule_node_id");
+    if (entry.operation !== "update"
+      || after.scope !== args.scope
+      || after.commit_id !== "$self"
+      || after.updated_at !== mutation.applied_at
+      || Number(after.positive_count) !== Number(before.positive_count) + (args.outcome === "positive" ? 1 : 0)
+      || Number(after.negative_count) !== Number(before.negative_count) + (args.outcome === "negative" ? 1 : 0)) {
+      throw new Error("lite_learning_integrity_failed:tool_feedback_source_commit_rule_def_mutation");
+    }
+    assertOnlyAuthorityFieldsChanged({
+      before,
+      after,
+      allowed: ["positive_count", "negative_count", "commit_id", "updated_at"],
+      errorCode: "tool_feedback_source_commit_rule_def_mutation",
+    });
+    return ruleNodeId;
+  });
+  if (!sameCanonicalValue(canonicalStrings(rootedRuleDefIds), canonicalStrings(ruleNodeIds))) {
+    throw new Error("lite_learning_integrity_failed:tool_feedback_source_commit_rule_def_set");
+  }
+
+  for (const entry of mutations.filter((candidate) => candidate.table === "lite_memory_nodes")) {
+    const after = requiredObject(entry.after, "tool_feedback_source_commit_node_after");
+    const slots = requiredObject(after.slots_json, "tool_feedback_source_commit_node_slots");
+    if (after.scope !== args.scope
+      || after.commit_id !== "$self"
+      || (slots.summary_kind !== "pattern_anchor" && slots.summary_kind !== "policy_memory")) {
+      throw new Error("lite_learning_integrity_failed:tool_feedback_source_commit_node_mutation");
+    }
+    if (entry.operation === "insert") {
+      if (entry.before !== null || after.created_at !== mutation.applied_at) {
+        throw new Error("lite_learning_integrity_failed:tool_feedback_source_commit_node_mutation");
+      }
+    } else {
+      const before = requiredObject(entry.before, "tool_feedback_source_commit_node_before");
+      assertOnlyAuthorityFieldsChanged({
+        before,
+        after,
+        allowed: ["slots_json", "text_summary", "salience", "importance", "confidence", "commit_id"],
+        errorCode: "tool_feedback_source_commit_node_mutation",
+      });
+    }
+  }
+  return { feedback, decisionAfter };
+}
+
 function toolFeedbackCommitRoot(args: {
   db: SqliteDatabase;
   event: Row;
@@ -494,7 +684,8 @@ function toolFeedbackCommitRoot(args: {
   const decisionId = requiredString(attribution, "subject_id");
   const commit = db.prepare(
     `SELECT id, scope, parent_commit_id, input_sha256, diff_json, actor,
-            model_version, prompt_version, commit_hash, created_at
+            model_version, prompt_version, commit_hash, created_at,
+            digest_version, revision, mutation_digest, legacy_anchor_commit_id
      FROM lite_memory_commits WHERE id = ?`,
   ).get(event.source_commit_id) as Row | undefined;
   if (!commit
@@ -506,25 +697,37 @@ function toolFeedbackCommitRoot(args: {
     || !/^[a-f0-9]{64}$/u.test(commit.input_sha256)
     || typeof commit.commit_hash !== "string"
     || !/^[a-f0-9]{64}$/u.test(commit.commit_hash)
+    || commit.digest_version !== 2
+    || typeof commit.revision !== "number"
+    || !Number.isSafeInteger(commit.revision)
+    || Number(commit.revision) < 1
+    || typeof commit.mutation_digest !== "string"
+    || !/^[a-f0-9]{64}$/u.test(commit.mutation_digest)
+    || typeof commit.created_at !== "string"
     || commit.model_version !== null
     || commit.prompt_version !== null
     || event.memory_namespace_sha256 !== sha256Hex(commit.scope)) {
     throw new Error("lite_learning_integrity_failed:tool_feedback_source_commit");
   }
-  const diff = parseJson(commit.diff_json, "tool_feedback_source_commit_diff") as Row;
-  const feedbackRows = diff && typeof diff === "object" && !Array.isArray(diff)
-    ? diff.tool_feedback
-    : null;
-  if (!Array.isArray(feedbackRows) || feedbackRows.length !== 1) {
-    throw new Error("lite_learning_integrity_failed:tool_feedback_source_commit_diff");
+  let diff: CanonicalAppliedAuthorityMutationV2;
+  try {
+    diff = assertCanonicalV2MutationJson({
+      diffJson: commit.diff_json,
+      mutationDigest: commit.mutation_digest,
+      createdAt: commit.created_at,
+      scope: commit.scope,
+    }) as CanonicalAppliedAuthorityMutationV2;
+  } catch (error) {
+    throw new Error("lite_learning_integrity_failed:tool_feedback_source_commit_diff", { cause: error });
   }
-  const rootedFeedback = feedbackRows[0] as Row;
-  if (!rootedFeedback || typeof rootedFeedback !== "object" || Array.isArray(rootedFeedback)
-    || rootedFeedback.decision_id !== decisionId
-    || rootedFeedback.run_id !== payload.run_id
-    || rootedFeedback.outcome !== outcome) {
-    throw new Error("lite_learning_integrity_failed:tool_feedback_source_commit_inputs");
-  }
+  const rooted = assertToolFeedbackAuthorityMutationRoot({
+    mutation: diff,
+    scope: String(commit.scope),
+    decisionId,
+    runId: payload.run_id,
+    outcome,
+  });
+  const rootedFeedback = rooted.feedback;
   let parentHash = "";
   if (commit.parent_commit_id !== null) {
     const parent = db.prepare(
@@ -535,14 +738,17 @@ function toolFeedbackCommitRoot(args: {
     }
     parentHash = parent.commit_hash;
   }
-  const expectedCommitHash = sha256Hex(stableStringify({
+  const expectedCommitHash = canonicalV2CommitHash({
+    digestVersion: 2,
+    revision: Number(commit.revision),
     parentHash,
-    inputSha: commit.input_sha256,
-    diffSha: sha256Hex(stableStringify(diff)),
-    scope: commit.scope,
-    actor: commit.actor,
-    kind: "tool_feedback",
-  }));
+    inputSha256: String(commit.input_sha256),
+    mutationDigest: String(commit.mutation_digest),
+    scope: String(commit.scope),
+    actor: String(commit.actor),
+    modelVersion: null,
+    promptVersion: null,
+  });
   if (commit.commit_hash !== expectedCommitHash
     || commit.id !== stableUuid(`lite:commit:${expectedCommitHash}`)) {
     throw new Error("lite_learning_integrity_failed:tool_feedback_source_commit_hash");
@@ -558,6 +764,29 @@ function toolFeedbackCommitRoot(args: {
     || decision.run_id !== payload.run_id
     || decision.scope !== commit.scope) {
     throw new Error("lite_learning_integrity_failed:tool_feedback_decision_binding");
+  }
+  const materializedDecisionAfter = materializeSelfCommitReferences(rooted.decisionAfter, String(commit.id));
+  const persistedDecisionState: Row = {
+    id: decision.id,
+    scope: decision.scope,
+    decision_kind: decision.decision_kind,
+    run_id: decision.run_id,
+    selected_tool: decision.selected_tool,
+    candidates_json: parseJson(requiredString(decision, "candidates_json"), "tool_feedback_decision_candidates"),
+    context_sha256: decision.context_sha256,
+    policy_sha256: decision.policy_sha256,
+    source_rule_ids_json: parseJson(
+      requiredString(decision, "source_rule_ids_json"),
+      "tool_feedback_decision_source_rule_ids",
+    ),
+    metadata_json: parseJson(requiredString(decision, "metadata_json"), "tool_feedback_decision_metadata"),
+    created_at: decision.created_at,
+  };
+  const rootedDecisionState = Object.fromEntries(
+    Object.entries(materializedDecisionAfter).filter(([field]) => field !== "commit_id"),
+  );
+  if (!sameCanonicalValue(rootedDecisionState, persistedDecisionState)) {
+    throw new Error("lite_learning_integrity_failed:tool_feedback_decision_mutation_binding");
   }
   const latestDecisionFeedback = db.prepare(
     `SELECT feedback.source_commit_id

@@ -7,6 +7,7 @@ import { z } from "zod";
 import {
   LEARNING_EXTERNAL_ATTESTATION_ROLE_SPECS,
   LearningExternalIngestionLedgerVerificationV1Schema,
+  LearningExternalRuntimeWriteSchemaVersionV1Schema,
   LearningExternalRequiredSeriesStatusEntryV1Schema,
   LearningExternalRequiredSeriesStatusV1Schema,
   RegisteredEvidenceSeriesV1Schema,
@@ -21,29 +22,29 @@ import {
   learningExternalRequiredSeriesStatusDigest,
   learningExternalTerminalCoverageFinalizedAtFromDatabaseFacts,
   learningRuntimeAuthorityRowV1,
-} from "../memory/learning-external-ingestion-attestation.js";
-import { LearningExternalCanonicalUtcMillisSchema } from "../memory/learning-external-authority.js";
-import type { AuthorityReceiptResolvedKeyring } from "../util/authority-receipt-keys.js";
+} from "../../src/memory/learning-external-ingestion-attestation.js";
+import { LearningExternalCanonicalUtcMillisSchema } from "../../src/memory/learning-external-authority.js";
+import type { AuthorityReceiptResolvedKeyring } from "../../src/util/authority-receipt-keys.js";
 import {
   LiteLearningExternalEvidenceIngestOperationReceiptV1Schema,
   type LiteLearningExternalEvidenceIngestOperationReceiptV1,
-} from "./lite-learning-external-evidence-ingestion.js";
-import { resolveLiteLearningExternalNormalLifecycleSnapshot } from "./lite-learning-external-authority.js";
+} from "../../src/store/lite-learning-external-evidence-ingestion.js";
+import { resolveLiteLearningExternalNormalLifecycleSnapshot } from "../../src/store/lite-learning-external-authority.js";
 import {
   assertLiteLearningEpisodeLedgerIntegrity,
   assertLiteRuntimeAuthorityIdentity,
-} from "./lite-learning-episode-ledger.js";
+} from "../../src/store/lite-learning-episode-ledger.js";
 import {
   readLiteLearningRuntimeAuthorityExactRows,
   readLiteLearningRuntimeExternalIngestionOperationRowsV1,
   type LiteLearningRuntimeAuthorityTypedRow,
 } from "./lite-learning-runtime-authority-head.js";
-import type { LiteRuntimeDatabase } from "./lite-runtime-database.js";
+import type { LiteRuntimeDatabase } from "../../src/store/lite-runtime-database.js";
 import {
   inspectLiteRuntimeSchema,
   LITE_RUNTIME_WRITE_SCHEMA_COMPONENT,
   LITE_RUNTIME_WRITE_SCHEMA_VERSION,
-} from "./lite-runtime-schema.js";
+} from "../../src/store/lite-runtime-schema.js";
 
 const MAX_CANONICAL_DRAFT_BYTES = 1_048_576;
 const MAX_REQUIRED_SERIES_JSON_BYTES = 1_048_576;
@@ -172,7 +173,7 @@ export const LiteLearningExternalIngestionDatabaseProjectionDraftV1Schema = z.ob
   contract_version: z.literal("unsigned_d2_database_projection_draft_v1"),
   signing_eligible: z.literal(false),
   schema_component: z.literal("write_projection"),
-  schema_version: z.literal(4),
+  schema_version: LearningExternalRuntimeWriteSchemaVersionV1Schema,
   database_instance_id: DigestSha256Schema,
   ledger_verifier_id: z.literal("aionis_lite_learning_ledger_replay"),
   ledger_verifier_version: z.literal(1),
@@ -197,6 +198,8 @@ export const LiteLearningExternalIngestionDatabaseProjectionDraftV1Schema = z.ob
   const status = value.required_series_status;
   const coverage = value.terminal_coverage_database_draft;
   const bindings: ReadonlyArray<readonly [unknown, unknown, readonly (string | number)[]]> = [
+    [value.schema_version, value.ledger_verification.schema_version,
+      ["ledger_verification", "schema_version"]],
     [value.database_instance_id, value.ledger_verification.database_instance_id,
       ["ledger_verification", "database_instance_id"]],
     [value.ledger_verifier_id, value.ledger_verification.ledger_verifier_id,
@@ -472,15 +475,15 @@ function assertSameTransaction(database: LiteRuntimeDatabase, identity: symbol):
   }
 }
 
-function assertCurrentV4Schema(database: LiteRuntimeDatabase): void {
+function assertCurrentV5Schema(database: LiteRuntimeDatabase): void {
   const schema = inspectLiteRuntimeSchema(database.db);
   if (schema.classification !== "current"
     || schema.component !== LITE_RUNTIME_WRITE_SCHEMA_COMPONENT
     || schema.detected_version !== LITE_RUNTIME_WRITE_SCHEMA_VERSION
-    || schema.detected_version !== 4) {
+    || schema.detected_version !== 5) {
     return projectorError(
-      "current_v4_database_required",
-      "D2 reconstruction accepts only the exact current write_projection v4 schema",
+      "current_v5_database_required",
+      "D2 reconstruction accepts only the exact current write_projection v5 schema",
     );
   }
 }
@@ -1482,7 +1485,7 @@ function classifyRole(args: Readonly<{
 }
 
 /**
- * Reconstructs the complete D2 factual projection from one live Runtime v4
+ * Reconstructs the complete D2 factual projection from one live Runtime v5
  * transaction. The result is deliberately unsigned and cannot be promoted to
  * the final D1 projection without the D3 launcher capabilities named inside it.
  */
@@ -1492,7 +1495,7 @@ export function projectLiteLearningExternalIngestionDatabaseDraftV1(
   const tenantId = BoundedIdSchema.parse(args.tenantId);
   const confirmatoryAttemptId = BoundedIdSchema.parse(args.confirmatoryAttemptId);
   const transactionIdentity = assertActiveTransaction(args.database);
-  assertCurrentV4Schema(args.database);
+  assertCurrentV5Schema(args.database);
   assertSqliteHealth(args.database);
 
   const anchor = loadAnchor({
@@ -1567,7 +1570,7 @@ export function projectLiteLearningExternalIngestionDatabaseDraftV1(
   const ledgerVerification = LearningExternalIngestionLedgerVerificationV1Schema.parse({
     contract_version: "aionis_learning_external_ingestion_ledger_verification_v1",
     schema_component: "write_projection",
-    schema_version: 4,
+    schema_version: LITE_RUNTIME_WRITE_SCHEMA_VERSION,
     database_instance_id: databaseInstanceId,
     checked_at: finalizedAt,
     ledger_verifier_id: "aionis_lite_learning_ledger_replay",
@@ -1606,7 +1609,7 @@ export function projectLiteLearningExternalIngestionDatabaseDraftV1(
     contract_version: "unsigned_d2_database_projection_draft_v1",
     signing_eligible: false,
     schema_component: "write_projection",
-    schema_version: 4,
+    schema_version: LITE_RUNTIME_WRITE_SCHEMA_VERSION,
     database_instance_id: databaseInstanceId,
     ledger_verifier_id: "aionis_lite_learning_ledger_replay",
     ledger_verifier_version: 1,

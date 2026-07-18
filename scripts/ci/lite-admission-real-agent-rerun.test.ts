@@ -761,7 +761,7 @@ test("fresh Runtime pairs restore, mutate, destroy, and start the next unit with
           assert.equal(beforeReceipt, null);
           assert.equal(beforeAuthority.count, 0);
           await store.withTx(async () => {
-            const commitId = await store.insertCommit({
+            const commitId = await store.insertLegacyV1CommitForMigrationOrTestFixture({
               scope,
               parentCommitId: null,
               inputSha256: digest(`unit-1-input:${arm}`),

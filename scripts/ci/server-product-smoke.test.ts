@@ -1213,7 +1213,7 @@ test("Runtime services keep a legacy unanchored database available without claim
   const writeStore = createLiteWriteStoreFromDatabase(database, { annProjectionEnabled: false });
   try {
     await writeStore.withTx(async () => {
-      await writeStore.insertCommit({
+      await writeStore.insertLegacyV1CommitForMigrationOrTestFixture({
         scope: "legacy-unprefixed-scope",
         parentCommitId: null,
         inputSha256: "1".repeat(64),

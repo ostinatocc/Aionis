@@ -30,9 +30,9 @@ import type { LiteLearningExperimentAuthorityResolution } from
   "../../src/store/lite-learning-episode-ledger.ts";
 import {
   createLiteLearningExperimentCloser,
-} from "../../src/store/lite-learning-experiment-closing.ts";
+} from "../../tools/learning-experiments/lite-learning-experiment-closing.ts";
 import { createLiteLearningExperimentProvisioner } from
-  "../../src/store/lite-learning-experiment-provisioning.ts";
+  "../../tools/learning-experiments/lite-learning-experiment-provisioning.ts";
 import { createLiteRuntimeDatabase } from "../../src/store/lite-runtime-database.ts";
 import { createLiteWriteStoreFromDatabase } from "../../src/store/lite-write-store.ts";
 import type { AuthorityReceiptResolvedKeyring } from

@@ -12,7 +12,8 @@ it is not part of the convergence release implementation scope.
 
 The deployment-slot authority kernel already implements a crash-replayable,
 append-only state machine in
-`src/store/lite-runtime-deployment-slot-authority.ts`. One live invocation can:
+`tools/runtime-deployment-authority/lite-runtime-deployment-slot-authority.ts`.
+One live invocation can:
 
 1. open a configured-root capability and derive one deterministic slot path;
 2. acquire a retained SQLite carrier writer lock;
@@ -388,8 +389,8 @@ new authority claim outside the scope above.
 
 ## References
 
-- `src/store/lite-runtime-deployment-slot-authority.ts`
-- `src/store/lite-runtime-deployment-slot-path-authority.ts`
+- `tools/runtime-deployment-authority/lite-runtime-deployment-slot-authority.ts`
+- `tools/runtime-deployment-authority/lite-runtime-deployment-slot-path-authority.ts`
 - `src/memory/learning-runtime-database-binding.ts`
 - `scripts/ci/support/lite-runtime-deployment-slot-lease-child.ts`
 - `scripts/ci/lite-runtime-deployment-slot-authority.test.ts`

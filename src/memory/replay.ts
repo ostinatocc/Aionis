@@ -5,7 +5,6 @@ import {
   type ReplayVisibilityArgs,
   type ReplayStoreAccess,
 } from "../store/replay-access.js";
-import type { WriteStoreAccess } from "../store/write-access.js";
 import { HttpError } from "../util/http.js";
 import { stableUuid } from "../util/uuid.js";
 import {
@@ -57,7 +56,10 @@ import { runPromoteMemoryLearningControlPreview } from "./learning-control-promo
 import { resolveTenantScope } from "./tenant.js";
 import { summarizeToolResult } from "./tool-result-summary.js";
 import { buildAionisUri } from "./uri.js";
-import { applyReplayMemoryWrite } from "./replay-write.js";
+import {
+  applyReplayMemoryWrite,
+  type ReplayMemoryWriteStoreAccess,
+} from "./replay-write.js";
 import {
   clampInt,
   detectSensitiveCommand,
@@ -190,7 +192,7 @@ type ReplayWriteOptions = {
   embedder: EmbeddingProvider | null;
   replayAccess?: ReplayStoreAccess | null;
   replayMirror?: import("./replay-write.js").ReplayWriteMirror | null;
-  writeAccess?: WriteStoreAccess | null;
+  writeAccess?: ReplayMemoryWriteStoreAccess | null;
 };
 
 type ReplayReadOptions = {

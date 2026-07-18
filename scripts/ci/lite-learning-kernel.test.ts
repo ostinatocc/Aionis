@@ -1,10 +1,12 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { randomUUID } from "node:crypto";
+import fs from "node:fs";
+import os from "node:os";
+import path from "node:path";
 import {
   createLearningKernel,
   LEARNING_LIFECYCLE_STATES,
-  type LiteLearningKernelStore,
 } from "../../src/kernel/learning-kernel.ts";
 import {
   buildMaterializationContextFromFeedback,
@@ -16,6 +18,9 @@ import {
   deriveWorkflowPromotionSemanticPolicyEffect,
 } from "../../src/kernel/learning-promotion-kernel.ts";
 import { MemoryAnchorV1Schema } from "../../src/memory/schemas.ts";
+import { applyMemoryWrite, prepareMemoryWrite } from "../../src/memory/write.ts";
+import { createLiteWriteStore } from "../../src/store/lite-write-store.ts";
+import { sealAuthorityReceiptsForPreparedWrite } from "./authority-fixture-helpers.ts";
 
 function buildStablePatternAnchor() {
   return MemoryAnchorV1Schema.parse({
@@ -77,58 +82,6 @@ function buildStablePatternAnchor() {
     },
     schema_version: "anchor_v1",
   });
-}
-
-function createPatternOnlyStore() {
-  let txCount = 0;
-  const node = {
-    id: randomUUID(),
-    type: "concept",
-    title: "Stable edit pattern",
-    text_summary: "Stable pattern: prefer edit for workflow_validation_recovery.",
-    slots: {
-      summary_kind: "pattern_anchor",
-      compression_layer: "L3",
-      anchor_v1: buildStablePatternAnchor(),
-    },
-    tier: null,
-    salience: 0.8,
-    importance: 0.9,
-    confidence: 0.9,
-    commit_id: null,
-  };
-  const store = {
-    withTx: async <T>(fn: () => Promise<T>) => {
-      txCount += 1;
-      return await fn();
-    },
-    findNodes: async (query: { id?: string; type?: string }) => ({
-      rows: (!query.id || query.id === node.id) && (!query.type || query.type === node.type) ? [node] : [],
-      total: (!query.id || query.id === node.id) && (!query.type || query.type === node.type) ? 1 : 0,
-    }),
-    updateNodeAnchorState: async (input: {
-      id: string;
-      slots: Record<string, unknown>;
-      textSummary: string;
-      salience: number;
-      importance: number;
-      confidence: number;
-      commitId: string | null;
-    }) => {
-      assert.equal(input.id, node.id);
-      node.slots = input.slots as typeof node.slots;
-      node.text_summary = input.textSummary;
-      node.salience = input.salience;
-      node.importance = input.importance;
-      node.confidence = input.confidence;
-      node.commit_id = input.commitId;
-    },
-  };
-  return {
-    node,
-    store: store as unknown as LiteLearningKernelStore,
-    txCount: () => txCount,
-  };
 }
 
 test("learning kernel declares the narrow lifecycle vocabulary", () => {
@@ -330,48 +283,108 @@ test("learning promotion kernel records runtime apply only after admitted stable
 });
 
 test("learning kernel facade suppresses and unsuppresses a learned pattern without demoting trust", async () => {
-  const { node, store, txCount } = createPatternOnlyStore();
-  const kernel = createLearningKernel({
-    env: {
-      AIONIS_EDITION: "lite",
-      MEMORY_SCOPE: "default",
-      MEMORY_TENANT_ID: "default",
-      LITE_LOCAL_ACTOR_ID: "local-user",
-      MAX_TEXT_LEN: 10_000,
-      PII_REDACTION: false,
-    } as any,
-    embedder: null,
-    liteRecallAccess: {} as any,
-    liteWriteStore: store,
-  });
+  const directory = fs.mkdtempSync(path.join(os.tmpdir(), "aionis-learning-kernel-override-"));
+  const store = createLiteWriteStore(path.join(directory, "runtime.sqlite"));
+  try {
+    const prepared = await prepareMemoryWrite({
+      tenant_id: "default",
+      scope: "default",
+      actor: "local-user",
+      input_text: "seed a stable pattern for direct kernel operator override",
+      auto_embed: false,
+      memory_lane: "shared",
+      nodes: [{
+        id: randomUUID(),
+        type: "concept",
+        title: "Stable edit pattern",
+        text_summary: "Stable pattern: prefer edit for workflow_validation_recovery.",
+        slots: {
+          summary_kind: "pattern_anchor",
+          compression_layer: "L3",
+          anchor_v1: buildStablePatternAnchor(),
+        },
+        salience: 0.8,
+        importance: 0.9,
+        confidence: 0.9,
+      }],
+      edges: [],
+    }, "default", "default", {
+      maxTextLen: 10_000,
+      piiRedaction: false,
+      allowCrossScopeEdges: false,
+    }, null);
+    sealAuthorityReceiptsForPreparedWrite(prepared);
+    const written = await store.withTx(() => applyMemoryWrite(prepared, {
+      maxTextLen: 10_000,
+      piiRedaction: false,
+      allowCrossScopeEdges: false,
+      associativeLinkOrigin: "memory_write",
+      write_access: store,
+    }));
+    const nodeId = written.nodes[0]?.id;
+    assert.ok(nodeId);
+    const headBefore = await store.readScopeHead("default");
+    assert.ok(headBefore);
 
-  const suppressed = await kernel.suppressLearnedPattern({
-    tenant_id: "default",
-    scope: "default",
-    actor: "local-user",
-    anchor_id: node.id,
-    reason: "temporarily disable in this workspace",
-  }) as Record<string, any>;
+    const kernel = createLearningKernel({
+      env: {
+        AIONIS_EDITION: "lite",
+        MEMORY_SCOPE: "default",
+        MEMORY_TENANT_ID: "default",
+        LITE_LOCAL_ACTOR_ID: "local-user",
+        MAX_TEXT_LEN: 10_000,
+        PII_REDACTION: false,
+      } as any,
+      embedder: null,
+      liteRecallAccess: {} as any,
+      liteWriteStore: store,
+    });
 
-  assert.equal(suppressed.anchor_id, node.id);
-  assert.equal(suppressed.selected_tool, "edit");
-  assert.equal(suppressed.credibility_state, "trusted");
-  assert.equal(suppressed.operator_override.suppressed, true);
-  assert.equal((node.slots as any).anchor_v1.credibility_state, "trusted");
-  assert.equal((node.slots as any).operator_override_v1.suppressed, true);
+    const suppressed = await kernel.suppressLearnedPattern({
+      tenant_id: "default",
+      scope: "default",
+      actor: "local-user",
+      anchor_id: nodeId,
+      reason: "temporarily disable in this workspace",
+    }) as Record<string, any>;
+    assert.equal(suppressed.anchor_id, nodeId);
+    assert.equal(suppressed.selected_tool, "edit");
+    assert.equal(suppressed.credibility_state, "trusted");
+    assert.equal(suppressed.operator_override.suppressed, true);
+    const afterSuppress = await store.findNodes({
+      scope: "default",
+      id: nodeId,
+      consumerAgentId: "local-user",
+      consumerTeamId: null,
+      limit: 1,
+      offset: 0,
+    });
+    assert.equal(afterSuppress.rows[0]?.slots.anchor_v1.credibility_state, "trusted");
+    assert.equal(afterSuppress.rows[0]?.slots.operator_override_v1.suppressed, true);
 
-  const unsuppressed = await kernel.unsuppressLearnedPattern({
-    tenant_id: "default",
-    scope: "default",
-    actor: "local-user",
-    anchor_id: node.id,
-    reason: "operator review passed",
-  }) as Record<string, any>;
-
-  assert.equal(unsuppressed.anchor_id, node.id);
-  assert.equal(unsuppressed.credibility_state, "trusted");
-  assert.equal(unsuppressed.operator_override.suppressed, false);
-  assert.equal((node.slots as any).anchor_v1.credibility_state, "trusted");
-  assert.equal((node.slots as any).operator_override_v1.suppressed, false);
-  assert.equal(txCount(), 2);
+    const unsuppressed = await kernel.unsuppressLearnedPattern({
+      tenant_id: "default",
+      scope: "default",
+      actor: "local-user",
+      anchor_id: nodeId,
+      reason: "operator review passed",
+    }) as Record<string, any>;
+    assert.equal(unsuppressed.anchor_id, nodeId);
+    assert.equal(unsuppressed.credibility_state, "trusted");
+    assert.equal(unsuppressed.operator_override.suppressed, false);
+    const afterUnsuppress = await store.findNodes({
+      scope: "default",
+      id: nodeId,
+      consumerAgentId: "local-user",
+      consumerTeamId: null,
+      limit: 1,
+      offset: 0,
+    });
+    assert.equal(afterUnsuppress.rows[0]?.slots.anchor_v1.credibility_state, "trusted");
+    assert.equal(afterUnsuppress.rows[0]?.slots.operator_override_v1.suppressed, false);
+    assert.equal((await store.readScopeHead("default"))?.revision, headBefore.revision + 2);
+  } finally {
+    await store.close();
+    fs.rmSync(directory, { recursive: true, force: true });
+  }
 });

@@ -2,7 +2,7 @@ import stableStringify from "fast-json-stable-stringify";
 import { sha256Hex } from "../util/crypto.js";
 import type { AssociativeCandidateStoreAccess } from "../memory/associative-candidate-store.js";
 
-export const WRITE_STORE_ACCESS_CAPABILITY_VERSION = 6 as const;
+export const WRITE_STORE_ACCESS_CAPABILITY_VERSION = 9 as const;
 
 export type WriteCommitInsertArgs = {
   scope: string;
@@ -13,6 +13,11 @@ export type WriteCommitInsertArgs = {
   modelVersion: string | null;
   promptVersion: string | null;
   commitHash: string;
+  digestVersion: 2;
+  revision: number;
+  mutationDigest: string;
+  legacyAnchorCommitId: string | null;
+  createdAt: string;
 };
 
 export type WriteNodeInsertArgs = {
@@ -39,6 +44,8 @@ export type WriteNodeInsertArgs = {
   confidence: number;
   redactionVersion: number;
   commitId: string;
+  /** v2 canonical writes provide the authority timestamp explicitly. */
+  createdAt?: string;
 };
 
 export type WriteNodeFingerprintInput = Omit<WriteNodeInsertArgs, "commitId">;
@@ -46,6 +53,33 @@ export type WriteNodeFingerprintInput = Omit<WriteNodeInsertArgs, "commitId">;
 export type WriteExistingNodeFingerprint = {
   scope: string;
   fingerprint: string;
+};
+
+export type WriteExistingNodeState = {
+  id: string;
+  scope: string;
+  clientId: string | null;
+  type: string;
+  tier: string;
+  title: string | null;
+  textSummary: string | null;
+  slotsJson: string;
+  rawRef: string | null;
+  evidenceRef: string | null;
+  embeddingVector: string | null;
+  embeddingModel: string | null;
+  memoryLane: "private" | "shared";
+  producerAgentId: string | null;
+  ownerAgentId: string | null;
+  ownerTeamId: string | null;
+  embeddingStatus: "pending" | "ready" | "failed";
+  embeddingLastError: string | null;
+  salience: number;
+  importance: number;
+  confidence: number;
+  redactionVersion: number;
+  commitId: string;
+  createdAt: string;
 };
 
 export type WriteLifecycleCandidateNodeRow = {
@@ -75,6 +109,26 @@ export type WriteRuleDefInsertArgs = {
   targetAgentId: string | null;
   targetTeamId: string | null;
   commitId: string;
+  /** v2 canonical writes bind both authority timestamps to applied_at. */
+  createdAt: string;
+  updatedAt: string;
+};
+
+export type WriteExistingRuleDefState = {
+  ruleNodeId: string;
+  scope: string;
+  state: "draft" | "shadow" | "active" | "disabled";
+  ifJson: unknown;
+  thenJson: unknown;
+  exceptionsJson: unknown;
+  ruleScope: "global" | "agent" | "team";
+  targetAgentId: string | null;
+  targetTeamId: string | null;
+  positiveCount: number;
+  negativeCount: number;
+  commitId: string;
+  createdAt: string;
+  updatedAt: string;
 };
 
 export type WriteEdgeUpsertArgs = {
@@ -88,7 +142,54 @@ export type WriteEdgeUpsertArgs = {
   decayRate: number;
   metadataJson: Record<string, unknown>;
   commitId: string;
+  /** v2 canonical writes provide the authority timestamp explicitly. */
+  createdAt?: string;
 };
+
+export type WriteEdgeIdentity = {
+  type: string;
+  srcId: string;
+  dstId: string;
+};
+
+export type WriteExistingEdgeState = WriteEdgeIdentity & {
+  id: string;
+  scope: string;
+  weight: number;
+  confidence: number;
+  decayRate: number;
+  metadataJson: Record<string, unknown>;
+  commitId: string;
+  createdAt: string;
+};
+
+export function writeEdgeIdentityKey(identity: WriteEdgeIdentity): string {
+  return `${identity.type}\0${identity.srcId}\0${identity.dstId}`;
+}
+
+export type WriteScopeHead = {
+  scope: string;
+  commitId: string;
+  commitHash: string;
+  revision: number;
+  digestVersion: 1 | 2;
+  legacyAnchorCommitId: string | null;
+  persisted: boolean;
+  updatedAt: string;
+};
+
+export type CompareAndSwapWriteScopeHeadArgs = {
+  scope: string;
+  commitId: string;
+  /** Omit to bind to the current authority head inside the transaction. */
+  expectedRevision?: number;
+  /** When present, also fences the exact legacy or v2 commit identity. */
+  expectedCommitId?: string | null;
+};
+
+export type CompareAndSwapWriteScopeHeadResult =
+  | { status: "advanced"; head: WriteScopeHead }
+  | { status: "conflict"; current: WriteScopeHead | null };
 
 export type WriteOutboxInsertArgs = {
   scope: string;
@@ -106,7 +207,17 @@ export interface WriteStoreAccess extends AssociativeCandidateStoreAccess {
   readonly capability_version: typeof WRITE_STORE_ACCESS_CAPABILITY_VERSION;
   nodeScopesByIds(ids: string[]): Promise<Map<string, string>>;
   nodeFingerprintsByIds(ids: string[]): Promise<Map<string, WriteExistingNodeFingerprint>>;
+  nodeStatesByIds(scope: string, ids: string[]): Promise<Map<string, WriteExistingNodeState>>;
+  ruleDefStatesByIds(scope: string, ruleNodeIds: string[]): Promise<Map<string, WriteExistingRuleDefState>>;
+  resolveEdgeStatesByIdentity(args: {
+    scope: string;
+    identities: readonly WriteEdgeIdentity[];
+  }): Promise<Map<string, WriteExistingEdgeState>>;
   lifecycleCandidateNodes(scope: string, limit: number): Promise<WriteLifecycleCandidateNodeRow[]>;
+  readScopeHead(scope: string): Promise<WriteScopeHead | null>;
+  compareAndSwapScopeHead(
+    args: CompareAndSwapWriteScopeHeadArgs,
+  ): Promise<CompareAndSwapWriteScopeHeadResult>;
   parentCommitHash(scope: string, parentCommitId: string): Promise<string | null>;
   insertCommit(args: WriteCommitInsertArgs): Promise<string>;
   insertNode(args: WriteNodeInsertArgs): Promise<void>;
@@ -161,7 +272,12 @@ export function assertWriteStoreAccessContract(access: WriteStoreAccess): void {
   const requiredMethods = [
     "nodeScopesByIds",
     "nodeFingerprintsByIds",
+    "nodeStatesByIds",
+    "ruleDefStatesByIds",
+    "resolveEdgeStatesByIdentity",
     "lifecycleCandidateNodes",
+    "readScopeHead",
+    "compareAndSwapScopeHead",
     "parentCommitHash",
     "insertCommit",
     "insertNode",

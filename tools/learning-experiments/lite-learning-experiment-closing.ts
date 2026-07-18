@@ -24,34 +24,34 @@ import {
   type LearningExperimentCloseAuthorizationEnvelopeV1,
   type LearningExperimentCloseReceiptV1,
   type LearningExperimentLeaseMembershipEntryV1,
-} from "../memory/learning-experiment-closing.js";
-import { sha256Hex } from "../util/crypto.js";
+} from "../../src/memory/learning-experiment-closing.js";
+import { sha256Hex } from "../../src/util/crypto.js";
 import {
   resolveAuthorityReceiptKeyring,
   type AuthorityReceiptResolvedKeyring,
-} from "../util/authority-receipt-keys.js";
+} from "../../src/util/authority-receipt-keys.js";
 import {
   assertLiteLearningEpisodeLedgerIntegrity,
   learningExperimentClosureRecordDigest,
   type LiteLearningAuthorityRow,
-} from "./lite-learning-episode-ledger.js";
+} from "../../src/store/lite-learning-episode-ledger.js";
 import {
   createLiteRuntimeProtectedWriteDatabase,
   type LiteRuntimeDatabase,
-} from "./lite-runtime-database.js";
+} from "../../src/store/lite-runtime-database.js";
 import {
   inspectLiteRuntimeSchema,
   LITE_RUNTIME_WRITE_SCHEMA_VERSION,
-} from "./lite-runtime-schema.js";
+} from "../../src/store/lite-runtime-schema.js";
 import {
   createSqliteImmutableReadOnlyDatabase,
   createSqliteReadOnlyDatabase,
   type SqliteDatabase,
-} from "./sqlite.js";
+} from "../../src/store/sqlite.js";
 import {
   type LiteWriteOperationRow,
   type LiteWriteStore,
-} from "./lite-write-store.js";
+} from "../../src/store/lite-write-store.js";
 
 export type LearningExperimentCloseInput = Readonly<{
   tenantId: string;

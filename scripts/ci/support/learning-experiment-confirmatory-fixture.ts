@@ -31,7 +31,7 @@ import {
   type LearningExperimentProvisionInput,
   type LearningExperimentProvisionResult,
   type LearningExperimentProvisioningRegistry,
-} from "../../../src/store/lite-learning-experiment-provisioning.js";
+} from "../../../tools/learning-experiments/lite-learning-experiment-provisioning.js";
 import {
   createLiteRuntimeDatabase,
   type LiteRuntimeDatabase,
@@ -344,7 +344,7 @@ export async function seedConfirmatoryPriorScopes(
         contract_version: "aionis_test_confirmatory_prior_scope_v1",
         scope_sha256: sha256(tenancy.scope_key),
       });
-      await runtime.writeStore.insertCommit({
+      await runtime.writeStore.insertLegacyV1CommitForMigrationOrTestFixture({
         scope: tenancy.scope_key,
         parentCommitId: null,
         inputSha256,

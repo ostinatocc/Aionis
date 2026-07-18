@@ -93,7 +93,8 @@ export type LiteProjectionOutboxAccess = {
     scope: string;
     nodeId: string;
     sourceCommitId: string;
-    embedText: string;
+    /** Null rebinds an outstanding projection to a new non-text authority commit. */
+    embedText: string | null;
   }): Promise<boolean>;
   claimProjectionJobs(args: {
     leaseOwner: string;
@@ -386,7 +387,7 @@ export function createLiteProjectionOutboxAccess(database: LiteRuntimeDatabase):
       const ts = nowIso();
       db.prepare(
         `UPDATE lite_memory_projection_jobs
-         SET status = 'succeeded', payload_json = NULL, lease_owner = NULL,
+         SET status = 'succeeded', lease_owner = NULL,
              lease_token = NULL, lease_expires_at = NULL, last_error = NULL,
              available_at = ?, updated_at = ?
          WHERE scope = ? AND node_id = ? AND job_kind = 'embedding_generate'`,
@@ -409,11 +410,10 @@ export function createLiteProjectionOutboxAccess(database: LiteRuntimeDatabase):
                 payload_sha256, payload_json, status, attempt_count, available_at,
                 lease_owner, lease_token, lease_expires_at, last_error, created_at, updated_at
          FROM lite_memory_projection_jobs
-         WHERE scope = ? AND node_id = ? AND job_kind = 'embedding_generate'
-           AND status <> 'succeeded'`,
+         WHERE scope = ? AND node_id = ? AND job_kind = 'embedding_generate'`,
       ).get(args.scope, args.nodeId) as LiteProjectionJobRow | undefined;
       const prior = current ? parseEmbeddingProjectionPayload(current) : null;
-      const embedText = args.embedText.trim();
+      const embedText = args.embedText === null ? prior?.embed_text ?? "" : args.embedText.trim();
       if (!prior || !embedText) return false;
       const payload: LiteEmbeddingProjectionPayload = {
         ...prior,
@@ -541,7 +541,7 @@ export function createLiteProjectionOutboxAccess(database: LiteRuntimeDatabase):
         if (!node) {
           db.prepare(
             `UPDATE lite_memory_projection_jobs
-             SET status = 'succeeded', payload_json = NULL, lease_owner = NULL,
+             SET status = 'succeeded', lease_owner = NULL,
                  lease_token = NULL, lease_expires_at = NULL,
                  last_error = 'node_missing', available_at = ?, updated_at = ?
              WHERE scope = ? AND node_id = ? AND job_kind = ? AND generation = ?
@@ -573,7 +573,7 @@ export function createLiteProjectionOutboxAccess(database: LiteRuntimeDatabase):
         ).run(JSON.stringify(args.embedding), args.embeddingModel, claim.scope, claim.node_id);
         db.prepare(
           `UPDATE lite_memory_projection_jobs
-           SET status = 'succeeded', payload_json = NULL, lease_owner = NULL,
+           SET status = 'succeeded', lease_owner = NULL,
                lease_token = NULL, lease_expires_at = NULL, last_error = NULL,
                available_at = ?, updated_at = ?
            WHERE scope = ? AND node_id = ? AND job_kind = ? AND generation = ?
@@ -740,10 +740,18 @@ export function createLiteProjectionOutboxAccess(database: LiteRuntimeDatabase):
         `SELECT COUNT(*) AS count
          FROM lite_memory_nodes AS node
          WHERE node.embedding_status = 'pending'
-           AND NOT EXISTS (
-             SELECT 1 FROM lite_memory_projection_jobs AS job
-             WHERE job.scope = node.scope AND job.node_id = node.id
-               AND job.job_kind = 'embedding_generate'
+           AND (
+             NOT EXISTS (
+               SELECT 1 FROM lite_memory_projection_jobs AS job
+               WHERE job.scope = node.scope AND job.node_id = node.id
+                 AND job.job_kind = 'embedding_generate'
+             )
+             OR EXISTS (
+               SELECT 1 FROM lite_memory_projection_jobs AS job
+               WHERE job.scope = node.scope AND job.node_id = node.id
+                 AND job.job_kind = 'embedding_generate'
+                 AND job.status = 'succeeded'
+             )
            )`,
       ).get() as { count: number };
       return {

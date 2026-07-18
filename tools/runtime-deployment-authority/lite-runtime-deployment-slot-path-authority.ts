@@ -23,7 +23,7 @@ import stableStringify from "fast-json-stable-stringify";
 import {
   assertLiteRuntimeProtectedFilesystemNoDelegatedAccessControlList,
   assertLiteRuntimeProtectedFilesystemTrustedDirectoryChain,
-} from "./lite-runtime-protected-authority-database.js";
+} from "../../src/store/lite-runtime-protected-authority-database.js";
 
 const ROOT_MANIFEST_NAME = ".aionis-deployment-authority-root-v1.json";
 const ROOT_MANIFEST_CONTRACT_VERSION =

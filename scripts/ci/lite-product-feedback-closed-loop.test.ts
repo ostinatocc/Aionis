@@ -57,7 +57,7 @@ import {
   type LiteLearningControlJobAccess,
 } from "../../src/store/lite-learning-control-jobs.ts";
 import type { LiteLearningAuthorityRow } from "../../src/store/lite-learning-confirmatory-authority.ts";
-import { createLiteLearningExperimentProvisioner } from "../../src/store/lite-learning-experiment-provisioning.ts";
+import { createLiteLearningExperimentProvisioner } from "../../tools/learning-experiments/lite-learning-experiment-provisioning.ts";
 import {
   createLiteRuntimeDatabase,
   type LiteRuntimeDatabase,
@@ -4216,7 +4216,16 @@ test("protected tool feedback preserves full guide provenance while attributing 
     ).get(body.feedback_result.commit_id) as { diff_json: string } | undefined;
     assert.ok(commit);
     const commitDiff = JSON.parse(commit.diff_json) as Record<string, any>;
-    assert.deepEqual(commitDiff.tool_feedback[0].rule_node_ids, [toolRuleNodeId]);
+    assert.equal(commitDiff.contract, "aionis_applied_authority_mutation_v2");
+    assert.equal(commitDiff.authority_kind, "tool_feedback");
+    const decisionMutations = commitDiff.mutations.filter(
+      (entry: Record<string, any>) => entry.table === "lite_memory_execution_decisions",
+    );
+    assert.equal(decisionMutations.length, 1);
+    assert.deepEqual(
+      decisionMutations[0].requested.tool_feedback.rule_node_ids,
+      [toolRuleNodeId],
+    );
 
     const ruleFeedbackRows = fixture.runtimeDatabase.db.prepare(
       `SELECT rule_node_id, source, decision_id
@@ -4255,7 +4264,8 @@ test("protected tool feedback preserves full guide provenance while attributing 
     assert.equal(invalidProvenance.ok, false);
     assert.match(
       String(invalidProvenance.learning.integrity_error),
-      /tool_feedback_rule_evaluation_provenance/u,
+      /tool_feedback_decision_mutation_binding/u,
+      "v2 authority must reject any persisted decision metadata that diverges from the committed after-row",
     );
 
     const reboundProvenanceMetadata = structuredClone(originalMetadata);
@@ -4272,7 +4282,8 @@ test("protected tool feedback preserves full guide provenance while attributing 
     assert.equal(reboundProvenanceVerification.ok, false);
     assert.match(
       String(reboundProvenanceVerification.learning.integrity_error),
-      /tool_feedback_rule_evaluation_provenance_binding/u,
+      /tool_feedback_decision_mutation_binding/u,
+      "rehashing forged provenance cannot bypass the committed v2 decision row",
     );
 
     fixture.runtimeDatabase.db.prepare(

@@ -75,6 +75,17 @@ export type MemoryLifecycleAdjudication = {
   relations: MemoryLifecycleRelation[];
 };
 
+export type MemoryLifecycleAdjudicationOptions = {
+  persisted_relations?: MemoryLifecycleRelation[];
+  candidate_relations?: MemoryLifecycleRelationCandidate[];
+  /** Restricts newly inferred rule-cue and producer relations to these sources. */
+  source_memory_ids?: readonly string[];
+  /** Optional target fence for bounded write-time candidate sets. */
+  target_memory_ids?: readonly string[];
+  /** Persisted relations remain readable when lexical/rule-cue inference is disabled. */
+  infer_rule_cues?: boolean;
+};
+
 export type LifecycleDecisionInput = { blocks_use: boolean; requires_inspection: boolean; requires_rehydrate: boolean; reason_codes: string[] };
 
 export function lifecycleDecisionInputForMemory(args: { lifecycle_state: MemoryLifecycleState; execution_outcome_role?: string | null; transition_kind?: string | null }): LifecycleDecisionInput {
@@ -619,6 +630,10 @@ function inferCandidateRelation(
 ): MemoryLifecycleRelation | null {
   if (!isMemoryLifecycleRelationType(candidate.relation)) return null;
   if (candidate.source_memory_id === candidate.target_memory_id) return null;
+  const producer = candidate.producer.trim();
+  if (!producer || producer === "rule_cue" || producer === "unknown" || producer === "persisted_relation") {
+    return null;
+  }
   const source = entriesById.get(candidate.source_memory_id);
   const target = entriesById.get(candidate.target_memory_id);
   if (!source || !target) return null;
@@ -645,7 +660,7 @@ function inferCandidateRelation(
   const confidenceThresholdPassed = confidence >= 0.7;
   if (!confidenceThresholdPassed) return null;
   const reasons = [
-    `candidate_producer=${candidate.producer || "unknown"}`,
+    `candidate_producer=${producer}`,
     `candidate_confidence=${Number(candidateConfidence.toFixed(3))}`,
     ...candidate.reasons.slice(0, 3).map((reason) => `candidate_reason=${reason}`),
     surface.tokenOverlap > 0 ? `topic_overlap=${surface.tokenOverlap}` : null,
@@ -659,7 +674,7 @@ function inferCandidateRelation(
     confidence,
     reasons,
     evidence: memoryLifecycleRelationEvidence({
-      producer: candidate.producer || "unknown",
+      producer,
       candidateConfidence,
       signals: relationSignals({ sourceCues: [], surface, sameDomain, sourceNewer }),
       sourceAdmissible,
@@ -743,14 +758,17 @@ function strongerRelation(left: MemoryLifecycleRelation, right: MemoryLifecycleR
 
 export function adjudicateMemoryLifecycle(
   entries: AdjudicableMemoryEntry[],
-  options?: {
-    persisted_relations?: MemoryLifecycleRelation[];
-    candidate_relations?: MemoryLifecycleRelationCandidate[];
-  },
+  options?: MemoryLifecycleAdjudicationOptions,
 ): MemoryLifecycleAdjudication {
   const relationsByTarget = new Map<string, MemoryLifecycleRelation>();
   const entryIds = new Set(entries.map((entry) => entry.memory_id));
   const entriesById = new Map(entries.map((entry) => [entry.memory_id, entry]));
+  const inferenceSourceIds = options?.source_memory_ids
+    ? new Set(options.source_memory_ids)
+    : null;
+  const inferenceTargetIds = options?.target_memory_ids
+    ? new Set(options.target_memory_ids)
+    : null;
   for (const relation of options?.persisted_relations ?? []) {
     if (!isMemoryLifecycleRelationType(relation.relation)) continue;
     if (relation.confidence < 0.7) continue;
@@ -763,15 +781,21 @@ export function adjudicateMemoryLifecycle(
     const existing = relationsByTarget.get(relation.target_memory_id);
     relationsByTarget.set(relation.target_memory_id, existing ? strongerRelation(existing, relation) : relation);
   }
-  for (const source of entries) {
-    for (const target of entries) {
-      const relation = inferRelation(source, target);
-      if (!relation) continue;
-      const existing = relationsByTarget.get(relation.target_memory_id);
-      relationsByTarget.set(relation.target_memory_id, existing ? strongerRelation(existing, relation) : relation);
+  if (options?.infer_rule_cues !== false) {
+    for (const source of entries) {
+      if (inferenceSourceIds && !inferenceSourceIds.has(source.memory_id)) continue;
+      for (const target of entries) {
+        if (inferenceTargetIds && !inferenceTargetIds.has(target.memory_id)) continue;
+        const relation = inferRelation(source, target);
+        if (!relation) continue;
+        const existing = relationsByTarget.get(relation.target_memory_id);
+        relationsByTarget.set(relation.target_memory_id, existing ? strongerRelation(existing, relation) : relation);
+      }
     }
   }
   for (const candidate of options?.candidate_relations ?? []) {
+    if (inferenceSourceIds && !inferenceSourceIds.has(candidate.source_memory_id)) continue;
+    if (inferenceTargetIds && !inferenceTargetIds.has(candidate.target_memory_id)) continue;
     const relation = inferCandidateRelation(candidate, entriesById);
     if (!relation) continue;
     const existing = relationsByTarget.get(relation.target_memory_id);

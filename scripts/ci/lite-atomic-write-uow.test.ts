@@ -30,6 +30,7 @@ import { DEFERRED_PLANNING_TOOL_DECISION } from "../../src/routes/memory-context
 import { createMemoryWriteRouteService } from "../../src/routes/memory-write.ts";
 import { createLiteClaimLedgerStoreFromDatabase } from "../../src/store/lite-claim-ledger-store.ts";
 import { createLiteLearningEpisodeLedgerAccess } from "../../src/store/lite-learning-episode-ledger.ts";
+import { assertToolFeedbackAuthorityMutationRoot } from "../../src/store/lite-learning-safety-stop-integrity.ts";
 import { createLiteRecallStore } from "../../src/store/lite-recall-store.ts";
 import {
   createLiteRuntimeDatabase,
@@ -671,6 +672,7 @@ async function createAtomicProtectedToolGuide(
 
 type AtomicToolFeedbackSnapshot = Readonly<{
   commit_count: number;
+  scope_head_rows: string;
   rule_feedback_rows: string;
   rule_aggregate_rows: string;
   decision_row: string;
@@ -699,6 +701,13 @@ function atomicToolFeedbackSnapshot(args: {
     const rulePlaceholders = args.ruleNodeIds.map(() => "?").join(", ");
     return {
       commit_count: count,
+      scope_head_rows: rows(
+        `SELECT head.scope, head.commit_id, head.revision,
+                authority_commit.legacy_anchor_commit_id, head.updated_at
+         FROM lite_memory_scope_heads AS head
+         JOIN lite_memory_commits AS authority_commit ON authority_commit.id = head.commit_id
+         ORDER BY head.scope`,
+      ),
       rule_feedback_rows: rows(
         `SELECT scope, rule_node_id, run_id, outcome, source, decision_id, commit_id
          FROM lite_memory_rule_feedback
@@ -1266,6 +1275,17 @@ test("a before-commit tool feedback fault leaves no partial learning, episode, r
     }
     assert.ok(guide);
     const decisionId = String(guide.tool_selection.decision_id);
+    const decisionAuthorityDb = createSqliteDatabase(dbPath);
+    let initialDecisionCommitId: string;
+    try {
+      const row = decisionAuthorityDb.prepare<{ commit_id: string | null }>(
+        "SELECT commit_id FROM lite_memory_execution_decisions WHERE id = ?",
+      ).get(decisionId);
+      assert.ok(row?.commit_id, "the guide decision must have its own initial v2 authority commit");
+      initialDecisionCommitId = row.commit_id;
+    } finally {
+      decisionAuthorityDb.close();
+    }
     const feedbackInput = {
       feedback_kind: "tool_selection",
       operation_id: feedbackOperationId,
@@ -1434,6 +1454,93 @@ test("a before-commit tool feedback fault leaves no partial learning, episode, r
       assert.ok(embeddingCalls > 0, "the healthy path must exercise real embedding preparation");
       assert.ok(reviewCalls >= 2, "fault and healthy paths must exercise real evidence review preparation");
 
+      const authorityDb = createSqliteDatabase(dbPath);
+      try {
+        const authorityCommit = authorityDb.prepare<{
+          diff_json: string;
+          digest_version: number;
+          revision: number;
+          mutation_digest: string;
+        }>(
+          `SELECT diff_json, digest_version, revision, mutation_digest
+           FROM lite_memory_commits
+           WHERE id = ?`,
+        ).get(body.feedback_result.commit_id);
+        assert.ok(authorityCommit);
+        assert.equal(authorityCommit.digest_version, 2);
+        assert.ok(Number.isSafeInteger(authorityCommit.revision));
+        assert.match(authorityCommit.mutation_digest, /^[a-f0-9]{64}$/u);
+        const mutation = JSON.parse(authorityCommit.diff_json) as Record<string, any>;
+        const rooted = assertToolFeedbackAuthorityMutationRoot({
+          mutation,
+          scope: "default",
+          decisionId,
+          runId,
+          outcome: "positive",
+        });
+        assert.equal(rooted.decisionAfter.commit_id, "$self");
+        const decisionMutation = mutation.mutations.find(
+          (entry: Record<string, any>) => entry.table === "lite_memory_execution_decisions",
+        );
+        assert.ok(decisionMutation);
+        assert.equal(
+          decisionMutation.before.commit_id,
+          initialDecisionCommitId,
+          "tool feedback must chain from the initial decision authority commit",
+        );
+
+        const missingRuleFeedback = structuredClone(mutation);
+        const omittedRuleFeedbackIndex = missingRuleFeedback.mutations.findIndex(
+          (entry: Record<string, any>) => entry.table === "lite_memory_rule_feedback",
+        );
+        assert.ok(omittedRuleFeedbackIndex >= 0);
+        missingRuleFeedback.mutations.splice(omittedRuleFeedbackIndex, 1);
+        assert.throws(
+          () => assertToolFeedbackAuthorityMutationRoot({
+            mutation: missingRuleFeedback,
+            scope: "default",
+            decisionId,
+            runId,
+            outcome: "positive",
+          }),
+          /tool_feedback_source_commit_rule_feedback_set/u,
+        );
+
+        const extraDecision = structuredClone(mutation);
+        const foreignDecisionMutation = structuredClone(decisionMutation);
+        foreignDecisionMutation.identity.id = "foreign-decision";
+        foreignDecisionMutation.after.id = "foreign-decision";
+        extraDecision.mutations.push(foreignDecisionMutation);
+        assert.throws(
+          () => assertToolFeedbackAuthorityMutationRoot({
+            mutation: extraDecision,
+            scope: "default",
+            decisionId,
+            runId,
+            outcome: "positive",
+          }),
+          /tool_feedback_source_commit_decision_mutation/u,
+        );
+
+        const forgedRequest = structuredClone(mutation);
+        const forgedDecision = forgedRequest.mutations.find(
+          (entry: Record<string, any>) => entry.table === "lite_memory_execution_decisions",
+        );
+        forgedDecision.requested.tool_feedback.outcome = "negative";
+        assert.throws(
+          () => assertToolFeedbackAuthorityMutationRoot({
+            mutation: forgedRequest,
+            scope: "default",
+            decisionId,
+            runId,
+            outcome: "positive",
+          }),
+          /tool_feedback_source_commit_inputs/u,
+        );
+      } finally {
+        authorityDb.close();
+      }
+
       const committed = atomicToolFeedbackSnapshot({
         dbPath,
         ruleNodeIds,
@@ -1572,7 +1679,11 @@ test("observe operation receipt is stable across close/reopen and conflicts on c
   assert.ok(afterFirst.lite_execution_tree_operations >= 1);
   assert.ok(afterFirst.execution_tree_max_revision >= 2);
   assert.ok(afterFirst.workflow_projection_max_observed_count >= 1);
-  assert.ok(afterFirst.same_observe_lifecycle_relation_count >= 1);
+  assert.equal(
+    afterFirst.same_observe_lifecycle_relation_count,
+    0,
+    "same-observe nodes are new sources, not historical lifecycle targets",
+  );
 
   const reopened = openAtomicRuntime(dbPath);
   try {

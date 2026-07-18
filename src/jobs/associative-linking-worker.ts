@@ -92,8 +92,19 @@ export async function drainLiteAssociativeLinkOutbox(args: {
 
 export type LiteAssociativeLinkWorker = {
   drainOnce(): Promise<LiteAssociativeLinkOutboxDrainResult>;
-  shutdown(): void;
+  shutdown(): Promise<void>;
 };
+
+function emptyAssociativeLinkOutboxDrainResult(): LiteAssociativeLinkOutboxDrainResult {
+  return {
+    scanned: 0,
+    processed: 0,
+    deleted: 0,
+    invalid_deleted: 0,
+    failed: 0,
+    results: [],
+  };
+}
 
 export function startLiteAssociativeLinkWorker(args: {
   writeStore: LiteWriteStore;
@@ -103,26 +114,18 @@ export function startLiteAssociativeLinkWorker(args: {
   logger?: AssociativeLinkWorkerLogger;
 }): LiteAssociativeLinkWorker {
   let closed = false;
-  let running = false;
+  let running: Promise<LiteAssociativeLinkOutboxDrainResult> | null = null;
   const drainOnce = async (): Promise<LiteAssociativeLinkOutboxDrainResult> => {
-    if (closed || running) {
-      return {
-        scanned: 0,
-        processed: 0,
-        deleted: 0,
-        invalid_deleted: 0,
-        failed: 0,
-        results: [],
-      };
-    }
-    running = true;
+    if (closed) return emptyAssociativeLinkOutboxDrainResult();
+    if (running) return await running;
+    running = drainLiteAssociativeLinkOutbox({
+      writeStore: args.writeStore,
+      recallAccess: args.recallAccess,
+      limit: args.batchSize,
+      logger: args.logger,
+    });
     try {
-      const result = await drainLiteAssociativeLinkOutbox({
-        writeStore: args.writeStore,
-        recallAccess: args.recallAccess,
-        limit: args.batchSize,
-        logger: args.logger,
-      });
+      const result = await running;
       if (result.processed > 0 || result.invalid_deleted > 0 || result.failed > 0) {
         args.logger?.info?.({
           scanned: result.scanned,
@@ -133,7 +136,7 @@ export function startLiteAssociativeLinkWorker(args: {
       }
       return result;
     } finally {
-      running = false;
+      running = null;
     }
   };
   const timer = setInterval(() => {
@@ -151,9 +154,10 @@ export function startLiteAssociativeLinkWorker(args: {
   });
   return {
     drainOnce,
-    shutdown() {
+    async shutdown() {
       closed = true;
       clearInterval(timer);
+      if (running) await running.catch(() => undefined);
     },
   };
 }

@@ -6,8 +6,18 @@ import { sha256Hex } from "../util/crypto.js";
 import { HttpError } from "../util/http.js";
 import { stableUuid } from "../util/uuid.js";
 import stableStringify from "fast-json-stable-stringify";
+import { runAppliedAuthorityMutationV2 } from "./applied-authority-mutation.js";
 import { buildWorkflowMaintenanceMetadata, buildWorkflowPromotionMetadata } from "./evolution-operators.js";
 import { resolveNodeLifecycleSignals } from "./lifecycle-signals.js";
+import {
+  NODE_AUTHORITY_UPDATE_SIDE_EFFECTS,
+  applyNodeAuthorityPatchesV2,
+  assertNodeDecisionRowMatchesAuthorityState,
+  buildNodeAuthorityMutationV2,
+  captureNodeAuthorityHeadFence,
+  verifyNodeAuthorityPatchesV2,
+  type NodeAuthorityPatchV2,
+} from "./node-authority-mutation.js";
 import { ExecutionNativeV1Schema, MemoryAnchorV1Schema } from "./schemas.js";
 import type { ReplayMirrorNodeRecord, ReplayWriteMirror } from "./replay-write.js";
 import {
@@ -203,6 +213,7 @@ function buildReplayPlaybookAnchor(args: {
   sourceNodeId: string | null;
   sourceCommitId: string | null;
   slots: Record<string, unknown>;
+  promotionAt?: string;
 }) {
   const sourceRunId = toStringOrNull(args.slots.source_run_id);
   const createdFromRunIds = Array.isArray(args.slots.created_from_run_ids)
@@ -243,7 +254,7 @@ function buildReplayPlaybookAnchor(args: {
   const promotionState = isStableReplayPlaybookStatus(args.status) && allowsStableWorkflow ? "stable" : "candidate";
   const payloadCostHint: "low" | "medium" | "high" =
     stepsTotal <= 4 ? "low" : stepsTotal <= 10 ? "medium" : "high";
-  const promotionAt = new Date().toISOString();
+  const promotionAt = args.promotionAt ?? new Date().toISOString();
   const successScore = args.status === "active" ? 0.95 : args.status === "shadow" ? 0.85 : 0.7;
   return MemoryAnchorV1Schema.parse({
     anchor_kind: "workflow",
@@ -336,6 +347,8 @@ export async function buildReplayPlaybookWorkflowNodeFields(args: {
   sourceNodeId: string | null;
   sourceCommitId: string | null;
   slots: Record<string, unknown>;
+  promotionAt?: string;
+  authorityIssuedAt?: string;
 }): Promise<ReplayPlaybookWorkflowNodeFields> {
   const anchor = buildReplayPlaybookAnchor({
     scopeKey: args.scopeKey,
@@ -352,6 +365,7 @@ export async function buildReplayPlaybookWorkflowNodeFields(args: {
     sourceNodeId: args.sourceNodeId,
     sourceCommitId: args.sourceCommitId,
     slots: args.slots,
+    promotionAt: args.promotionAt,
   });
   const existingDistillation = resolveNodeDistillationSurface(args.slots);
   const provenanceSourceKind =
@@ -436,6 +450,7 @@ export async function buildReplayPlaybookWorkflowNodeFields(args: {
     },
     slots,
     authorityGate,
+    issuedAt: args.authorityIssuedAt,
     mutate: true,
   });
   const embedText = `${args.title}\n${anchor.summary}\n${anchor.tool_set.join(" ")}\n${anchor.task_signature}`;
@@ -466,6 +481,8 @@ export async function buildStablePlaybookNodeFields(args: {
   sourceNodeId: string | null;
   sourceCommitId: string | null;
   slots: Record<string, unknown>;
+  promotionAt?: string;
+  authorityIssuedAt?: string;
 }): Promise<ReplayPlaybookWorkflowNodeFields> {
   if (!isStableReplayPlaybookStatus(args.status)) {
     return {
@@ -482,6 +499,102 @@ function playbookClientId(playbookId: string, version: number): string {
   return `replay:playbook:${playbookId}:v${version}`;
 }
 
+function assertStableReplayPlaybookBusinessState(args: {
+  row: LiteFindNodeRow;
+  playbookId: string;
+  version: number;
+  status: string;
+  scope: string;
+  tenantId: string;
+}): void {
+  const slots = asObject(args.row.slots) ?? {};
+  const matches =
+    args.row.type === "procedure"
+    && slots.replay_kind === "playbook"
+    && slots.playbook_id === args.playbookId
+    && Number(slots.version) === args.version
+    && slots.status === args.status
+    && isStableReplayPlaybookStatus(args.status);
+  if (!matches) {
+    throw new HttpError(
+      409,
+      "replay_playbook_changed",
+      "latest playbook node no longer matches the stable version being normalized",
+      {
+        playbook_id: args.playbookId,
+        playbook_node_id: args.row.id,
+        expected_version: args.version,
+        expected_status: args.status,
+        scope: args.scope,
+        tenant_id: args.tenantId,
+      },
+    );
+  }
+}
+
+function stableNormalizationProvenance(args: {
+  slots: Record<string, unknown>;
+  currentCommitId: string | null;
+}): {
+  promotionAt: string;
+  authorityIssuedAt: string;
+  sourceCommitId: string | null;
+} {
+  const anchor = asObject(args.slots.anchor_v1) ?? {};
+  const promotion = asObject(anchor.workflow_promotion) ?? {};
+  const normalized = promotion.promotion_origin === "replay_stable_normalization";
+  const receipt = asObject(args.slots.authority_receipt_v1) ?? {};
+  const maintenance = asObject(anchor.maintenance) ?? {};
+  const source = asObject(anchor.source) ?? {};
+  const now = new Date().toISOString();
+  const promotionAt = normalized
+    ? toStringOrNull(promotion.last_transition_at)
+      ?? toStringOrNull(maintenance.last_maintenance_at)
+      ?? toStringOrNull(receipt.issued_at)
+      ?? now
+    : now;
+  return {
+    promotionAt,
+    authorityIssuedAt: normalized
+      ? toStringOrNull(receipt.issued_at) ?? promotionAt
+      : promotionAt,
+    sourceCommitId: normalized
+      ? toStringOrNull(source.commit_id) ?? args.currentCommitId
+      : args.currentCommitId,
+  };
+}
+
+function replayStablePatchMatchesCurrent(row: LiteFindNodeRow, patch: NodeAuthorityPatchV2): boolean {
+  return stableStringify(row.slots ?? {}) === stableStringify(patch.slots)
+    && (row.text_summary ?? null) === patch.textSummary
+    && row.salience === patch.salience
+    && row.importance === patch.importance
+    && row.confidence === patch.confidence;
+}
+
+function replayStablePreparationState(row: LiteFindNodeRow): string {
+  return stableStringify({
+    id: row.id,
+    type: row.type,
+    client_id: row.client_id,
+    title: row.title,
+    text_summary: row.text_summary,
+    slots: row.slots,
+    tier: row.tier,
+    memory_lane: row.memory_lane,
+    producer_agent_id: row.producer_agent_id,
+    owner_agent_id: row.owner_agent_id,
+    owner_team_id: row.owner_team_id,
+    raw_ref: row.raw_ref,
+    evidence_ref: row.evidence_ref,
+    salience: row.salience,
+    importance: row.importance,
+    confidence: row.confidence,
+    commit_id: row.commit_id,
+    created_at: row.created_at,
+  });
+}
+
 export async function ensureStablePlaybookAnchorOnLatestNode(args: {
   embedder: EmbeddingProvider | null;
   writeAccess?: WriteStoreAccess | null;
@@ -491,11 +604,13 @@ export async function ensureStablePlaybookAnchorOnLatestNode(args: {
   playbookId: string;
   latest: ReplayNodeRow & { version_num: number; playbook_status: string | null };
 }) {
-  if (!isStableReplayPlaybookStatus(args.latest.playbook_status)) {
+  const stableStatus = args.latest.playbook_status;
+  if (!isStableReplayPlaybookStatus(stableStatus)) {
     return null;
   }
 
   const liteWriteStore = requireLiteReplayWriteStore(args.writeAccess);
+  const headFence = await captureNodeAuthorityHeadFence(liteWriteStore, args.tenancy.scope_key, {});
   const { rows } = await liteWriteStore.findNodes({
     scope: args.tenancy.scope_key,
     id: args.latest.id,
@@ -513,104 +628,235 @@ export async function ensureStablePlaybookAnchorOnLatestNode(args: {
       tenant_id: args.tenancy.tenant_id,
     });
   }
+  assertStableReplayPlaybookBusinessState({
+    row: latestNode,
+    playbookId: args.playbookId,
+    version: args.latest.version_num,
+    status: stableStatus,
+    scope: args.tenancy.scope,
+    tenantId: args.tenancy.tenant_id,
+  });
 
   const desiredTitle = latestNode.title ?? `replay_playbook_${args.playbookId.slice(0, 8)}`;
   const desiredTextSummary = latestNode.text_summary ?? `Replay playbook ${args.playbookId}`;
+  const provenance = stableNormalizationProvenance({
+    slots: asObject(latestNode.slots) ?? {},
+    currentCommitId: latestNode.commit_id ?? null,
+  });
   const desiredNodeFields = await buildStablePlaybookNodeFields({
     embedder: args.embedder,
     scopeKey: args.tenancy.scope_key,
     playbookId: args.playbookId,
     version: args.latest.version_num,
-    status: args.latest.playbook_status,
+    status: stableStatus,
     promotionOrigin: "replay_stable_normalization",
     title: desiredTitle,
     textSummary: desiredTextSummary,
     clientId: playbookClientId(args.playbookId, args.latest.version_num),
     nodeId: latestNode.id,
     nodeType: latestNode.type,
-    commitId: latestNode.commit_id ?? null,
+    commitId: provenance.sourceCommitId,
     sourceNodeId: args.latest.id,
-    sourceCommitId: latestNode.commit_id ?? null,
+    sourceCommitId: provenance.sourceCommitId,
     slots: asObject(latestNode.slots) ?? {},
+    promotionAt: provenance.promotionAt,
+    authorityIssuedAt: provenance.authorityIssuedAt,
   });
-
-  const slotsUnchanged = stableStringify(latestNode.slots ?? {}) === stableStringify(desiredNodeFields.slots);
-  const textSummaryUnchanged = (latestNode.text_summary ?? null) === desiredTextSummary;
-  if (slotsUnchanged && textSummaryUnchanged) {
-    return {
-      mutated: false as const,
-      node: latestNode,
-    };
-  }
-
-  const lifecycle = resolveNodeLifecycleSignals({
-    type: latestNode.type,
-    tier: latestNode.tier,
-    title: latestNode.title,
-    text_summary: desiredTextSummary,
-    slots: desiredNodeFields.slots,
-    salience: latestNode.salience,
-    importance: latestNode.importance,
-    confidence: latestNode.confidence,
-    raw_ref: latestNode.raw_ref ?? null,
-    evidence_ref: latestNode.evidence_ref ?? null,
-  });
-  assertAuthorityWriteReceipts([{
-    id: latestNode.id,
-    client_id: latestNode.client_id ?? undefined,
+  const preparedState = replayStablePreparationState(latestNode);
+  const actor = args.visibility.consumerAgentId ?? "replay_stable_anchor_normalization";
+  const authority = await runAppliedAuthorityMutationV2<NodeAuthorityPatchV2>({
+    store: liteWriteStore,
     scope: args.tenancy.scope_key,
-    type: latestNode.type,
-    slots: lifecycle.slots,
-  }]);
-
-  const updatedNode = await liteWriteStore.updateNodeAnchorState({
-    scope: args.tenancy.scope_key,
-    id: latestNode.id,
-    slots: lifecycle.slots,
-    textSummary: desiredTextSummary,
-    salience: lifecycle.salience,
-    importance: lifecycle.importance,
-    confidence: lifecycle.confidence,
-    commitId: latestNode.commit_id ?? null,
-  });
-  if (!updatedNode) {
-    throw new HttpError(404, "replay_playbook_not_found", "latest playbook node disappeared during anchor normalization", {
+    inputSha256: sha256Hex(stableStringify({
+      operation: "replay_stable_anchor_normalization_v2",
+      scope: args.tenancy.scope_key,
       playbook_id: args.playbookId,
       playbook_node_id: latestNode.id,
-      scope: args.tenancy.scope,
-      tenant_id: args.tenancy.tenant_id,
+      playbook_version: args.latest.version_num,
+      playbook_status: stableStatus,
+      prepared_commit_id: latestNode.commit_id ?? null,
+      desired_text_summary: desiredTextSummary,
+      desired_slots_sha256: sha256Hex(stableStringify(desiredNodeFields.slots)),
+      embedding_model: desiredNodeFields.embedding_model ?? null,
+      embedding_sha256: desiredNodeFields.embedding
+        ? sha256Hex(stableStringify(desiredNodeFields.embedding))
+        : null,
+    })),
+    actor,
+    expectedHeadRevision: headFence.expectedHeadRevision,
+    expectedHeadCommitId: headFence.expectedHeadCommitId,
+    plan: async () => {
+      const currentRows = await liteWriteStore.findNodes({
+        scope: args.tenancy.scope_key,
+        id: latestNode.id,
+        consumerAgentId: args.visibility.consumerAgentId,
+        consumerTeamId: args.visibility.consumerTeamId,
+        limit: 1,
+        offset: 0,
+      });
+      const current = currentRows.rows[0] ?? null;
+      if (!current) {
+        throw new HttpError(404, "replay_playbook_not_found", "latest playbook node disappeared during anchor normalization", {
+          playbook_id: args.playbookId,
+          playbook_node_id: latestNode.id,
+          scope: args.tenancy.scope,
+          tenant_id: args.tenancy.tenant_id,
+        });
+      }
+      const before = (await liteWriteStore.nodeStatesByIds(
+        args.tenancy.scope_key,
+        [current.id],
+      )).get(current.id);
+      if (!before) throw new Error(`replay_stable_anchor_authority_target_missing:${current.id}`);
+      assertNodeDecisionRowMatchesAuthorityState(
+        current,
+        before,
+        "replay_stable_anchor_authority_state_changed",
+      );
+      if (replayStablePreparationState(current) !== preparedState) {
+        throw new HttpError(
+          409,
+          "replay_playbook_changed",
+          "latest playbook node changed after stable anchor preparation",
+          {
+            playbook_id: args.playbookId,
+            playbook_node_id: current.id,
+            scope: args.tenancy.scope,
+            tenant_id: args.tenancy.tenant_id,
+          },
+        );
+      }
+      assertStableReplayPlaybookBusinessState({
+        row: current,
+        playbookId: args.playbookId,
+        version: args.latest.version_num,
+        status: stableStatus,
+        scope: args.tenancy.scope,
+        tenantId: args.tenancy.tenant_id,
+      });
+
+      const lifecycle = resolveNodeLifecycleSignals({
+        type: current.type,
+        tier: current.tier,
+        title: current.title,
+        text_summary: desiredTextSummary,
+        slots: desiredNodeFields.slots,
+        salience: current.salience,
+        importance: current.importance,
+        confidence: current.confidence,
+        raw_ref: current.raw_ref ?? null,
+        evidence_ref: current.evidence_ref ?? null,
+        reference_time: provenance.promotionAt,
+      });
+      assertAuthorityWriteReceipts([{
+        id: current.id,
+        client_id: current.client_id ?? undefined,
+        scope: args.tenancy.scope_key,
+        type: current.type,
+        slots: lifecycle.slots,
+      }]);
+      const patch: NodeAuthorityPatchV2 = {
+        id: current.id,
+        slots: lifecycle.slots,
+        textSummary: desiredTextSummary,
+        salience: lifecycle.salience,
+        importance: lifecycle.importance,
+        confidence: lifecycle.confidence,
+      };
+      if (replayStablePatchMatchesCurrent(current, patch)) {
+        return { status: "no_op" as const, value: patch };
+      }
+      return {
+        status: "mutate" as const,
+        authorityKind: "replay_stable_anchor_normalization",
+        mutations: [buildNodeAuthorityMutationV2({
+          before,
+          patch,
+          requestedEvidence: {
+            side_effects: NODE_AUTHORITY_UPDATE_SIDE_EFFECTS,
+            derived_projections_after_commit: [
+              "embedding_ready_and_ann",
+              "replay_mirror",
+            ],
+            operation_context: {
+              playbook_id: args.playbookId,
+              playbook_node_id: current.id,
+              playbook_version: args.latest.version_num,
+              playbook_status: stableStatus,
+              promotion_origin: "replay_stable_normalization",
+            },
+          },
+        })],
+        apply: async ({ commitId }) => {
+          await applyNodeAuthorityPatchesV2({
+            store: liteWriteStore,
+            scope: args.tenancy.scope_key,
+            patches: [patch],
+            commitId,
+          });
+          return patch;
+        },
+        verify: async ({ commitId }) => verifyNodeAuthorityPatchesV2({
+          store: liteWriteStore,
+          scope: args.tenancy.scope_key,
+          patches: [patch],
+          commitId,
+          errorLabel: "replay_stable_anchor",
+        }),
+      };
+    },
+  });
+
+  const readCommittedNode = async (): Promise<LiteFindNodeRow> => {
+    const committedRows = await liteWriteStore.findNodes({
+      scope: args.tenancy.scope_key,
+      id: latestNode.id,
+      consumerAgentId: args.visibility.consumerAgentId,
+      consumerTeamId: args.visibility.consumerTeamId,
+      limit: 1,
+      offset: 0,
     });
+    const committed = committedRows.rows[0] ?? null;
+    if (!committed) {
+      throw new HttpError(404, "replay_playbook_not_found", "normalized playbook node is no longer visible", {
+        playbook_id: args.playbookId,
+        playbook_node_id: latestNode.id,
+        scope: args.tenancy.scope,
+        tenant_id: args.tenancy.tenant_id,
+      });
+    }
+    return committed;
+  };
+
+  if (authority.status === "no_op") {
+    return {
+      mutated: false as const,
+      node: await readCommittedNode(),
+    };
   }
 
   if (desiredNodeFields.embedding && desiredNodeFields.embedding_model) {
     await liteWriteStore.setNodeEmbeddingReady({
       scope: args.tenancy.scope_key,
-      id: updatedNode.id,
+      id: latestNode.id,
       embedding: desiredNodeFields.embedding,
       embeddingModel: desiredNodeFields.embedding_model,
     });
   }
 
+  const projectedNode = await readCommittedNode();
   if (args.replayMirror) {
     await args.replayMirror.upsertReplayNodes([
       buildReplayMirrorRecordFromLiteNode({
         scopeKey: args.tenancy.scope_key,
         playbookId: args.playbookId,
-        node: {
-          ...updatedNode,
-          text_summary: desiredTextSummary,
-          slots: lifecycle.slots,
-        },
+        node: projectedNode,
       }),
     ]);
   }
 
   return {
     mutated: true as const,
-    node: {
-      ...updatedNode,
-      text_summary: desiredTextSummary,
-      slots: lifecycle.slots,
-    },
+    node: projectedNode,
   };
 }

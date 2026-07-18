@@ -12,18 +12,18 @@ import {
   learningRuntimeAuthorityHeadRootDigestV1,
   type LearningRuntimeAuthorityHeadV1,
   type LearningRuntimeAuthoritySqliteValueV1,
-} from "../memory/learning-external-ingestion-attestation.js";
-import type { LiteRuntimeDatabase } from "./lite-runtime-database.js";
-import { assertLiteRuntimeAuthorityIdentity } from "./lite-learning-episode-ledger.js";
+} from "../../src/memory/learning-external-ingestion-attestation.js";
+import type { LiteRuntimeDatabase } from "../../src/store/lite-runtime-database.js";
+import { assertLiteRuntimeAuthorityIdentity } from "../../src/store/lite-learning-episode-ledger.js";
 import {
   inspectLiteRuntimeSchema,
   LITE_RUNTIME_WRITE_SCHEMA_COMPONENT,
   LITE_RUNTIME_WRITE_SCHEMA_VERSION,
-} from "./lite-runtime-schema.js";
+} from "../../src/store/lite-runtime-schema.js";
 import {
   requireSqliteStreamingStatement,
   type SqliteDatabase,
-} from "./sqlite.js";
+} from "../../src/store/sqlite.js";
 
 type FrozenAuthorityTableSpec = Readonly<{
   table: string;
@@ -98,15 +98,15 @@ function resolveFrozenTableSpec(table: string): FrozenAuthorityTableSpec {
   return spec;
 }
 
-function assertCurrentV4Database(database: LiteRuntimeDatabase): void {
+function assertCurrentV5Database(database: LiteRuntimeDatabase): void {
   const schema = inspectLiteRuntimeSchema(database.db);
   if (schema.classification !== "current"
     || schema.component !== LITE_RUNTIME_WRITE_SCHEMA_COMPONENT
     || schema.detected_version !== LITE_RUNTIME_WRITE_SCHEMA_VERSION
-    || schema.detected_version !== 4) {
+    || schema.detected_version !== 5) {
     return authorityHeadError(
-      "current_v4_database_required",
-      "authority reads require the exact current Runtime v4 schema",
+      "current_v5_database_required",
+      "authority reads require the exact current Runtime v5 schema",
     );
   }
 }
@@ -521,7 +521,7 @@ function visitLiteLearningRuntimeAuthorityExactRows(
   args: VisitLiteLearningRuntimeAuthorityExactRowsArgs,
 ): number {
   const transactionIdentity = activeTransactionIdentity(args.database);
-  assertCurrentV4Database(args.database);
+  assertCurrentV5Database(args.database);
   const spec = resolveFrozenTableSpec(args.table);
   const columns = validatedProjectionColumns(spec, args.columns);
   assertOperationExactScopeBinding(args);
@@ -608,7 +608,7 @@ export function readLiteLearningRuntimeExternalIngestionOperationRowsV1(
   args: ReadLiteLearningRuntimeExternalIngestionOperationRowsV1Args,
 ): readonly LiteLearningRuntimeAuthorityTypedRow[] {
   const transactionIdentity = activeTransactionIdentity(args.database);
-  assertCurrentV4Database(args.database);
+  assertCurrentV5Database(args.database);
   if (new Set(args.evidenceSeriesIds).size !== 3) {
     return authorityHeadError(
       "external_ingest_series_set_invalid",
@@ -660,7 +660,7 @@ export function buildLiteLearningRuntimeAuthorityHeadV1(
   args: BuildLiteLearningRuntimeAuthorityHeadV1Args,
 ): LearningRuntimeAuthorityHeadV1 {
   const transactionIdentity = activeTransactionIdentity(args.database);
-  assertCurrentV4Database(args.database);
+  assertCurrentV5Database(args.database);
   const tables = LEARNING_RUNTIME_AUTHORITY_HEAD_V1_TABLE_SPECS.map((spec) => {
     const rows = tableRowsHead(args.database.db, spec);
     return Object.freeze({

@@ -1021,6 +1021,8 @@ test("lite learning helpers do not keep legacy memory SQL branches", () => {
     "client.query",
     ".query<",
     "requireStoreClient",
+  ];
+  const forbiddenLegacyTables = [
     "memory_nodes",
     "memory_edges",
     "memory_commits",
@@ -1033,6 +1035,13 @@ test("lite learning helpers do not keep legacy memory SQL branches", () => {
     const source = fs.readFileSync(file, "utf8");
     for (const symbol of forbiddenSymbols) {
       assert.equal(source.includes(symbol), false, `${path.relative(ROOT, file)} should not keep legacy SQL branch symbol ${symbol}`);
+    }
+    for (const table of forbiddenLegacyTables) {
+      assert.doesNotMatch(
+        source,
+        new RegExp(`\\b${table}\\b`, "u"),
+        `${path.relative(ROOT, file)} should not keep legacy SQL table ${table}`,
+      );
     }
   }
 });

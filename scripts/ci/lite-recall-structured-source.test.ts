@@ -13,7 +13,7 @@ function tmpDbPath(name: string): string {
 }
 
 async function insertCommit(store: ReturnType<typeof createLiteWriteStore>, scope: string, suffix: string): Promise<string> {
-  return store.insertCommit({
+  return store.insertLegacyV1CommitForMigrationOrTestFixture({
     scope,
     parentCommitId: null,
     inputSha256: `input-${suffix}`,

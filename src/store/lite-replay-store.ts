@@ -1,5 +1,3 @@
-import { mkdirSync } from "node:fs";
-import { dirname } from "node:path";
 import { fromTenantScopeKey } from "../memory/tenant.js";
 import { memoryNodeVisible } from "./memory-visibility.js";
 import type {
@@ -11,7 +9,10 @@ import type {
 } from "./replay-access.js";
 import { REPLAY_STORE_ACCESS_CAPABILITY_VERSION } from "./replay-access.js";
 import type { ReplayMirrorNodeRecord, ReplayWriteMirror } from "../memory/replay-write.js";
-import { createSqliteDatabase } from "./sqlite.js";
+import {
+  createPrivateRuntimeSqliteDatabase,
+  hardenPrivateRuntimeSqliteArtifacts,
+} from "./sqlite.js";
 
 type LiteReplayRow = {
   node_id: string;
@@ -95,8 +96,7 @@ export type LiteReplayStore = ReplayWriteMirror & {
 };
 
 export function createLiteReplayStore(path: string): LiteReplayStore {
-  mkdirSync(dirname(path), { recursive: true });
-  const db = createSqliteDatabase(path);
+  const db = createPrivateRuntimeSqliteDatabase(path);
   db.exec(`
     PRAGMA journal_mode = WAL;
     CREATE TABLE IF NOT EXISTS lite_replay_nodes (
@@ -126,6 +126,7 @@ export function createLiteReplayStore(path: string): LiteReplayStore {
     CREATE INDEX IF NOT EXISTS idx_lite_replay_nodes_scope_playbook
       ON lite_replay_nodes(scope, playbook_id, version_num, created_at);
   `);
+  hardenPrivateRuntimeSqliteArtifacts(path);
 
   const upsertStmt = db.prepare(`
     INSERT INTO lite_replay_nodes (

@@ -1,7 +1,6 @@
 import { randomUUID } from "node:crypto";
 import stableStringify from "fast-json-stable-stringify";
 import { sha256Hex } from "../util/crypto.js";
-import { stableUuid } from "../util/uuid.js";
 import { badRequest, HttpError } from "../util/http.js";
 import { normalizeText } from "../util/normalize.js";
 import { redactPII } from "../util/redaction.js";
@@ -42,13 +41,10 @@ import { evaluateRulesAppliedOnly } from "./rules-evaluate.js";
 import { resolveTenantScope } from "./tenant.js";
 import { buildAionisUri, parseAionisUri } from "./uri.js";
 import {
-  persistPreparedToolsDecisionPatternAnchor,
   prepareToolsDecisionPatternAnchor,
   type PreparedToolsDecisionPatternAnchor,
 } from "./tools-pattern-anchor.js";
 import {
-  persistPreparedPolicyMemoryFeedback,
-  persistPreparedPolicyMemorySnapshot,
   preparePolicyMemoryFeedbackLite,
   preparePolicyMemorySnapshot,
   type PreparedPolicyMemoryFeedback,
@@ -69,9 +65,16 @@ import { runFormPatternLearningControlPreview } from "./learning-control-form-pa
 import type { LiteRuleCandidateRow, LiteWriteStore } from "../store/lite-write-store.js";
 import type { EmbeddingProvider } from "../embeddings/types.js";
 import type { RecallStoreAccess } from "../store/recall-access.js";
-import type { WriteStoreAccess } from "../store/write-access.js";
 import { completeLiteInlineEmbeddings } from "./lite-projected-write-commit.js";
+import { drainLiteProjectionJobs } from "../jobs/lite-projection-worker.js";
 import type { PreparedWrite } from "./write.js";
+import { SELF_COMMIT_REFERENCE } from "./write-serialization.js";
+import { persistToolFeedbackAppliedAuthority } from "./tools-feedback-applied-authority.js";
+import type {
+  PreparedToolFeedbackDecisionPlan,
+  PreparedToolSelectionFeedback,
+  ToolFeedbackDecisionRow,
+} from "./tools-feedback-contract.js";
 import {
   buildToolRuleEvaluationSource,
   readToolRuleEvaluationProvenance,
@@ -80,6 +83,7 @@ import {
 } from "./tool-rule-evaluation-provenance.js";
 
 export { buildMaterializationContextFromFeedback } from "../kernel/learning-decision-kernel.js";
+export type { PreparedToolSelectionFeedback } from "./tools-feedback-contract.js";
 
 type FeedbackOptions = {
   maxTextLen: number;
@@ -90,20 +94,6 @@ type FeedbackOptions = {
   };
   recallAccess?: RecallStoreAccess | null;
   liteWriteStore?: LiteWriteStore | null;
-};
-
-type DecisionRow = {
-  id: string;
-  scope: string;
-  run_id: string | null;
-  selected_tool: string | null;
-  candidates_json: any;
-  context_sha256: string;
-  policy_sha256: string;
-  source_rule_ids: string[];
-  metadata_json: Record<string, unknown>;
-  created_at: string;
-  commit_id: string | null;
 };
 
 type LiteNodeLookup = Pick<LiteWriteStore, "findNodes">;
@@ -308,7 +298,8 @@ async function prepareLitePolicyMemoryFromFeedback(args: {
   selectedTool: string;
   normalizedCandidates: string[];
   workflowFeedbackTarget: WorkflowFeedbackTarget;
-  commitId: string;
+  decisionId: string;
+  feedbackCommitId: string;
   defaultScope: string;
   defaultTenantId: string;
   opts: FeedbackOptions;
@@ -436,12 +427,12 @@ async function prepareLitePolicyMemoryFromFeedback(args: {
       anchors: [],
     },
     decision: {
-      decision_id: args.commitId,
+      decision_id: args.decisionId,
       decision_uri: buildAionisUri({
         tenant_id: args.tenancy.tenant_id,
         scope: args.tenancy.scope,
         type: "decision",
-        id: args.commitId,
+        id: args.decisionId,
       }),
       run_id: args.parsed.run_id ?? null,
       selected_tool: args.selectedTool,
@@ -500,14 +491,13 @@ async function prepareLitePolicyMemoryFromFeedback(args: {
     workflow_signature: args.workflowFeedbackTarget.workflowSignature,
     policy_contract: policyContractWithEvidence,
     derived_policy: enrichedPolicy.derivedPolicy,
-    feedback_commit_id: args.commitId,
+    feedback_commit_id: args.feedbackCommitId,
   }, {
     defaultScope: args.defaultScope,
     defaultTenantId: args.defaultTenantId,
     maxTextLen: args.opts.maxTextLen,
     piiRedaction: args.opts.piiRedaction,
     embedder: args.opts.embedder ?? null,
-    writeAccess: args.opts.liteWriteStore as unknown as WriteStoreAccess,
     liteWriteStore: args.opts.liteWriteStore,
   });
 
@@ -622,7 +612,7 @@ async function buildToolsFeedbackFormPatternLearningControlPreview(args: {
 }
 
 function assertDecisionCompatible(
-  decision: DecisionRow,
+  decision: ToolFeedbackDecisionRow,
   parsed: { run_id?: string; selected_tool: string; decision_id?: string },
   normalizedCandidates: string[],
 ) {
@@ -652,7 +642,7 @@ function assertDecisionCompatible(
   }
 }
 
-function decisionRowSha256(decision: DecisionRow | null): string | null {
+function decisionRowSha256(decision: ToolFeedbackDecisionRow | null): string | null {
   return decision ? sha256Hex(stableStringify(decision)) : null;
 }
 
@@ -689,7 +679,14 @@ async function findToolRuleEvaluationDrift(
     if (!row) return { rule_node_id: expected.rule_node_id, reason: "rule_missing" };
     let current: ToolRuleEvaluationSource;
     try {
-      current = buildToolRuleEvaluationSource(row);
+      // Feedback aggregate authority advances the rule-def commit without
+      // changing the rule that was served. Re-root the current semantic row
+      // at the served commit so repeated feedback still detects state/policy/
+      // ownership/rank drift, but not its own counter-only commit advance.
+      current = buildToolRuleEvaluationSource({
+        ...row,
+        rule_commit_id: expected.commit_id,
+      });
     } catch {
       return { rule_node_id: expected.rule_node_id, reason: "rule_invalid" };
     }
@@ -700,56 +697,10 @@ async function findToolRuleEvaluationDrift(
   return null;
 }
 
-type PreparedDecisionPlan = {
-  expected_sha256: string | null;
-  create: boolean;
-  decision_link_mode: "provided" | "inferred" | "created_from_feedback";
-  before: DecisionRow | null;
-  after: DecisionRow;
-};
-
-type PreparedRuleFeedbackInsert = {
-  id: string;
-  rule_node_id: string;
-};
-
-export type PreparedToolSelectionFeedback = {
-  schema_version: "prepared_tool_selection_feedback_v1";
-  parsed: ToolsFeedbackInput;
-  default_scope: string;
-  default_tenant_id: string;
-  tenant_id: string;
-  scope: string;
-  scope_key: string;
-  actor: string;
-  normalized_candidates: string[];
-  selected_tool: string;
-  input_text: string | null;
-  input_sha256: string;
-  note: string | null;
-  workflow_feedback_target: WorkflowFeedbackTarget;
-  source_rule_ids: string[];
-  rules_applied_sha256: string;
-  served_rule_evaluation: ToolRuleEvaluationProvenance | null;
-  context_sha256: string;
-  policy_sha256: string;
-  decision: PreparedDecisionPlan;
-  parent_commit_id: string | null;
-  parent_commit_hash: string;
-  commit_id: string;
-  commit_hash: string;
-  commit_diff_json: string;
-  feedback_created_at: string;
-  rule_feedback: PreparedRuleFeedbackInsert[];
-  pattern: PreparedToolsDecisionPatternAnchor | null;
-  policy_snapshot: PreparedPolicyMemorySnapshot | null;
-  policy_feedback: PreparedPolicyMemoryFeedback | null;
-  policy_materialized_response: ToolsFeedbackResponse["policy_memory"] | null;
-  learning_control_preview: ToolsFeedbackLearningControlPreview | null;
-};
-
 export type ToolSelectionFeedbackFinalizePlan = {
+  scope_key: string;
   prepared_writes: PreparedWrite[];
+  refreshed_embedding_node_ids: string[];
 };
 
 export type PersistedToolSelectionFeedback = {
@@ -851,10 +802,12 @@ export async function prepareToolSelectionFeedback(
   const workflowFeedbackTarget = extractWorkflowFeedbackTarget(parsed.context);
 
   const rawContextSha256 = hashExecutionContext(parsed.context);
-  let decisionBefore: DecisionRow | null = linkedDecisionId
+  let decisionBefore: ToolFeedbackDecisionRow | null = linkedDecisionId
     ? await liteWriteStore.getExecutionDecision({ scope, id: linkedDecisionId })
     : null;
-  let decisionLinkMode: PreparedDecisionPlan["decision_link_mode"] = linkedDecisionId ? "provided" : "inferred";
+  let decisionLinkMode: PreparedToolFeedbackDecisionPlan["decision_link_mode"] = linkedDecisionId
+    ? "provided"
+    : "inferred";
   if (linkedDecisionId && !decisionBefore) {
     badRequest("decision_not_found_in_scope", "decision_id was not found in this scope", {
       decision_id: linkedDecisionId,
@@ -1036,39 +989,16 @@ export async function prepareToolSelectionFeedback(
       attributed_rules_outside_guide: attributedRulesOutsideGuide,
     });
   }
-  const decisionAfterRun: DecisionRow = {
+  const decisionAfterRun: ToolFeedbackDecisionRow = {
     ...plannedDecision,
     run_id: parsed.run_id ?? plannedDecision.run_id,
   };
 
-  const parent = await liteWriteStore.latestCommit(scope);
-  const parentCommitHash = parent?.commit_hash ?? "";
-  const parentCommitId = parent?.id ?? null;
-  const diff = {
-    tool_feedback: [{
-      decision_id: decisionAfterRun.id,
-      decision_link_mode: decisionLinkMode,
-      run_id: parsed.run_id ?? null,
-      outcome: parsed.outcome,
-      selected_tool: selectedTool,
-      candidates: normalizedCandidates,
-      rule_node_ids: sourceRuleIds,
-      target: parsed.target,
-      include_shadow: parsed.include_shadow,
-    }],
+  const expectedHead = await liteWriteStore.readScopeHead(scope);
+  const decisionAfter: ToolFeedbackDecisionRow = {
+    ...decisionAfterRun,
+    commit_id: SELF_COMMIT_REFERENCE,
   };
-  const commitDiffJson = JSON.stringify(diff);
-  const diffSha = sha256Hex(stableStringify(diff));
-  const commitHash = sha256Hex(stableStringify({
-    parentHash: parentCommitHash,
-    inputSha,
-    diffSha,
-    scope,
-    actor,
-    kind: "tool_feedback",
-  }));
-  const commitId = stableUuid(`lite:commit:${commitHash}`);
-  const decisionAfter: DecisionRow = { ...decisionAfterRun, commit_id: commitId };
   const feedbackCreatedAt = new Date().toISOString();
 
   let pattern: PreparedToolsDecisionPatternAnchor | null = null;
@@ -1089,7 +1019,7 @@ export async function prepareToolSelectionFeedback(
       candidates: normalizedCandidates,
       source_rule_ids: sourceRuleIds,
       decision: decisionAfter,
-      feedback_commit_id: commitId,
+      feedback_commit_id: SELF_COMMIT_REFERENCE,
       feedback_outcome: patternFeedbackOutcome,
     } as const;
     pattern = await prepareToolsDecisionPatternAnchor({
@@ -1101,7 +1031,6 @@ export async function prepareToolSelectionFeedback(
       maxTextLen: opts.maxTextLen,
       piiRedaction: opts.piiRedaction,
       embedder: opts.embedder ?? null,
-      writeAccess: liteWriteStore,
       liteWriteStore,
     });
     if (pattern) {
@@ -1138,7 +1067,6 @@ export async function prepareToolSelectionFeedback(
           maxTextLen: opts.maxTextLen,
           piiRedaction: opts.piiRedaction,
           embedder: opts.embedder ?? null,
-          writeAccess: liteWriteStore,
           liteWriteStore,
         });
         if (pattern) {
@@ -1162,7 +1090,8 @@ export async function prepareToolSelectionFeedback(
         selectedTool,
         normalizedCandidates,
         workflowFeedbackTarget,
-        commitId,
+        decisionId: decisionAfter.id,
+        feedbackCommitId: SELF_COMMIT_REFERENCE,
         defaultScope,
         defaultTenantId,
         opts,
@@ -1181,7 +1110,7 @@ export async function prepareToolSelectionFeedback(
         run_id: parsed.run_id ?? null,
         reason: note ?? null,
         input_sha256: inputSha,
-        commit_id: commitId,
+        commit_id: SELF_COMMIT_REFERENCE,
         feedback_at: feedbackCreatedAt,
       }, {
         materialized_snapshot: materializedPolicy?.prepared ?? null,
@@ -1189,7 +1118,7 @@ export async function prepareToolSelectionFeedback(
     : null;
 
   return {
-    schema_version: "prepared_tool_selection_feedback_v1",
+    schema_version: "prepared_tool_selection_feedback_v2",
     parsed,
     default_scope: defaultScope,
     default_tenant_id: defaultTenantId,
@@ -1215,11 +1144,8 @@ export async function prepareToolSelectionFeedback(
       before: createDecision ? null : plannedDecision,
       after: decisionAfter,
     },
-    parent_commit_id: parentCommitId,
-    parent_commit_hash: parentCommitHash,
-    commit_id: commitId,
-    commit_hash: commitHash,
-    commit_diff_json: commitDiffJson,
+    expected_head_commit_id: expectedHead?.commitId ?? null,
+    expected_head_revision: expectedHead?.revision ?? 0,
     feedback_created_at: feedbackCreatedAt,
     rule_feedback: sourceRuleIds.map((ruleNodeId) => ({
       id: randomUUID(),
@@ -1266,14 +1192,6 @@ async function assertPreparedToolFeedbackStillCurrent(
     }
   }
 
-  const latest = await liteWriteStore.latestCommit(prepared.scope_key);
-  if ((latest?.id ?? null) !== prepared.parent_commit_id
-    || (latest?.commit_hash ?? "") !== prepared.parent_commit_hash) {
-    throw new HttpError(409, "tool_feedback_prepare_conflict", "tool feedback parent commit changed after prepare", {
-      reason: "parent_commit_changed",
-    });
-  }
-
   const currentDecision = await liteWriteStore.getExecutionDecision({
     scope: prepared.scope_key,
     id: prepared.decision.after.id,
@@ -1317,97 +1235,19 @@ export async function persistToolSelectionFeedback(
 ): Promise<PersistedToolSelectionFeedback> {
   const liteWriteStore = opts.liteWriteStore;
   if (!liteWriteStore) throw new Error("persistToolSelectionFeedback requires lite write store");
-  if (!liteWriteStore.transactionRunner().inTransaction()) {
-    throw new Error("persistToolSelectionFeedback requires an active shared transaction");
-  }
-  await assertPreparedToolFeedbackStillCurrent(prepared, liteWriteStore);
-
-  let decision = prepared.decision.after;
-  if (prepared.decision.create) {
-    await liteWriteStore.insertExecutionDecision({
-      id: decision.id,
-      scope: prepared.scope_key,
-      decisionKind: "tools_select",
-      runId: decision.run_id,
-      selectedTool: decision.selected_tool,
-      candidatesJson: decision.candidates_json,
-      contextSha256: decision.context_sha256,
-      policySha256: decision.policy_sha256,
-      sourceRuleIds: decision.source_rule_ids,
-      metadataJson: decision.metadata_json,
-      commitId: null,
-      createdAt: decision.created_at,
-    });
-  } else if (prepared.parsed.run_id && !prepared.decision.before?.run_id) {
-    const linked = await liteWriteStore.updateExecutionDecisionLink({
-      scope: prepared.scope_key,
-      id: decision.id,
-      runId: prepared.parsed.run_id,
-    });
-    if (!linked) throw new Error("tool_feedback_decision_link_failed");
-    decision = linked;
-  }
-
-  const commitId = await liteWriteStore.insertCommit({
-    scope: prepared.scope_key,
-    parentCommitId: prepared.parent_commit_id,
-    inputSha256: prepared.input_sha256,
-    diffJson: prepared.commit_diff_json,
-    actor: prepared.actor,
-    modelVersion: null,
-    promptVersion: null,
-    commitHash: prepared.commit_hash,
-  });
-  if (commitId !== prepared.commit_id) throw new Error("tool_feedback_commit_id_mismatch");
-
-  const committedDecision = await liteWriteStore.updateExecutionDecisionLink({
-    scope: prepared.scope_key,
-    id: decision.id,
-    commitId,
-  });
-  if (!committedDecision) throw new Error("tool_feedback_decision_commit_link_failed");
-  decision = committedDecision;
-  for (const feedback of prepared.rule_feedback) {
-    await liteWriteStore.insertRuleFeedback({
-      id: feedback.id,
-      scope: prepared.scope_key,
-      ruleNodeId: feedback.rule_node_id,
-      runId: prepared.parsed.run_id ?? null,
-      outcome: prepared.parsed.outcome,
-      note: prepared.note,
-      source: "tools_feedback",
-      decisionId: decision.id,
-      commitId,
-      createdAt: prepared.feedback_created_at,
-    });
-  }
-  await liteWriteStore.updateRuleFeedbackAggregates({
-    scope: prepared.scope_key,
-    outcome: prepared.parsed.outcome,
-    ruleNodeIds: prepared.source_rule_ids,
-  });
-
+  let applied: Awaited<ReturnType<typeof persistToolFeedbackAppliedAuthority>>;
   try {
-    if (prepared.pattern) {
-      await persistPreparedToolsDecisionPatternAnchor(prepared.pattern, {
-        liteWriteStore,
-        maxTextLen: opts.maxTextLen,
-        piiRedaction: opts.piiRedaction,
-      });
-    }
-    if (prepared.policy_snapshot) {
-      await persistPreparedPolicyMemorySnapshot(prepared.policy_snapshot, {
-        liteWriteStore,
-        maxTextLen: opts.maxTextLen,
-        piiRedaction: opts.piiRedaction,
-      });
-    }
-    if (prepared.policy_feedback) {
-      await persistPreparedPolicyMemoryFeedback(prepared.policy_feedback, liteWriteStore);
-    }
+    applied = await persistToolFeedbackAppliedAuthority({
+      prepared,
+      store: liteWriteStore,
+      assertPreparedCurrent: () => assertPreparedToolFeedbackStillCurrent(prepared, liteWriteStore),
+    });
   } catch (error) {
     rethrowPreparedMutationConflict(error);
   }
+  const commitId = applied.commitId;
+  const commitHash = applied.commitHash;
+  const decision = applied.value.decision;
 
   const response = ToolsFeedbackResponseSchema.parse({
     ok: true,
@@ -1422,7 +1262,7 @@ export async function persistToolSelectionFeedback(
       type: "commit",
       id: commitId,
     }),
-    commit_hash: prepared.commit_hash,
+    commit_hash: commitHash,
     decision_id: decision.id,
     decision_uri: buildAionisUri({
       tenant_id: prepared.tenant_id,
@@ -1441,13 +1281,22 @@ export async function persistToolSelectionFeedback(
     prepared.pattern?.prepared_write ?? null,
     prepared.policy_snapshot?.prepared_write ?? null,
   ].filter((entry): entry is PreparedWrite => entry !== null);
+  const refreshedEmbeddingNodeIds = Array.from(new Set([
+    prepared.pattern?.update?.id,
+    prepared.policy_snapshot?.update?.id,
+    ...(prepared.policy_feedback?.updates.map((update) => update.id) ?? []),
+  ].filter((id): id is string => typeof id === "string" && id.length > 0)));
   return {
     response,
     run_id: prepared.parsed.run_id ?? null,
     decision_id: decision.id,
     commit_id: commitId,
-    commit_hash: prepared.commit_hash,
-    finalize_plan: { prepared_writes: preparedWrites },
+    commit_hash: commitHash,
+    finalize_plan: {
+      scope_key: prepared.scope_key,
+      prepared_writes: preparedWrites,
+      refreshed_embedding_node_ids: refreshedEmbeddingNodeIds,
+    },
   };
 }
 
@@ -1469,6 +1318,38 @@ export async function finalizeToolSelectionFeedback(
     });
     if (result) embeddings.push(result);
   }
+  const refreshedNodeIds = persisted.finalize_plan.refreshed_embedding_node_ids;
+  const embedder = opts.embedder ?? null;
+  if (embedder && refreshedNodeIds.length > 0) {
+    const readyBefore = await liteWriteStore.readyEmbeddingNodeIds(
+      persisted.finalize_plan.scope_key,
+      refreshedNodeIds,
+    );
+    const pending = refreshedNodeIds.filter((id) => !readyBefore.has(id));
+    if (pending.length > 0) {
+      const drained = await drainLiteProjectionJobs({
+        store: liteWriteStore,
+        embedder,
+        ann: null,
+        annEnabled: liteWriteStore.annSyncEnabled(),
+        limit: pending.length,
+        jobKinds: ["embedding_generate"],
+        scopes: [persisted.finalize_plan.scope_key],
+        nodeIds: pending,
+      });
+      const readyAfter = await liteWriteStore.readyEmbeddingNodeIds(
+        persisted.finalize_plan.scope_key,
+        pending,
+      );
+      const failed = drained.retried + drained.dead_lettered;
+      embeddings.push({
+        attempted: pending.length,
+        updated: readyAfter.size,
+        failed,
+        ...(failed > 0 ? { error: "durable embedding projection deferred for retry" } : {}),
+      });
+    }
+  }
   return { embeddings };
 }
 
@@ -1485,7 +1366,7 @@ export async function toolSelectionFeedback(
     throw new Error("toolSelectionFeedback must be entered outside a transaction so prepare can run before BEGIN");
   }
   const prepared = await prepareToolSelectionFeedback(client, body, defaultScope, defaultTenantId, opts);
-  const persisted = await liteWriteStore.withTx(() => persistToolSelectionFeedback(prepared, opts));
+  const persisted = await persistToolSelectionFeedback(prepared, opts);
   await finalizeToolSelectionFeedback(persisted, opts);
   return persisted.response;
 }

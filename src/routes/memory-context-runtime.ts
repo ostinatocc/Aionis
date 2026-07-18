@@ -1164,6 +1164,7 @@ export function createMemoryPlanningContextService(args: {
         liteWriteStore,
         persistDecision: args.deferDecisionPersistence ? false : undefined,
         onDecisionPrepared: args.deferDecisionPersistence ? args.onDecisionPrepared : undefined,
+        actor: args.parsed.consumer_agent_id ?? env.LITE_LOCAL_ACTOR_ID,
       },
     );
   };

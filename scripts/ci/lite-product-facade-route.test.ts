@@ -64,7 +64,7 @@ import {
   type LiteLearningEpisodeLedgerAccess,
 } from "../../src/store/lite-learning-episode-ledger.ts";
 import { createLiteLearningExperimentProvisioner } from
-  "../../src/store/lite-learning-experiment-provisioning.ts";
+  "../../tools/learning-experiments/lite-learning-experiment-provisioning.ts";
 import { createLiteLearningControlJobAccess } from
   "../../src/store/lite-learning-control-jobs.ts";
 import {
@@ -1451,7 +1451,7 @@ test("concurrent protected guide operations atomically persist one real planning
     assert.equal(left.body, right.body);
     const receipt = objectValue(left.json().tool_selection, "protected guide tool_selection");
     const counts = guideOperationMutationCounts(runtimeDatabase);
-    assert.equal(counts.memory_commits, 1);
+    assert.equal(counts.memory_commits, 2);
     assert.equal(counts.memory_nodes, 1);
     assert.equal(counts.execution_decisions, 1);
     assert.equal(counts.guide_receipts, 1);
@@ -1520,6 +1520,173 @@ test("protected guide operation rolls back a real prepared tool decision when ov
     assert.equal(response.statusCode, 413, response.body);
     assert.equal(response.json().error, "protected_guide_response_too_large");
     assert.deepEqual(guideOperationMutationCounts(runtimeDatabase), before);
+  } finally {
+    await app.close();
+    await liteRecallStore.close();
+    await liteWriteStore.close();
+    await runtimeDatabase.close();
+    fs.rmSync(path.dirname(dbPath), { recursive: true, force: true });
+  }
+});
+
+test("unprotected guide planning failure leaves no orphan execution decision or authority commit", async () => {
+  const dbPath = tmpDbPath("guide-unprotected-planning-failure-deferred-decision");
+  const runtimeDatabase = createLiteRuntimeDatabase(dbPath);
+  const liteWriteStore = createLiteWriteStoreFromDatabase(runtimeDatabase, { annProjectionEnabled: false });
+  const liteRecallStore = createLiteRecallStore(dbPath);
+  const app = Fastify();
+  const env = liteEnv();
+  const guards = requestGuards(env, DeterministicEmbeddingProvider);
+  try {
+    registerFullProductMemoryApp({
+      app,
+      env,
+      guards,
+      liteWriteStore,
+      liteRecallStore,
+      decoratePlanningContextService(service) {
+        return {
+          async assemble(...args) {
+            await service.assemble(...args);
+            throw new Error("simulated failure after planning prepared the tool decision");
+          },
+        };
+      },
+    });
+    const before = guideOperationMutationCounts(runtimeDatabase);
+    const response = await app.inject({
+      method: "POST",
+      url: "/v1/guide",
+      payload: {
+        tenant_id: "default",
+        scope: "default",
+        run_id: "run:guide-unprotected-planning-failure",
+        consumer_agent_id: "local-user",
+        query_text: "Prepare a tool decision, then fail before guide persistence.",
+        tool_candidates: ["read", "bash"],
+        context: { task_signature: "guide-unprotected-planning-failure" },
+      },
+    });
+    assert.equal(response.statusCode, 500, response.body);
+    assert.equal(response.json().error, "product_dependency_failed");
+    assert.deepEqual(guideOperationMutationCounts(runtimeDatabase), before);
+  } finally {
+    await app.close();
+    await liteRecallStore.close();
+    await liteWriteStore.close();
+    await runtimeDatabase.close();
+    fs.rmSync(path.dirname(dbPath), { recursive: true, force: true });
+  }
+});
+
+test("guide receipt failure rolls back the memory commit and v2 decision child together", async () => {
+  const dbPath = tmpDbPath("guide-deferred-decision-receipt-rollback");
+  const runtimeDatabase = createLiteRuntimeDatabase(dbPath);
+  const liteWriteStore = createLiteWriteStoreFromDatabase(runtimeDatabase, { annProjectionEnabled: false });
+  const liteRecallStore = createLiteRecallStore(dbPath);
+  const app = Fastify();
+  const env = liteEnv();
+  const guards = requestGuards(env, DeterministicEmbeddingProvider);
+  try {
+    runtimeDatabase.db.exec(`
+      CREATE TRIGGER reject_guide_receipt_after_decision
+      BEFORE INSERT ON lite_product_guide_receipts
+      BEGIN
+        SELECT RAISE(ABORT, 'injected guide receipt failure');
+      END;
+    `);
+    registerFullProductMemoryApp({ app, env, guards, liteWriteStore, liteRecallStore });
+    const before = guideOperationMutationCounts(runtimeDatabase);
+    const response = await app.inject({
+      method: "POST",
+      url: "/v1/guide",
+      payload: {
+        tenant_id: "default",
+        scope: "default",
+        run_id: "run:guide-deferred-decision-receipt-rollback",
+        consumer_agent_id: "local-user",
+        query_text: "Roll back the selected tool when the guide receipt fails.",
+        tool_candidates: ["read", "bash"],
+        context: { task_signature: "guide-deferred-decision-receipt-rollback" },
+      },
+    });
+    assert.equal(response.statusCode, 500, response.body);
+    assert.equal(response.json().error, "product_dependency_failed");
+    assert.deepEqual(guideOperationMutationCounts(runtimeDatabase), before);
+    assert.equal(await liteWriteStore.readScopeHead("default"), null);
+  } finally {
+    await app.close();
+    await liteRecallStore.close();
+    await liteWriteStore.close();
+    await runtimeDatabase.close();
+    fs.rmSync(path.dirname(dbPath), { recursive: true, force: true });
+  }
+});
+
+test("product guide appends its deferred execution decision as a v2 child revision", async () => {
+  const dbPath = tmpDbPath("guide-deferred-decision-v2-child");
+  const runtimeDatabase = createLiteRuntimeDatabase(dbPath);
+  const liteWriteStore = createLiteWriteStoreFromDatabase(runtimeDatabase, { annProjectionEnabled: false });
+  const liteRecallStore = createLiteRecallStore(dbPath);
+  const app = Fastify();
+  const env = liteEnv();
+  const guards = requestGuards(env, DeterministicEmbeddingProvider);
+  try {
+    registerFullProductMemoryApp({ app, env, guards, liteWriteStore, liteRecallStore });
+    const response = await app.inject({
+      method: "POST",
+      url: "/v1/guide",
+      payload: {
+        tenant_id: "default",
+        scope: "default",
+        run_id: "run:guide-deferred-decision-v2-child",
+        consumer_agent_id: "local-user",
+        query_text: "Persist the guide ledger and then its selected tool receipt.",
+        tool_candidates: ["read", "bash"],
+        context: { task_signature: "guide-deferred-decision-v2-child" },
+      },
+    });
+    assert.equal(response.statusCode, 200, response.body);
+    const body = response.json();
+    const receipt = objectValue(body.tool_selection, "guide deferred decision receipt");
+    const rows = runtimeDatabase.readDb.prepare<{
+      id: string;
+      parent_commit_id: string | null;
+      digest_version: number;
+      revision: number;
+      diff_json: string;
+    }>(
+      `SELECT id, parent_commit_id, digest_version, revision, diff_json
+       FROM lite_memory_commits
+       WHERE scope = ?
+       ORDER BY revision ASC`,
+    ).all("default");
+    assert.equal(rows.length, 2);
+    assert.equal(rows[0]?.digest_version, 2);
+    assert.equal(rows[0]?.revision, 1);
+    assert.equal(rows[0]?.parent_commit_id, null);
+    assert.equal(rows[1]?.digest_version, 2);
+    assert.equal(rows[1]?.revision, 2);
+    assert.equal(rows[1]?.parent_commit_id, rows[0]?.id);
+    assert.equal(
+      (JSON.parse(rows[1]!.diff_json) as Record<string, unknown>).authority_kind,
+      "execution_decision_initial_receipt",
+    );
+
+    const decision = await liteWriteStore.getExecutionDecision({
+      scope: "default",
+      id: String(receipt.decision_id),
+    });
+    assert.ok(decision);
+    assert.equal(decision.commit_id, rows[1]?.id);
+    assert.equal(decision.created_at, receipt.created_at);
+    const guideReceipt = runtimeDatabase.readDb.prepare<{ commit_id: string }>(
+      `SELECT commit_id
+       FROM lite_product_guide_receipts
+       WHERE tenant_id = ? AND scope = ? AND guide_trace_id = ?`,
+    ).get("default", "default", body.guide_trace_id);
+    assert.equal(guideReceipt.commit_id, rows[0]?.id);
+    assert.equal((await liteWriteStore.readScopeHead("default"))?.commitId, rows[1]?.id);
   } finally {
     await app.close();
     await liteRecallStore.close();
@@ -6036,7 +6203,7 @@ test("fresh single-agent guide distinguishes channel history from actionable his
   }
 });
 
-test("product observe persists lifecycle relation graph and guide suppresses superseded memory", async () => {
+test("product observe does not persist lexical lifecycle hints without producer confirmation", async () => {
   const app = Fastify();
   const env = liteEnv();
   const guards = requestGuards(env, DeterministicEmbeddingProvider);
@@ -6089,106 +6256,27 @@ test("product observe persists lifecycle relation graph and guide suppresses sup
     assert.equal(currentObserve.statusCode, 200);
     const currentBody = currentObserve.json();
     const currentNodeId = currentBody.memory_write.nodes[0].id;
-    assert.ok(currentBody.memory_write.edges.some((edge: Record<string, unknown>) =>
+    assert.equal(currentBody.memory_write.edges.some((edge: Record<string, unknown>) =>
       edge.type === "contradicts"
       && edge.src_id === currentNodeId
       && edge.dst_id === oldNodeId,
-    ));
+    ), false);
 
-    const guide = await app.inject({
-      method: "POST",
-      url: "/v1/guide",
-      payload: {
-        tenant_id: "default",
-        scope: "default",
-        query_text: "AIONIS_RELATION_OLD_MARKER legacy/payments/old-checkout.ts checkout validation",
-        consumer_agent_id: "local-user",
-        limit: 1,
-        include_packets: true,
-      },
+    const persistedEdges = await liteRecallStore.createRecallAccess().stage2Edges({
+      seedIds: [currentNodeId],
+      scope: "default",
+      neighborhoodHops: 1,
+      minEdgeWeight: 0,
+      minEdgeConfidence: 0,
+      hop1Budget: 10,
+      hop2Budget: 10,
+      edgeFetchBudget: 10,
     });
-    assert.equal(guide.statusCode, 200);
-    const guideBody = guide.json();
-    const oldMemory = guideBody.memory_packet.relevant_memories.find((entry: Record<string, unknown>) =>
-      entry.memory_id === oldNodeId,
-    );
-    assert.ok(oldMemory);
-    assert.equal(oldMemory.lifecycle_state, "contested");
-    assert.equal(oldMemory.authority, "candidate");
-    assert.ok(guideBody.memory_packet.evidence_trail.some((entry: Record<string, unknown>) =>
-      entry.source === "edge"
-      && entry.relation === "contradicts"
-      && entry.memory_id === oldNodeId,
-    ));
-    assert.ok(guideBody.memory_packet.source_map.internal_surfaces_used.includes("memory_lifecycle_relation_graph"));
-    assert.equal(
-      guideBody.agent_context.use_now.some((entry: string) => entry.includes("AIONIS_RELATION_OLD_MARKER")),
-      false,
-    );
-    assert.ok(
-      guideBody.agent_context.inspect_before_use.some((entry: string) =>
-        entry.includes(oldNodeId) || entry.includes("Initial checkout validation investigation")
-      ),
-    );
-    assert.ok(
-      guideBody.agent_context.inspect_before_use.some((entry: string) =>
-        entry.startsWith("Premise risk:")
-        && entry.includes(currentNodeId)
-        && entry.includes("contradicts")
-      ),
-    );
-    assert.ok(guideBody.agent_context.risk.reasons.includes("premise_firewall_query_conflicts_with_current_memory"));
-    assert.ok(guideBody.source_map.internal_surfaces_used.includes("memory_contract"));
-    assert.ok(guideBody.source_map.internal_surfaces_used.includes("premise_firewall"));
-    assert.equal(guideBody.agent_context.prompt_text.includes("legacy/payments/old-checkout.ts"), false);
-    assert.equal(guideBody.agent_context.prompt_text.includes("decision_reviews"), false);
-
-    const debugTrace = await app.inject({
-      method: "POST",
-      url: "/v1/debug/memory-decision-trace",
-      payload: {
-        tenant_id: "default",
-        scope: "default",
-        product_trace: {
-          after_guide: guideBody,
-        },
-      },
-    });
-    assert.equal(debugTrace.statusCode, 200);
-    const debugBody = debugTrace.json();
-    assert.deepEqual(debugBody.source_map.routes_used, ["/v1/debug/memory-decision-trace"]);
-    assertDecisionTraceMatchesGuide(debugBody.memory_decision_trace, guideBody);
-    const oldDecision = debugBody.memory_decision_trace.memory_decisions.find((entry: Record<string, unknown>) =>
-      entry.memory_id === oldNodeId,
-    );
-    assert.equal(oldDecision?.decision_kind, "downgraded");
-    assert.ok((oldDecision?.reason_codes as string[]).includes("premise_firewall_query_risk"));
-    assert.ok(debugBody.memory_decision_trace.source_map.internal_surfaces_used.includes("premise_firewall"));
-    assert.ok(debugBody.memory_decision_trace.memory_use_receipt.risk_flags.includes("premise_firewall_query_risk"));
-    assert.equal(objectValue(oldDecision?.downgraded_detail, "old decision downgraded detail").by_memory_id, currentNodeId);
-
-    const auditReport = await app.inject({
-      method: "POST",
-      url: "/v1/audit/memory-decision-report",
-      payload: {
-        tenant_id: "default",
-        scope: "default",
-        product_trace: {
-          after_guide: guideBody,
-        },
-      },
-    });
-    assert.equal(auditReport.statusCode, 200);
-    const auditBody = auditReport.json();
-    const downgraded = auditBody.memory_decision_audit.decision_reviews.downgraded_memories[0];
-    assert.equal(downgraded.memory_id, oldNodeId);
-    assert.equal(downgraded.by_memory_id, currentNodeId);
-    assert.equal(downgraded.lifecycle_relation, "contradicts");
-    assert.equal(downgraded.producer, "rule_cue");
-    assert.equal(downgraded.gate.accepted, true);
-    assert.ok(downgraded.signals.source_newer);
-    assert.deepEqual(auditBody.source_map.routes_used, ["/v1/audit/memory-decision-report"]);
-    assertAuditReportMatchesTrace(auditBody.memory_decision_audit, debugBody.memory_decision_trace);
+    assert.equal(persistedEdges.some((edge) =>
+      edge.type === "contradicts"
+      && edge.src_id === currentNodeId
+      && edge.dst_id === oldNodeId,
+    ), false);
   } finally {
     await app.close();
   }

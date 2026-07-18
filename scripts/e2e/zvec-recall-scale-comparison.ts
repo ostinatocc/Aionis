@@ -112,7 +112,7 @@ async function populateStore(dbPath: string, totalNodes: number): Promise<void> 
   const writeStore = createLiteWriteStore(dbPath);
   try {
     await writeStore.withTx(async () => {
-      const commitId = await writeStore.insertCommit({
+      const commitId = await writeStore.insertLegacyV1CommitForMigrationOrTestFixture({
         scope: SCOPE,
         parentCommitId: null,
         inputSha256: "zvec-scale-comparison",
