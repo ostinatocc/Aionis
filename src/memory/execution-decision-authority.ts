@@ -5,8 +5,8 @@ import type {
   LiteWriteStore,
 } from "../store/lite-write-store.js";
 import {
-  materializeSelfCommitReferences,
-  normalizeSelfCommitReferences,
+  materializeAppliedAuthorityRow,
+  normalizeAppliedAuthorityRow,
   type CanonicalAuthorityMutationVerificationV2,
   type CanonicalAuthorityTableMutationV2,
 } from "../store/write-commit-authority.js";
@@ -159,7 +159,11 @@ export async function persistInitialExecutionDecisionAuthority(args: {
         authorityKind: "execution_decision_initial_receipt",
         mutations: [mutation],
         async apply({ commitId }) {
-          const materialized = materializeSelfCommitReferences(after, commitId);
+          const materialized = materializeAppliedAuthorityRow(
+            "lite_memory_execution_decisions",
+            after,
+            commitId,
+          );
           await args.store.insertExecutionDecision({
             id: String(materialized.id),
             scope: String(materialized.scope),
@@ -192,7 +196,8 @@ export async function persistInitialExecutionDecisionAuthority(args: {
           const verification: CanonicalAuthorityMutationVerificationV2 = {
             table: "lite_memory_execution_decisions",
             identity: { scope: args.decision.scope, id: args.decision.id },
-            after: normalizeSelfCommitReferences(
+            after: normalizeAppliedAuthorityRow(
+              "lite_memory_execution_decisions",
               executionDecisionAuthorityRow(row),
               commitId,
             ),

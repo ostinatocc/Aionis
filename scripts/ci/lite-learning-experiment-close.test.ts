@@ -166,6 +166,10 @@ function openCloseRuntime(
   const writeStore = createLiteWriteStoreFromDatabase(database, {
     annProjectionEnabled: false,
     authorityReceiptKeyring,
+    // The confirmatory fixture deliberately seeds 768 opaque pre-v2 scope
+    // roots before exercising current signed-close authority. No business row
+    // is claimed by those legacy commits, and the normal v6 audit still runs.
+    allowLegacyV1Fixtures: true,
   });
   return {
     database,
@@ -644,7 +648,10 @@ test("receipt and released-lease tampering are rejected by restart integrity", a
         await assertRestartIntegrityFailure(
           temp.path,
           tamper === "receipt"
-            ? /experiment_close_receipt_attestation_mac/u
+            // v6 binds the complete operation receipt row into direct-v2
+            // authority, so generic full-row verification may reject the
+            // tamper before the domain-specific attestation verifier runs.
+            ? /lite_memory_commit_authority_terminal_row_mismatch|experiment_close_receipt_attestation_mac/u
             : /experiment_close_lease_release_binding/u,
         );
       } finally {

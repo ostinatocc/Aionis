@@ -8,6 +8,9 @@ import stableStringify from "fast-json-stable-stringify";
 import {
   runAppliedAuthorityMutationV2,
 } from "../../src/memory/applied-authority-mutation.ts";
+import {
+  persistInitialExecutionDecisionAuthority,
+} from "../../src/memory/execution-decision-authority.ts";
 import { ruleFeedback } from "../../src/memory/feedback.ts";
 import {
   ruleDefAuthorityRow,
@@ -20,10 +23,12 @@ import {
   createLiteWriteStoreFromDatabase,
   type LiteWriteStore,
 } from "../../src/store/lite-write-store.ts";
+import type { WriteExistingNodeState } from "../../src/store/write-access.ts";
 import {
   APPLIED_AUTHORITY_TABLE_CONTRACTS,
   buildCanonicalAppliedAuthorityMutationV2,
-  normalizeSelfCommitReferences,
+  materializeAppliedAuthorityRow,
+  normalizeAppliedAuthorityRow,
 } from "../../src/store/write-commit-authority.ts";
 import { sha256Hex } from "../../src/util/crypto.ts";
 
@@ -110,6 +115,35 @@ function commits(fixture: Fixture, scope: string): CommitRow[] {
 
 function sortedKeys(value: Record<string, unknown>): string[] {
   return Object.keys(value).sort();
+}
+
+function nodeAuthorityRow(state: WriteExistingNodeState): Record<string, unknown> {
+  return {
+    id: state.id,
+    scope: state.scope,
+    client_id: state.clientId,
+    type: state.type,
+    tier: state.tier,
+    title: state.title,
+    text_summary: state.textSummary,
+    slots_json: JSON.parse(state.slotsJson),
+    raw_ref: state.rawRef,
+    evidence_ref: state.evidenceRef,
+    embedding_vector_json: state.embeddingVector === null ? null : JSON.parse(state.embeddingVector),
+    embedding_model: state.embeddingModel,
+    memory_lane: state.memoryLane,
+    producer_agent_id: state.producerAgentId,
+    owner_agent_id: state.ownerAgentId,
+    owner_team_id: state.ownerTeamId,
+    embedding_status: state.embeddingStatus,
+    embedding_last_error: state.embeddingLastError,
+    salience: state.salience,
+    importance: state.importance,
+    confidence: state.confidence,
+    redaction_version: state.redactionVersion,
+    commit_id: state.commitId,
+    created_at: state.createdAt,
+  };
 }
 
 test("rule state and feedback use one exact v2 authority chain and stable no-op head", async () => {
@@ -278,7 +312,11 @@ test("authority read-after mismatch and mutating plan roll back domain rows, com
               return [{
                 table: "lite_memory_rule_defs",
                 identity,
-                after: normalizeSelfCommitReferences(ruleDefAuthorityRow(actual), commitId),
+                after: normalizeAppliedAuthorityRow(
+                  "lite_memory_rule_defs",
+                  ruleDefAuthorityRow(actual),
+                  commitId,
+                ),
               }];
             },
           };
@@ -321,6 +359,198 @@ test("authority read-after mismatch and mutating plan roll back domain rows, com
     assert.deepEqual(await fixture.store.getRuleDef(scope, ruleNodeId), rowBefore);
     assert.deepEqual(await fixture.store.readScopeHead(scope), headBefore);
     assert.deepEqual(commits(fixture, scope), commitsBefore);
+  } finally {
+    await closeFixture(fixture);
+  }
+});
+
+test("$self is materialized only at authority reference paths and literal user values survive read-after verification", async () => {
+  const fixture = await openFixture();
+  const scope = "authority-self-reference-paths";
+  const appliedAt = "2026-07-19T00:00:00.000Z";
+  try {
+    const slots = {
+      literal: "$self",
+      nested: {
+        literal: "$self",
+        coincidentally_a_commit_id: "authority-commit-id",
+      },
+    };
+    const nodeAfter = {
+      id: "self-literal-node",
+      scope,
+      client_id: null,
+      type: "procedure",
+      tier: "warm",
+      title: "Literal self reference",
+      text_summary: "The literal $self in slots is user data.",
+      slots_json: slots,
+      raw_ref: null,
+      evidence_ref: null,
+      embedding_vector_json: null,
+      embedding_model: null,
+      memory_lane: "shared",
+      producer_agent_id: null,
+      owner_agent_id: null,
+      owner_team_id: null,
+      embedding_status: "pending",
+      embedding_last_error: null,
+      salience: 0.4,
+      importance: 0.5,
+      confidence: 0.6,
+      redaction_version: 0,
+      commit_id: "$self",
+      created_at: appliedAt,
+    };
+    const nodeIdentity = { scope, id: nodeAfter.id };
+    const nodeAuthority = await runAppliedAuthorityMutationV2<void>({
+      store: fixture.store,
+      scope,
+      inputSha256: sha256Hex("authority self reference path regression"),
+      actor: "authority-test",
+      plan: async () => ({
+        status: "mutate",
+        authorityKind: "self_reference_path_guard",
+        mutations: [{
+          table: "lite_memory_nodes",
+          identity: nodeIdentity,
+          operation: "insert",
+          before: null,
+          after: nodeAfter,
+        }],
+        apply: async ({ commitId }) => {
+          const materialized = materializeAppliedAuthorityRow(
+            "lite_memory_nodes",
+            nodeAfter,
+            commitId,
+          );
+          await fixture.store.insertNode({
+            id: String(materialized.id),
+            scope: String(materialized.scope),
+            clientId: null,
+            type: String(materialized.type),
+            tier: String(materialized.tier),
+            title: String(materialized.title),
+            textSummary: String(materialized.text_summary),
+            slotsJson: JSON.stringify(materialized.slots_json),
+            rawRef: null,
+            evidenceRef: null,
+            embeddingVector: null,
+            embeddingModel: null,
+            memoryLane: "shared",
+            producerAgentId: null,
+            ownerAgentId: null,
+            ownerTeamId: null,
+            embeddingStatus: "pending",
+            embeddingLastError: null,
+            salience: 0.4,
+            importance: 0.5,
+            confidence: 0.6,
+            redactionVersion: 0,
+            commitId,
+            createdAt: appliedAt,
+          });
+        },
+        verify: async ({ commitId }) => {
+          const state = (await fixture.store.nodeStatesByIds(scope, [nodeAfter.id])).get(nodeAfter.id);
+          assert.ok(state);
+          return [{
+            table: "lite_memory_nodes",
+            identity: nodeIdentity,
+            after: normalizeAppliedAuthorityRow(
+              "lite_memory_nodes",
+              nodeAuthorityRow(state),
+              commitId,
+            ),
+          }];
+        },
+      }),
+    });
+    assert.equal(nodeAuthority.status, "applied");
+    const storedNode = (await fixture.store.nodeStatesByIds(scope, [nodeAfter.id])).get(nodeAfter.id);
+    assert.ok(storedNode);
+    assert.deepEqual(JSON.parse(storedNode.slotsJson), slots);
+    assert.equal(storedNode.commitId, nodeAuthority.commitId);
+
+    const decision = await persistInitialExecutionDecisionAuthority({
+      store: fixture.store,
+      actor: "authority-test",
+      decision: {
+        id: "self-literal-decision",
+        scope,
+        decisionKind: "tools_select",
+        runId: null,
+        selectedTool: "read",
+        candidatesJson: [{
+          tool: "$self",
+          metadata: { literal: "$self", coincidentally_a_commit_id: nodeAuthority.commitId },
+        }],
+        contextSha256: "a".repeat(64),
+        policySha256: "b".repeat(64),
+        sourceRuleIds: [],
+        metadataJson: {
+          literal: "$self",
+          nested: { coincidentally_a_commit_id: nodeAuthority.commitId },
+        },
+        commitId: null,
+        createdAt: "2026-07-19T00:00:01.000Z",
+      },
+    });
+    assert.equal(decision.authority_commit.revision, 2);
+    const storedDecision = await fixture.store.getExecutionDecision({ scope, id: "self-literal-decision" });
+    assert.ok(storedDecision);
+    assert.deepEqual(storedDecision.candidates_json, [{
+      tool: "$self",
+      metadata: { literal: "$self", coincidentally_a_commit_id: nodeAuthority.commitId },
+    }]);
+    assert.deepEqual(storedDecision.metadata_json, {
+      literal: "$self",
+      nested: { coincidentally_a_commit_id: nodeAuthority.commitId },
+    });
+
+    const normalized = normalizeAppliedAuthorityRow(
+      "lite_memory_execution_decisions",
+      {
+        ...storedDecision,
+        commit_id: decision.authority_commit.commit_id,
+        candidates_json: [{ nested: { coincidentally_a_commit_id: decision.authority_commit.commit_id } }],
+        metadata_json: { nested: { coincidentally_a_commit_id: decision.authority_commit.commit_id } },
+        source_rule_ids_json: storedDecision.source_rule_ids,
+      },
+      decision.authority_commit.commit_id,
+    );
+    assert.equal(normalized.commit_id, "$self");
+    assert.deepEqual(normalized.candidates_json, [{
+      nested: { coincidentally_a_commit_id: decision.authority_commit.commit_id },
+    }]);
+    assert.deepEqual(normalized.metadata_json, {
+      nested: { coincidentally_a_commit_id: decision.authority_commit.commit_id },
+    });
+
+    const operationReferencePaths = materializeAppliedAuthorityRow(
+      "lite_runtime_write_operations",
+      {
+        tenant_id: "default",
+        scope,
+        operation_kind: "self_reference_path_guard",
+        operation_id: "self-reference-operation",
+        request_sha256: "c".repeat(64),
+        receipt_json: {
+          result_commit_id: "$self",
+          literal: "$self",
+          nested: { coincidentally_a_commit_id: decision.authority_commit.commit_id },
+        },
+        commit_id: "$self",
+        created_at: "2026-07-19T00:00:02.000Z",
+      },
+      decision.authority_commit.commit_id,
+    );
+    assert.equal(operationReferencePaths.commit_id, decision.authority_commit.commit_id);
+    assert.deepEqual(operationReferencePaths.receipt_json, {
+      result_commit_id: decision.authority_commit.commit_id,
+      literal: "$self",
+      nested: { coincidentally_a_commit_id: decision.authority_commit.commit_id },
+    });
   } finally {
     await closeFixture(fixture);
   }

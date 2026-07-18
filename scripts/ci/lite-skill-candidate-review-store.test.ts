@@ -26,6 +26,11 @@ import {
 } from "../../src/store/memory-store.ts";
 import { buildAionisEffectReport } from "../../src/memory/product-output/learning-effect.ts";
 import { evaluateAionisEffect } from "../../src/kernel/effect-evaluator.ts";
+import {
+  LITE_RUNTIME_AUTHORITY_ADOPTION_BINDING_TABLE,
+  LITE_RUNTIME_AUTHORITY_ADOPTION_MANIFEST_TABLE,
+  LITE_RUNTIME_AUTHORITY_ADOPTION_TRIGGERS,
+} from "../../src/store/lite-runtime-authority-adoption-contract.ts";
 
 function tmpDbPath(name: string): string {
   return path.join(fs.mkdtempSync(path.join(os.tmpdir(), "aionis-skill-candidate-review-")), `${name}.sqlite`);
@@ -99,6 +104,13 @@ async function createCompleteV2RuntimeFixture(dbPath: string): Promise<void> {
     for (const trigger of LITE_LEARNING_LEDGER_REQUIRED_TRIGGER_NAMES) {
       db.exec(`DROP TRIGGER IF EXISTS ${trigger}`);
     }
+    for (const trigger of Object.keys(LITE_RUNTIME_AUTHORITY_ADOPTION_TRIGGERS)) {
+      db.exec(`DROP TRIGGER IF EXISTS ${trigger}`);
+    }
+    // v6 adoption bindings reference manifests, so the downgrade fixture must
+    // remove them in dependency order before presenting a complete v2 shape.
+    db.exec(`DROP TABLE IF EXISTS ${LITE_RUNTIME_AUTHORITY_ADOPTION_BINDING_TABLE}`);
+    db.exec(`DROP TABLE IF EXISTS ${LITE_RUNTIME_AUTHORITY_ADOPTION_MANIFEST_TABLE}`);
     for (const table of [...LITE_LEARNING_LEDGER_REQUIRED_TABLE_NAMES].reverse()) {
       db.exec(`DROP TABLE IF EXISTS ${table}`);
     }
@@ -449,7 +461,7 @@ test("normal Runtime assembly shares the main write transaction for fresh and up
         try {
           const report = inspectLiteRuntimeSchema(schemaDb);
           assert.equal(report.classification, "current");
-          assert.equal(report.detected_version, 5);
+          assert.equal(report.detected_version, 6);
         } finally {
           schemaDb.close();
         }

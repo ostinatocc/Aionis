@@ -38,7 +38,7 @@ import {
   validateLearningExternalPublicRunAuthorityV1,
   type LearningExternalPublicRunAuthorityExpectedAuthorityV1,
   type LearningExternalPublicRunAuthorityV1,
-} from "../../src/memory/learning-external-public-authority.js";
+} from "../../packages/aionis-learning-authority/src/memory/learning-external-public-authority.js";
 
 type JsonObject = Record<string, unknown>;
 type SigningKeys = Readonly<{ publicKey: KeyObject; privateKey: KeyObject }>;

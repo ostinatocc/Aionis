@@ -10,16 +10,31 @@ import {
 } from "../../src/store/recall-access.ts";
 import { createLocalAnnIndex } from "../../src/store/ann/local-ann-index.ts";
 import { createZvecAnnIndex } from "../../src/store/ann/zvec-ann-index.ts";
+import { inspectLiteMemoryCommitAuthority } from
+  "../../src/store/lite-memory-commit-integrity.ts";
 import { createLiteRecallStore } from "../../src/store/lite-recall-store.ts";
-import { createLiteWriteStore } from "../../src/store/lite-write-store.ts";
+import { createLiteRuntimeDatabase } from "../../src/store/lite-runtime-database.ts";
+import {
+  createLiteWriteStore,
+  createLiteWriteStoreFromDatabase,
+} from "../../src/store/lite-write-store.ts";
 
 function tmpDbPath(name: string): string {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), "aionis-lite-recall-store-access-"));
   return path.join(dir, `${name}.sqlite`);
 }
 
+const EMBEDDING_DIMENSIONS = 1_536;
+
+function embeddingValues(values: number[]): number[] {
+  assert.ok(values.length > 0 && values.length <= EMBEDDING_DIMENSIONS);
+  return values.length === EMBEDDING_DIMENSIONS
+    ? [...values]
+    : [...values, ...Array.from({ length: EMBEDDING_DIMENSIONS - values.length }, () => 0)];
+}
+
 function embedding(values: number[]): string {
-  return JSON.stringify(values);
+  return JSON.stringify(embeddingValues(values));
 }
 
 function deterministicUuid(n: number): string {
@@ -37,6 +52,77 @@ async function insertCommit(store: ReturnType<typeof createLiteWriteStore>, scop
     promptVersion: null,
     commitHash: `commit-hash-${suffix}`,
   });
+}
+
+async function prepareMigratedRecallFixture(
+  dbPath: string,
+  seed: (store: ReturnType<typeof createLiteWriteStore>) => Promise<void>,
+): Promise<void> {
+  const legacyDatabase = createLiteRuntimeDatabase(dbPath);
+  const legacyStore = createLiteWriteStoreFromDatabase(legacyDatabase, {
+    annProjectionEnabled: false,
+    allowLegacyV1Fixtures: true,
+    closeDatabaseOnClose: false,
+  });
+  let legacyStoreClosed = false;
+  try {
+    legacyDatabase.db.exec("BEGIN IMMEDIATE");
+    try {
+      legacyDatabase.db.exec("DROP TABLE lite_runtime_authority_adoption_bindings");
+      legacyDatabase.db.exec("DROP TABLE lite_runtime_authority_adoption_manifests");
+      legacyDatabase.db.prepare(
+        `UPDATE lite_runtime_schema_metadata
+         SET version = 5, updated_at = ?
+         WHERE component = 'write_projection'`,
+      ).run("2026-07-19T00:00:00.000Z");
+      legacyDatabase.db.exec("COMMIT");
+    } catch (error) {
+      legacyDatabase.db.exec("ROLLBACK");
+      throw error;
+    }
+
+    await seed(legacyStore);
+    const legacyAuthority = inspectLiteMemoryCommitAuthority(legacyDatabase.db);
+    assert.equal(legacyAuthority.ok, true, JSON.stringify(legacyAuthority.findings));
+    assert.ok(legacyAuthority.legacy_commit_count > 0);
+    assert.equal(legacyAuthority.v2_commit_count, 0);
+    await legacyStore.close();
+    legacyStoreClosed = true;
+  } finally {
+    if (!legacyStoreClosed) await legacyStore.close().catch(() => undefined);
+    await legacyDatabase.close();
+  }
+
+  const migratedDatabase = createLiteRuntimeDatabase(dbPath);
+  const migratedStore = createLiteWriteStoreFromDatabase(migratedDatabase, {
+    annProjectionEnabled: false,
+    closeDatabaseOnClose: false,
+  });
+  try {
+    const schema = migratedDatabase.readDb.prepare<{ version: number }>(
+      `SELECT version FROM lite_runtime_schema_metadata
+       WHERE component = 'write_projection'`,
+    ).get();
+    assert.equal(schema?.version, 6);
+    const migratedAuthority = inspectLiteMemoryCommitAuthority(migratedDatabase.db);
+    assert.equal(migratedAuthority.ok, true, JSON.stringify(migratedAuthority.findings));
+    assert.ok(migratedAuthority.adoption_manifest_count > 0);
+    assert.ok(migratedAuthority.adoption_binding_count > 0);
+    assert.equal(
+      migratedAuthority.adoption_binding_verified_count,
+      migratedAuthority.adoption_binding_count,
+    );
+    assert.equal(
+      migratedAuthority.adoption_assurance,
+      "immutable_v5_authority_field_bindings_authenticated_by_v2_manifest",
+    );
+  } finally {
+    try {
+      await migratedStore.close();
+    } finally {
+      await migratedDatabase.close();
+    }
+  }
 }
 
 async function insertReadyNode(
@@ -86,13 +172,11 @@ async function insertReadyNode(
 
 test("stage1 bounded ANN keeps exact recovery unbounded", async () => {
   const dbPath = tmpDbPath("stage1-exact-recovery");
-  const writeStore = createLiteWriteStore(dbPath);
-  const recallStore = createLiteRecallStore(dbPath);
-  try {
-    await writeStore.withTx(async () => {
-      const commitId = await insertCommit(writeStore, "default", "stage1-exact-recovery");
+  await prepareMigratedRecallFixture(dbPath, async (legacyStore) => {
+    await legacyStore.withTx(async () => {
+      const commitId = await insertCommit(legacyStore, "default", "stage1-exact-recovery");
       for (let i = 0; i < 2050; i += 1) {
-        await insertReadyNode(writeStore, {
+        await insertReadyNode(legacyStore, {
           id: `distractor-${String(i).padStart(4, "0")}`,
           vector: [0, 1, 0],
           salience: 1,
@@ -100,7 +184,7 @@ test("stage1 bounded ANN keeps exact recovery unbounded", async () => {
           commitId,
         });
       }
-      await insertReadyNode(writeStore, {
+      await insertReadyNode(legacyStore, {
         id: "target-exact-match",
         vector: [1, 0, 0],
         salience: 0,
@@ -108,10 +192,13 @@ test("stage1 bounded ANN keeps exact recovery unbounded", async () => {
         commitId,
       });
     });
-
+  });
+  const writeStore = createLiteWriteStore(dbPath);
+  const recallStore = createLiteRecallStore(dbPath);
+  try {
     const access = recallStore.createRecallAccess();
     const ann = await access.stage1CandidatesAnn({
-      queryEmbedding: [1, 0, 0],
+      queryEmbedding: embeddingValues([1, 0, 0]),
       scope: "default",
       oversample: 1,
       limit: 1,
@@ -119,7 +206,7 @@ test("stage1 bounded ANN keeps exact recovery unbounded", async () => {
       consumerTeamId: null,
     });
     const exact = await access.stage1CandidatesExactRecovery({
-      queryEmbedding: [1, 0, 0],
+      queryEmbedding: embeddingValues([1, 0, 0]),
       scope: "default",
       oversample: 1,
       limit: 1,
@@ -141,6 +228,35 @@ test("stage1 bounded ANN keeps exact recovery unbounded", async () => {
 
 test("stage1 local ANN sidecar is opt-in and still verifies candidates through SQLite facts", async () => {
   const dbPath = tmpDbPath("stage1-local-ann-sidecar");
+  await prepareMigratedRecallFixture(dbPath, async (legacyStore) => {
+    await legacyStore.withTx(async () => {
+      const commitId = await insertCommit(legacyStore, "default", "stage1-local-ann-sidecar");
+      for (let i = 0; i < 2050; i += 1) {
+        await insertReadyNode(legacyStore, {
+          id: `ann-distractor-${String(i).padStart(4, "0")}`,
+          vector: [0, 1, 0],
+          salience: 1,
+          confidence: 1,
+          commitId,
+        });
+      }
+      await insertReadyNode(legacyStore, {
+        id: "ann-private-exact-match",
+        vector: [1, 0, 0],
+        salience: 0,
+        confidence: 1,
+        ownerTeamId: "other-team",
+        commitId,
+      });
+      await insertReadyNode(legacyStore, {
+        id: "ann-visible-exact-match",
+        vector: [1, 0, 0],
+        salience: 0,
+        confidence: 0.5,
+        commitId,
+      });
+    });
+  });
   const writeStore = createLiteWriteStore(dbPath);
   const recallStore = createLiteRecallStore(dbPath, {
     ann: {
@@ -150,37 +266,9 @@ test("stage1 local ANN sidecar is opt-in and still verifies candidates through S
     },
   });
   try {
-    await writeStore.withTx(async () => {
-      const commitId = await insertCommit(writeStore, "default", "stage1-local-ann-sidecar");
-      for (let i = 0; i < 2050; i += 1) {
-        await insertReadyNode(writeStore, {
-          id: `ann-distractor-${String(i).padStart(4, "0")}`,
-          vector: [0, 1, 0],
-          salience: 1,
-          confidence: 1,
-          commitId,
-        });
-      }
-      await insertReadyNode(writeStore, {
-        id: "ann-private-exact-match",
-        vector: [1, 0, 0],
-        salience: 0,
-        confidence: 1,
-        ownerTeamId: "other-team",
-        commitId,
-      });
-      await insertReadyNode(writeStore, {
-        id: "ann-visible-exact-match",
-        vector: [1, 0, 0],
-        salience: 0,
-        confidence: 0.5,
-        commitId,
-      });
-    });
-
     const access = recallStore.createRecallAccess();
     const candidates = await access.stage1CandidatesAnn({
-      queryEmbedding: [1, 0, 0],
+      queryEmbedding: embeddingValues([1, 0, 0]),
       scope: "default",
       oversample: 1,
       limit: 2,
@@ -195,7 +283,7 @@ test("stage1 local ANN sidecar is opt-in and still verifies candidates through S
     assert.equal(candidates[0]?.sources?.[0]?.index_name, "aionis_local_ann");
 
     const hybrid = await access.stage1HybridCandidates({
-      queryEmbedding: [1, 0, 0],
+      queryEmbedding: embeddingValues([1, 0, 0]),
       scope: "default",
       limit: 2,
       consumerAgentId: null,
@@ -211,6 +299,39 @@ test("stage1 local ANN sidecar is opt-in and still verifies candidates through S
 
 test("stage1 Substrate sidecar contributes only SQLite-verified Runtime candidates", async () => {
   const dbPath = tmpDbPath("stage1-substrate-sidecar");
+  await prepareMigratedRecallFixture(dbPath, async (legacyStore) => {
+    await legacyStore.withTx(async () => {
+      const commitId = await insertCommit(legacyStore, "default", "stage1-substrate-sidecar");
+      for (let i = 0; i < 80; i += 1) {
+        await insertReadyNode(legacyStore, {
+          id: `sidecar-distractor-${String(i).padStart(3, "0")}`,
+          vector: [1, 0, 0],
+          title: `semantic distractor ${i}`,
+          summary: `semantic distractor ${i}`,
+          salience: 1,
+          confidence: 1,
+          commitId,
+        });
+      }
+      await insertReadyNode(legacyStore, {
+        id: "private-sidecar-target",
+        vector: [0, 1, 0],
+        title: "private alpha bridge evidence",
+        summary: "private target returned by sidecar must not be exposed",
+        ownerTeamId: "other-team",
+        commitId,
+      });
+      await insertReadyNode(legacyStore, {
+        id: "visible-sidecar-target",
+        vector: [0, 1, 0],
+        title: "visible alpha bridge evidence",
+        summary: "visible target returned by sidecar should be merged as a candidate",
+        salience: 0.1,
+        confidence: 0.9,
+        commitId,
+      });
+    });
+  });
   const writeStore = createLiteWriteStore(dbPath);
   let providerClosed = false;
   const recallStore = createLiteRecallStore(dbPath, {
@@ -251,41 +372,9 @@ test("stage1 Substrate sidecar contributes only SQLite-verified Runtime candidat
     },
   });
   try {
-    await writeStore.withTx(async () => {
-      const commitId = await insertCommit(writeStore, "default", "stage1-substrate-sidecar");
-      for (let i = 0; i < 80; i += 1) {
-        await insertReadyNode(writeStore, {
-          id: `sidecar-distractor-${String(i).padStart(3, "0")}`,
-          vector: [1, 0, 0],
-          title: `semantic distractor ${i}`,
-          summary: `semantic distractor ${i}`,
-          salience: 1,
-          confidence: 1,
-          commitId,
-        });
-      }
-      await insertReadyNode(writeStore, {
-        id: "private-sidecar-target",
-        vector: [0, 1, 0],
-        title: "private alpha bridge evidence",
-        summary: "private target returned by sidecar must not be exposed",
-        ownerTeamId: "other-team",
-        commitId,
-      });
-      await insertReadyNode(writeStore, {
-        id: "visible-sidecar-target",
-        vector: [0, 1, 0],
-        title: "visible alpha bridge evidence",
-        summary: "visible target returned by sidecar should be merged as a candidate",
-        salience: 0.1,
-        confidence: 0.9,
-        commitId,
-      });
-    });
-
     const access = recallStore.createRecallAccess();
     const hybrid = await access.stage1HybridCandidates({
-      queryEmbedding: [1, 0, 0],
+      queryEmbedding: embeddingValues([1, 0, 0]),
       queryText: "question asks for alpha bridge evidence",
       scope: "default",
       limit: 5,
@@ -311,32 +400,16 @@ test("stage1 Substrate sidecar contributes only SQLite-verified Runtime candidat
 
 test("local ANN sidecar syncs ready embedding mutations after SQLite commit", async () => {
   const dbPath = tmpDbPath("stage1-local-ann-post-commit-sync");
-  let recallStore: ReturnType<typeof createLiteRecallStore> | null = null;
-  const writeStore = createLiteWriteStore(dbPath, {
-    annSync: {
-      syncNode: async (scope, nodeId) => {
-        await recallStore?.syncAnnNode(scope, nodeId);
-      },
-      deleteNode: async (nodeId) => {
-        await recallStore?.deleteAnnNode(nodeId);
-      },
-    },
-  });
-  recallStore = createLiteRecallStore(dbPath, {
-    ann: {
-      index: createLocalAnnIndex(),
-      rebuildOnStart: false,
-      maxCandidates: 16,
-      sourceReason: "local_ann_index",
-      indexName: "aionis_local_ann",
-    },
-  });
   const queryEmbedding = [1, ...Array.from({ length: 1535 }, () => 0)];
   const weakEmbedding = [0, 1, ...Array.from({ length: 1534 }, () => 0)];
-  try {
-    await writeStore.withTx(async () => {
-      const commitId = await insertCommit(writeStore, "default", "stage1-local-ann-post-commit-sync");
-      await writeStore.insertNode({
+  await prepareMigratedRecallFixture(dbPath, async (legacyStore) => {
+    await legacyStore.withTx(async () => {
+      const commitId = await insertCommit(
+        legacyStore,
+        "default",
+        "stage1-local-ann-post-commit-sync",
+      );
+      await legacyStore.insertNode({
         id: "fresh-pending-target",
         scope: "default",
         clientId: null,
@@ -361,7 +434,7 @@ test("local ANN sidecar syncs ready embedding mutations after SQLite commit", as
         redactionVersion: 0,
         commitId,
       });
-      await insertReadyNode(writeStore, {
+      await insertReadyNode(legacyStore, {
         id: "weak-ready-distractor",
         vector: weakEmbedding,
         title: "weak ready distractor",
@@ -369,7 +442,29 @@ test("local ANN sidecar syncs ready embedding mutations after SQLite commit", as
         commitId,
       });
     });
-
+  });
+  let recallStore: ReturnType<typeof createLiteRecallStore> | null = null;
+  const writeStore = createLiteWriteStore(dbPath, {
+    annSync: {
+      syncNode: async (scope, nodeId) => {
+        await recallStore?.syncAnnNode(scope, nodeId);
+      },
+      deleteNode: async (nodeId) => {
+        await recallStore?.deleteAnnNode(nodeId);
+      },
+    },
+  });
+  recallStore = createLiteRecallStore(dbPath, {
+    ann: {
+      index: createLocalAnnIndex(),
+      rebuildOnStart: false,
+      maxCandidates: 16,
+      sourceReason: "local_ann_index",
+      indexName: "aionis_local_ann",
+    },
+  });
+  try {
+    await recallStore.syncAnnNode("default", "weak-ready-distractor");
     const access = recallStore.createRecallAccess();
     const beforeReady = await access.stage1CandidatesAnn({
       queryEmbedding,
@@ -437,6 +532,35 @@ test("stage1 Zvec ANN sidecar is optional and still verifies candidates through 
 
   const dbPath = tmpDbPath("stage1-zvec-ann-sidecar");
   const zvecPath = `${dbPath}.zvec-ann`;
+  await prepareMigratedRecallFixture(dbPath, async (legacyStore) => {
+    await legacyStore.withTx(async () => {
+      const commitId = await insertCommit(legacyStore, "default", "stage1-zvec-ann-sidecar");
+      for (let i = 0; i < 128; i += 1) {
+        await insertReadyNode(legacyStore, {
+          id: `zvec-distractor-${String(i).padStart(4, "0")}`,
+          vector: [0, 1, 0],
+          salience: 1,
+          confidence: 1,
+          commitId,
+        });
+      }
+      await insertReadyNode(legacyStore, {
+        id: "zvec-private-exact-match",
+        vector: [1, 0, 0],
+        salience: 0,
+        confidence: 1,
+        ownerTeamId: "other-team",
+        commitId,
+      });
+      await insertReadyNode(legacyStore, {
+        id: "zvec-visible-exact-match",
+        vector: [1, 0, 0],
+        salience: 0,
+        confidence: 0.5,
+        commitId,
+      });
+    });
+  });
   const writeStore = createLiteWriteStore(dbPath);
   const recallStore = createLiteRecallStore(dbPath, {
     ann: {
@@ -448,36 +572,8 @@ test("stage1 Zvec ANN sidecar is optional and still verifies candidates through 
     },
   });
   try {
-    await writeStore.withTx(async () => {
-      const commitId = await insertCommit(writeStore, "default", "stage1-zvec-ann-sidecar");
-      for (let i = 0; i < 128; i += 1) {
-        await insertReadyNode(writeStore, {
-          id: `zvec-distractor-${String(i).padStart(4, "0")}`,
-          vector: [0, 1, 0],
-          salience: 1,
-          confidence: 1,
-          commitId,
-        });
-      }
-      await insertReadyNode(writeStore, {
-        id: "zvec-private-exact-match",
-        vector: [1, 0, 0],
-        salience: 0,
-        confidence: 1,
-        ownerTeamId: "other-team",
-        commitId,
-      });
-      await insertReadyNode(writeStore, {
-        id: "zvec-visible-exact-match",
-        vector: [1, 0, 0],
-        salience: 0,
-        confidence: 0.5,
-        commitId,
-      });
-    });
-
     const candidates = await recallStore.createRecallAccess().stage1CandidatesAnn({
-      queryEmbedding: [1, 0, 0],
+      queryEmbedding: embeddingValues([1, 0, 0]),
       scope: "default",
       oversample: 1,
       limit: 2,
@@ -499,12 +595,10 @@ test("stage1 Zvec ANN sidecar is optional and still verifies candidates through 
 
 test("stage1 tier budget keeps cold memories out of the default ANN path", async () => {
   const dbPath = tmpDbPath("stage1-tier-budget");
-  const writeStore = createLiteWriteStore(dbPath);
-  const recallStore = createLiteRecallStore(dbPath);
-  try {
-    await writeStore.withTx(async () => {
-      const commitId = await insertCommit(writeStore, "default", "stage1-tier-budget");
-      await insertReadyNode(writeStore, {
+  await prepareMigratedRecallFixture(dbPath, async (legacyStore) => {
+    await legacyStore.withTx(async () => {
+      const commitId = await insertCommit(legacyStore, "default", "stage1-tier-budget");
+      await insertReadyNode(legacyStore, {
         id: "hot-distractor",
         vector: [0, 1, 0],
         tier: "hot",
@@ -512,7 +606,7 @@ test("stage1 tier budget keeps cold memories out of the default ANN path", async
         confidence: 1,
         commitId,
       });
-      await insertReadyNode(writeStore, {
+      await insertReadyNode(legacyStore, {
         id: "cold-exact-match",
         vector: [1, 0, 0],
         tier: "cold",
@@ -521,10 +615,13 @@ test("stage1 tier budget keeps cold memories out of the default ANN path", async
         commitId,
       });
     });
-
+  });
+  const writeStore = createLiteWriteStore(dbPath);
+  const recallStore = createLiteRecallStore(dbPath);
+  try {
     const access = recallStore.createRecallAccess();
     const ann = await access.stage1CandidatesAnn({
-      queryEmbedding: [1, 0, 0],
+      queryEmbedding: embeddingValues([1, 0, 0]),
       scope: "default",
       oversample: 5,
       limit: 5,
@@ -532,7 +629,7 @@ test("stage1 tier budget keeps cold memories out of the default ANN path", async
       consumerTeamId: null,
     });
     const exactWithCold = await access.stage1CandidatesExactRecovery({
-      queryEmbedding: [1, 0, 0],
+      queryEmbedding: embeddingValues([1, 0, 0]),
       scope: "default",
       oversample: 5,
       limit: 5,
@@ -553,14 +650,16 @@ test("stage1 tier budget keeps cold memories out of the default ANN path", async
 
 test("memory recall expands to cold only through exact recovery and reports tier budget debug", async () => {
   const dbPath = tmpDbPath("stage1-cold-exact-recovery-debug");
-  const writeStore = createLiteWriteStore(dbPath);
-  const recallStore = createLiteRecallStore(dbPath);
   const queryEmbedding = [1, ...Array.from({ length: 1535 }, () => 0)];
   const coldOnlyTargetId = "00000000-0000-4000-8000-000000000111";
-  try {
-    await writeStore.withTx(async () => {
-      const commitId = await insertCommit(writeStore, "default", "stage1-cold-exact-recovery-debug");
-      await insertReadyNode(writeStore, {
+  await prepareMigratedRecallFixture(dbPath, async (legacyStore) => {
+    await legacyStore.withTx(async () => {
+      const commitId = await insertCommit(
+        legacyStore,
+        "default",
+        "stage1-cold-exact-recovery-debug",
+      );
+      await insertReadyNode(legacyStore, {
         id: coldOnlyTargetId,
         vector: queryEmbedding,
         tier: "cold",
@@ -569,7 +668,10 @@ test("memory recall expands to cold only through exact recovery and reports tier
         commitId,
       });
     });
-
+  });
+  const writeStore = createLiteWriteStore(dbPath);
+  const recallStore = createLiteRecallStore(dbPath);
+  try {
     const recall = await memoryRecallParsed(
       MemoryRecallRequest.parse({
         tenant_id: "default",
@@ -604,24 +706,22 @@ test("memory recall expands to cold only through exact recovery and reports tier
 
 test("memory recall uses route-level hybrid mode only when requested", async () => {
   const dbPath = tmpDbPath("route-level-hybrid-mode");
-  const writeStore = createLiteWriteStore(dbPath);
-  const recallStore = createLiteRecallStore(dbPath);
   const queryEmbedding = [1, ...Array.from({ length: 1535 }, () => 0)];
   const weakEmbedding = [0, 1, ...Array.from({ length: 1534 }, () => 0)];
   const marker = "ROUTE_LEVEL_HYBRID_MARKER";
   const semanticOnlyId = deterministicUuid(900);
   const lexicalTargetId = deterministicUuid(901);
-  try {
-    await writeStore.withTx(async () => {
-      const commitId = await insertCommit(writeStore, "default", "route-level-hybrid-mode");
-      await insertReadyNode(writeStore, {
+  await prepareMigratedRecallFixture(dbPath, async (legacyStore) => {
+    await legacyStore.withTx(async () => {
+      const commitId = await insertCommit(legacyStore, "default", "route-level-hybrid-mode");
+      await insertReadyNode(legacyStore, {
         id: semanticOnlyId,
         vector: queryEmbedding,
         title: "semantic-only route memory",
         summary: "Semantically close but missing the route-level hybrid marker.",
         commitId,
       });
-      await insertReadyNode(writeStore, {
+      await insertReadyNode(legacyStore, {
         id: lexicalTargetId,
         vector: weakEmbedding,
         title: `${marker} lexical target`,
@@ -633,7 +733,10 @@ test("memory recall uses route-level hybrid mode only when requested", async () 
         commitId,
       });
     });
-
+  });
+  const writeStore = createLiteWriteStore(dbPath);
+  const recallStore = createLiteRecallStore(dbPath);
+  try {
     const semanticOnly = await memoryRecallParsed(
       MemoryRecallRequest.parse({
         tenant_id: "default",
@@ -706,12 +809,10 @@ test("memory recall uses route-level hybrid mode only when requested", async () 
 
 test("stage1 SQL visibility preserves shared owner-agent semantics", async () => {
   const dbPath = tmpDbPath("stage1-visibility");
-  const writeStore = createLiteWriteStore(dbPath);
-  const recallStore = createLiteRecallStore(dbPath);
-  try {
-    await writeStore.withTx(async () => {
-      const commitId = await insertCommit(writeStore, "default", "stage1-visibility");
-      await insertReadyNode(writeStore, {
+  await prepareMigratedRecallFixture(dbPath, async (legacyStore) => {
+    await legacyStore.withTx(async () => {
+      const commitId = await insertCommit(legacyStore, "default", "stage1-visibility");
+      await insertReadyNode(legacyStore, {
         id: "shared-owner-agent-no-team",
         vector: [1, 0, 0],
         salience: 1,
@@ -721,9 +822,12 @@ test("stage1 SQL visibility preserves shared owner-agent semantics", async () =>
         commitId,
       });
     });
-
+  });
+  const writeStore = createLiteWriteStore(dbPath);
+  const recallStore = createLiteRecallStore(dbPath);
+  try {
     const candidates = await recallStore.createRecallAccess().stage1CandidatesAnn({
-      queryEmbedding: [1, 0, 0],
+      queryEmbedding: embeddingValues([1, 0, 0]),
       scope: "default",
       oversample: 5,
       limit: 5,
@@ -740,15 +844,13 @@ test("stage1 SQL visibility preserves shared owner-agent semantics", async () =>
 
 test("stage2 edges fetches only seed neighborhoods in both directions", async () => {
   const dbPath = tmpDbPath("stage2-edges");
-  const writeStore = createLiteWriteStore(dbPath);
-  const recallStore = createLiteRecallStore(dbPath);
-  try {
-    await writeStore.withTx(async () => {
-      const commitId = await insertCommit(writeStore, "default", "stage2-edges");
+  await prepareMigratedRecallFixture(dbPath, async (legacyStore) => {
+    await legacyStore.withTx(async () => {
+      const commitId = await insertCommit(legacyStore, "default", "stage2-edges");
       for (const id of ["seed", "src-neighbor", "dst-neighbor", "unrelated-a", "unrelated-b"]) {
-        await insertReadyNode(writeStore, { id, vector: [1, 0, 0], commitId });
+        await insertReadyNode(legacyStore, { id, vector: [1, 0, 0], commitId });
       }
-      await writeStore.upsertEdge({
+      await legacyStore.upsertEdge({
         id: "edge-from-seed",
         scope: "default",
         type: "related_to",
@@ -760,7 +862,7 @@ test("stage2 edges fetches only seed neighborhoods in both directions", async ()
         metadataJson: {},
         commitId,
       });
-      await writeStore.upsertEdge({
+      await legacyStore.upsertEdge({
         id: "edge-to-seed",
         scope: "default",
         type: "related_to",
@@ -772,7 +874,7 @@ test("stage2 edges fetches only seed neighborhoods in both directions", async ()
         metadataJson: {},
         commitId,
       });
-      await writeStore.upsertEdge({
+      await legacyStore.upsertEdge({
         id: "edge-unrelated",
         scope: "default",
         type: "related_to",
@@ -785,7 +887,10 @@ test("stage2 edges fetches only seed neighborhoods in both directions", async ()
         commitId,
       });
     });
-
+  });
+  const writeStore = createLiteWriteStore(dbPath);
+  const recallStore = createLiteRecallStore(dbPath);
+  try {
     const edges = await recallStore.createRecallAccess().stage2Edges({
       seedIds: ["seed"],
       scope: "default",
@@ -806,9 +911,7 @@ test("stage2 edges fetches only seed neighborhoods in both directions", async ()
 
 test("large Lite recall smoke keeps tier budget and edge neighborhood bounded", async () => {
   const dbPath = tmpDbPath("large-recall-smoke");
-  const writeStore = createLiteWriteStore(dbPath);
-  const recallStore = createLiteRecallStore(dbPath);
-  try {
+  await prepareMigratedRecallFixture(dbPath, async (writeStore) => {
     await writeStore.withTx(async () => {
       const commitId = await insertCommit(writeStore, "default", "large-recall-smoke");
       for (let i = 0; i < 2200; i += 1) {
@@ -911,10 +1014,14 @@ test("large Lite recall smoke keeps tier budget and edge neighborhood bounded", 
         });
       }
     });
+  });
+  const writeStore = createLiteWriteStore(dbPath);
+  const recallStore = createLiteRecallStore(dbPath);
+  try {
 
     const access = recallStore.createRecallAccess();
     const ann = await access.stage1CandidatesAnn({
-      queryEmbedding: [1, 0, 0],
+      queryEmbedding: embeddingValues([1, 0, 0]),
       scope: "default",
       oversample: 50,
       limit: 25,
@@ -925,7 +1032,7 @@ test("large Lite recall smoke keeps tier budget and edge neighborhood bounded", 
     assert.ok(ann.every((candidate) => candidate.tier === "hot" || candidate.tier === "warm"));
 
     const exact = await access.stage1CandidatesExactRecovery({
-      queryEmbedding: [1, 0, 0],
+      queryEmbedding: embeddingValues([1, 0, 0]),
       scope: "default",
       oversample: 50,
       limit: 5,

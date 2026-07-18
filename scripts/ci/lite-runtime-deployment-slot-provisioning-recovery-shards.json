@@ -1,0 +1,49 @@
+{
+  "schema_version": "aionis_lite_recovery_shards_v1",
+  "test_file": "scripts/ci/lite-runtime-deployment-slot-provisioning-recovery.test.ts",
+  "shards": {
+    "bootstrap": {
+      "expected_test_count": 26,
+      "test_names": [
+        "D3a.3a.1 journal bootstrap publication survives every internal SIGKILL window",
+        "D3a.3a.1 bootstrap mutex creation survives every internal SIGKILL window",
+        "D3a.3a.1 foreign Runtime bootstrap ownership fails before publication mutation",
+        "D3a.3a.1 bootstrap mutex prevents a stale absent inspection",
+        "D3a.3a.1 bootstrap mutex survives holder SIGKILL before journal creation",
+        "D3a.3a.1 published winner never unlinks an active bootstrap loser",
+        "D3a.3a.1 published prefixes tolerate and clean independent bootstrap scratch",
+        "D3a.3a.1 scratch cleanup SIGKILL cannot orphan a rollback journal",
+        "D3a.3a.1 scratch cleanup retains bootstrap mutex after closing SQLite"
+      ]
+    },
+    "receipt": {
+      "expected_test_count": 15,
+      "test_names": [
+        "D3a.3a.1 receipt publication exposes only absent or complete finals across SIGKILL",
+        "D3a.3a.1 linked terminal receipt publication remains non-terminal until cleanup",
+        "D3a.3a.1 abort discards a valid unpublished next-phase staging receipt",
+        "D3a.3a.1 abort cleans independent bootstrap scratch before tombstoning"
+      ]
+    },
+    "durable": {
+      "expected_test_count": 13,
+      "test_names": [
+        "D3a.3a.1 every provisioning durable phase survives real SIGKILL",
+        "D3a.3a.1 recovery is itself restartable after SIGKILL at every later phase"
+      ]
+    },
+    "terminal": {
+      "expected_test_count": 18,
+      "test_names": [
+        "D3a.3a.1 an early recovery lock excludes another process and survives holder SIGKILL",
+        "D3a.3a.1 lost journal savepoint blocks every authority mutation",
+        "D3a.3a.1 abort is durable, non-deleting, and blocks current-lineage reuse",
+        "D3a.3a.1 committed recovery never deletes or rewinds burned generations",
+        "D3a.3a.1 absent slots remain unmodified and require provisioning",
+        "D3a.3a.1 Runtime pin cannot alias bootstrap scratch or mutex namespaces",
+        "D3a.3a.1 committed replay still requires the exact live Runtime pin",
+        "D3a.3a.1 journal and authority identity tampering are zero-mutation manual cases"
+      ]
+    }
+  }
+}

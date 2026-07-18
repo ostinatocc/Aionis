@@ -3,7 +3,8 @@
 import { resolve } from "node:path";
 import { pathToFileURL } from "node:url";
 
-import { runLearningExternalEvidenceIngestCli } from "../src/operator/learning-external-evidence-ingest.js";
+import { runLearningExternalEvidenceIngestCli } from
+  "../packages/aionis-learning-authority/src/operator/learning-external-evidence-ingest.js";
 
 function isMainModule(): boolean {
   const invoked = process.argv[1];

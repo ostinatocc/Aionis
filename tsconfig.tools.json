@@ -5,7 +5,8 @@
     "rootDir": "."
   },
   "include": [
-    "tools/**/*.ts"
+    "tools/**/*.ts",
+    "packages/aionis-learning-authority/src/**/*.ts"
   ],
   "exclude": [
     "dist",

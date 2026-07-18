@@ -13,6 +13,7 @@ import { registerMemoryFeedbackToolRoutes } from "./support/register-memory-feed
 import { registerRuntimeErrorHandler } from "../../src/server/http-server.ts";
 import { buildAionisUri } from "../../src/memory/uri.ts";
 import { InflightGate } from "../../src/util/inflight_gate.ts";
+import { persistInitialExecutionDecisionAuthority } from "../../src/memory/execution-decision-authority.ts";
 
 function tmpDbPath(name: string): string {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), "aionis-lite-anchor-route-"));
@@ -96,7 +97,10 @@ async function seedAnchorFixture(store: ReturnType<typeof createLiteWriteStore>)
     write_access: store,
   }));
 
-  await store.insertExecutionDecision({
+  await persistInitialExecutionDecisionAuthority({
+    store,
+    actor: "local-user",
+    decision: {
     id: decisionId,
     scope: "default",
     decisionKind: "tools_select",
@@ -108,6 +112,8 @@ async function seedAnchorFixture(store: ReturnType<typeof createLiteWriteStore>)
     sourceRuleIds: [],
     metadataJson: { matched_rules: 1 },
     commitId: null,
+    createdAt: "2026-07-18T08:00:00.000Z",
+    },
   });
 
   return { anchorNodeId, payloadNodeId, decisionId };

@@ -17,9 +17,11 @@ import stableStringify from "fast-json-stable-stringify";
 import {
   learningExternalEvidenceIngestCliFailureJson,
   runLearningExternalEvidenceIngestCli,
-} from "../../src/operator/learning-external-evidence-ingest.js";
-import { LearningExternalEvidenceReceiptWriterError } from "../../src/operator/learning-external-evidence-receipt-writer.js";
-import { LiteLearningExternalEvidenceServiceError } from "../../src/store/lite-learning-external-evidence-service.js";
+} from "../../packages/aionis-learning-authority/src/operator/learning-external-evidence-ingest.js";
+import { LearningExternalEvidenceReceiptWriterError } from
+  "../../packages/aionis-learning-authority/src/operator/learning-external-evidence-receipt-writer.js";
+import { LiteLearningExternalEvidenceServiceError } from
+  "../../packages/aionis-learning-authority/src/store/lite-learning-external-evidence-service.js";
 
 type Invocation = Readonly<{
   exitCode: number;

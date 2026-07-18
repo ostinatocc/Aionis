@@ -5,11 +5,30 @@ import {
   FeedbackAttributedV1Schema,
   type FeedbackAttributedV1,
 } from "../memory/learning-episode-ledger.js";
+import {
+  canonicalLearningControlMemoryIds,
+  LEARNING_CONTROL_OPERATION_KIND,
+  LEARNING_CONTROL_OPERATION_OUTCOME_AUTHORITY_KIND,
+  LEARNING_CONTROL_OPERATION_OUTCOME_EVIDENCE_CONTRACT,
+  LEARNING_CONTROL_OPERATION_OUTCOME_EVIDENCE_FIELDS,
+  type LearningControlOperationOutcomeEvidenceV2,
+} from "../memory/learning-episode-ledger.js";
+import { resolveNodeLifecycleSignals } from "../memory/lifecycle-signals.js";
+import {
+  nodeAuthorityStateAfterPatchV2,
+  type NodeAuthorityStateV2,
+} from "../memory/node-embedding-freshness.js";
+import { mergeNodeFeedbackLearningControlSlots } from "../memory/node-feedback-state.js";
 import { sha256Hex } from "../util/crypto.js";
-import { stableUuid } from "../util/uuid.js";
 import type { LiteRuntimeDatabase } from "./lite-runtime-database.js";
+import { assertLiteMemoryCommitRootAuthority } from "./lite-memory-commit-integrity.js";
 import type { SqliteDatabase } from "./sqlite.js";
 import type { SqliteTransactionRunner } from "./sqlite-transaction-runner.js";
+import {
+  assertCanonicalV2MutationJson,
+  type CanonicalAppliedAuthorityMutationV2,
+  type CanonicalAuthorityTableMutationV2,
+} from "./write-commit-authority.js";
 
 const BoundedId = z.string().trim().min(1).max(256);
 const CanonicalTimestamp = z.string().datetime({ offset: true })
@@ -373,6 +392,426 @@ const LEARNING_CONTROL_COMMIT_DIFF_FIELDS = [
   "evidence_source",
 ] as const;
 
+const LEARNING_CONTROL_NODE_REQUEST_FIELDS = [
+  "tier", "slots_json", "text_summary", "salience", "importance", "confidence",
+  "update_tier", "side_effects", "operation_context",
+] as const;
+
+const LEARNING_CONTROL_NODE_SIDE_EFFECTS = [
+  "refresh_execution_native_index",
+  "refresh_keyword_index",
+  "refresh_embedding_projection",
+  "enqueue_ann_projection_when_enabled",
+] as const;
+
+const LEARNING_CONTROL_NODE_ROW_FIELDS = [
+  "id", "scope", "client_id", "type", "tier", "title", "text_summary",
+  "slots_json", "raw_ref", "evidence_ref", "embedding_vector_json",
+  "embedding_model", "memory_lane", "producer_agent_id", "owner_agent_id",
+  "owner_team_id", "embedding_status", "embedding_last_error", "salience",
+  "importance", "confidence", "redaction_version", "commit_id", "created_at",
+] as const;
+
+type RootedLearningControlNodeMutation = Readonly<{
+  memoryId: string;
+  before: NodeAuthorityStateV2;
+  after: NodeAuthorityStateV2;
+}>;
+
+type LearningControlMemoryStat = Readonly<{
+  exposureCount: number;
+  positiveAttributedUseCount: number;
+}>;
+
+function sameCanonicalValue(left: unknown, right: unknown): boolean {
+  return stableStringify(left) === stableStringify(right);
+}
+
+function nullableString(value: unknown): value is string | null {
+  return value === null || typeof value === "string";
+}
+
+function learningControlNodeAuthorityState(
+  value: unknown,
+  code: string,
+): NodeAuthorityStateV2 {
+  const row = exactObject(value, LEARNING_CONTROL_NODE_ROW_FIELDS, code);
+  if (typeof row.id !== "string" || row.id.length === 0
+    || typeof row.scope !== "string" || row.scope.length === 0
+    || !nullableString(row.client_id)
+    || typeof row.type !== "string" || row.type.length === 0
+    || typeof row.tier !== "string" || row.tier.length === 0
+    || !nullableString(row.title)
+    || !nullableString(row.text_summary)
+    || !row.slots_json || typeof row.slots_json !== "object" || Array.isArray(row.slots_json)
+    || !nullableString(row.raw_ref)
+    || !nullableString(row.evidence_ref)
+    || !nullableString(row.embedding_model)
+    || (row.memory_lane !== "private" && row.memory_lane !== "shared")
+    || !nullableString(row.producer_agent_id)
+    || !nullableString(row.owner_agent_id)
+    || !nullableString(row.owner_team_id)
+    || (row.embedding_status !== "pending"
+      && row.embedding_status !== "ready"
+      && row.embedding_status !== "failed")
+    || !nullableString(row.embedding_last_error)
+    || typeof row.salience !== "number" || !Number.isFinite(row.salience)
+    || typeof row.importance !== "number" || !Number.isFinite(row.importance)
+    || typeof row.confidence !== "number" || !Number.isFinite(row.confidence)
+    || !Number.isSafeInteger(row.redaction_version) || Number(row.redaction_version) < 0
+    || typeof row.commit_id !== "string" || row.commit_id.length === 0
+    || typeof row.created_at !== "string" || row.created_at.length === 0) {
+    throw new Error(`lite_learning_integrity_failed:${code}`);
+  }
+  return row as NodeAuthorityStateV2;
+}
+
+function learningControlV2OperationContext(args: {
+  mutation: CanonicalAppliedAuthorityMutationV2;
+  scope: string;
+}): {
+  operationContext: SqlRow;
+  nodes: RootedLearningControlNodeMutation[];
+} {
+  if (args.mutation.authority_kind !== "feedback_learning_control_inspect_before_use"
+    || args.mutation.contract !== "aionis_applied_authority_mutation_v2"
+    || args.mutation.digest_version !== 2
+    || args.mutation.mutations.length === 0) {
+    throw new Error("lite_learning_integrity_failed:learning_control_result_commit_diff");
+  }
+  const rootedMemoryIds: string[] = [];
+  const rootedNodes: RootedLearningControlNodeMutation[] = [];
+  let sharedOperationContext: SqlRow | null = null;
+  for (const [index, entry] of args.mutation.mutations.entries()) {
+    const mutation = entry as CanonicalAuthorityTableMutationV2;
+    if (mutation.table !== "lite_memory_nodes" || mutation.operation !== "update") {
+      throw new Error("lite_learning_integrity_failed:learning_control_result_commit_node_mutation_table");
+    }
+    const identity = exactObject(
+      mutation.identity,
+      ["scope", "id"],
+      `learning_control_result_commit_node_identity_${index}`,
+    );
+    const before = learningControlNodeAuthorityState(
+      mutation.before,
+      `learning_control_result_commit_node_before_${index}`,
+    );
+    const after = learningControlNodeAuthorityState(
+      mutation.after,
+      `learning_control_result_commit_node_after_${index}`,
+    );
+    const requested = exactObject(
+      mutation.requested,
+      LEARNING_CONTROL_NODE_REQUEST_FIELDS,
+      `learning_control_result_commit_node_requested_${index}`,
+    );
+    const memoryId = identity.id;
+    if (typeof memoryId !== "string" || memoryId.length === 0
+      || identity.scope !== args.scope
+      || before.id !== memoryId || before.scope !== args.scope
+      || after.id !== memoryId || after.scope !== args.scope
+      || typeof before.commit_id !== "string" || before.commit_id.length === 0
+      || before.commit_id === "$self" || after.commit_id !== "$self"
+      || requested.update_tier !== false
+      || stableStringify(requested.side_effects)
+        !== stableStringify(LEARNING_CONTROL_NODE_SIDE_EFFECTS)
+      || !sameCanonicalValue(requested.tier, after.tier)
+      || !sameCanonicalValue(requested.slots_json, after.slots_json)
+      || !sameCanonicalValue(requested.text_summary, after.text_summary)
+      || !sameCanonicalValue(requested.salience, after.salience)
+      || !sameCanonicalValue(requested.importance, after.importance)
+      || !sameCanonicalValue(requested.confidence, after.confidence)) {
+      throw new Error("lite_learning_integrity_failed:learning_control_result_commit_node_mutation");
+    }
+    const operationContext = exactObject(
+      requested.operation_context,
+      LEARNING_CONTROL_COMMIT_DIFF_FIELDS,
+      `learning_control_result_commit_operation_context_${index}`,
+    );
+    if (sharedOperationContext === null) {
+      sharedOperationContext = operationContext;
+    } else if (!sameCanonicalValue(sharedOperationContext, operationContext)) {
+      throw new Error("lite_learning_integrity_failed:learning_control_result_commit_operation_context_mismatch");
+    }
+    rootedMemoryIds.push(memoryId);
+    rootedNodes.push({ memoryId, before, after });
+  }
+  if (sharedOperationContext === null) {
+    throw new Error("lite_learning_integrity_failed:learning_control_result_commit_operation_context_missing");
+  }
+  const appliedMemoryIds = canonicalStrings(exactStringArray(
+    sharedOperationContext.applied_node_ids,
+    "learning_control_applied_node_ids",
+  ));
+  if (new Set(rootedMemoryIds).size !== rootedMemoryIds.length
+    || stableStringify(canonicalStrings(rootedMemoryIds)) !== stableStringify(appliedMemoryIds)) {
+    throw new Error("lite_learning_integrity_failed:learning_control_result_commit_node_subjects");
+  }
+  return { operationContext: sharedOperationContext, nodes: rootedNodes };
+}
+
+function assertLearningControlNodeAfterStates(args: {
+  nodes: readonly RootedLearningControlNodeMutation[];
+  operationContext: SqlRow;
+  inputSha256: string;
+  statByMemoryId: ReadonlyMap<string, LearningControlMemoryStat>;
+}): void {
+  if (!/^[a-f0-9]{64}$/u.test(args.inputSha256)) {
+    throw new Error("lite_learning_integrity_failed:learning_control_result_commit_input_sha256");
+  }
+  const startedAt = typeof args.operationContext.started_at === "string"
+    ? args.operationContext.started_at
+    : null;
+  const reason = typeof args.operationContext.reason === "string"
+    ? args.operationContext.reason
+    : null;
+  const runId = args.operationContext.run_id === null
+    ? null
+    : typeof args.operationContext.run_id === "string"
+      ? args.operationContext.run_id
+      : undefined;
+  const guideTraceId = args.operationContext.guide_trace_id === null
+    ? null
+    : typeof args.operationContext.guide_trace_id === "string"
+      ? args.operationContext.guide_trace_id
+      : undefined;
+  if (startedAt === null || reason === null || runId === undefined || guideTraceId === undefined) {
+    throw new Error("lite_learning_integrity_failed:learning_control_result_commit_node_state_inputs");
+  }
+  for (const node of args.nodes) {
+    const stat = args.statByMemoryId.get(node.memoryId);
+    if (!stat) {
+      throw new Error("lite_learning_integrity_failed:learning_control_result_commit_node_state_evidence");
+    }
+    const nextSlots = mergeNodeFeedbackLearningControlSlots({
+      slots: node.before.slots_json as Record<string, unknown>,
+      posture: "inspect_before_use",
+      source: "repeated_unused_without_positive_attribution",
+      timestamp: startedAt,
+      run_id: runId,
+      guide_trace_id: guideTraceId,
+      reason,
+      input_sha256: args.inputSha256,
+      exposure_count: stat.exposureCount,
+      positive_attributed_use_count: stat.positiveAttributedUseCount,
+    });
+    const lifecycle = resolveNodeLifecycleSignals({
+      type: node.before.type,
+      tier: node.before.tier,
+      title: node.before.title,
+      text_summary: node.before.text_summary,
+      slots: nextSlots,
+      salience: node.before.salience,
+      importance: node.before.importance,
+      confidence: node.before.confidence,
+      raw_ref: node.before.raw_ref,
+      evidence_ref: node.before.evidence_ref,
+      reference_time: startedAt,
+    });
+    const expectedAfter = nodeAuthorityStateAfterPatchV2({
+      before: node.before,
+      patch: {
+        id: node.memoryId,
+        slots: lifecycle.slots,
+        textSummary: node.before.text_summary,
+        salience: lifecycle.salience,
+        importance: lifecycle.importance,
+        confidence: lifecycle.confidence,
+      },
+    });
+    if (!sameCanonicalValue(node.after, expectedAfter)) {
+      throw new Error("lite_learning_integrity_failed:learning_control_result_commit_node_state");
+    }
+  }
+}
+
+type LearningControlCommitRow = Readonly<{
+  id: string;
+  scope: string;
+  parent_commit_id: string | null;
+  input_sha256: string;
+  diff_json: string;
+  actor: string;
+  model_version: string | null;
+  prompt_version: string | null;
+  commit_hash: string;
+  created_at: string;
+  digest_version: number;
+  revision: number | null;
+  mutation_digest: string | null;
+  legacy_anchor_commit_id: string | null;
+}>;
+
+function learningControlCommitRow(value: SqlRow | undefined): LearningControlCommitRow {
+  if (!value
+    || typeof value.id !== "string" || value.id.length === 0
+    || typeof value.scope !== "string" || value.scope.length === 0
+    || !nullableString(value.parent_commit_id)
+    || typeof value.input_sha256 !== "string" || !/^[a-f0-9]{64}$/u.test(value.input_sha256)
+    || typeof value.diff_json !== "string"
+    || typeof value.actor !== "string" || value.actor.length === 0
+    || !nullableString(value.model_version)
+    || !nullableString(value.prompt_version)
+    || typeof value.commit_hash !== "string" || !/^[a-f0-9]{64}$/u.test(value.commit_hash)
+    || typeof value.created_at !== "string"
+    || !Number.isSafeInteger(value.digest_version)
+    || !(value.revision === null || Number.isSafeInteger(value.revision))
+    || !nullableString(value.mutation_digest)
+    || !nullableString(value.legacy_anchor_commit_id)) {
+    throw new Error("lite_learning_integrity_failed:learning_control_result_commit");
+  }
+  return value as LearningControlCommitRow;
+}
+
+function assertLearningControlCommitV2Authority(
+  db: SqliteDatabase,
+  commit: LearningControlCommitRow,
+  expectedInputSha256?: string,
+): void {
+  if (commit.digest_version !== 2) {
+    throw new Error("lite_learning_integrity_failed:learning_control_result_commit_digest_version");
+  }
+  try {
+    assertLiteMemoryCommitRootAuthority({
+      db,
+      scope: commit.scope,
+      commitId: commit.id,
+      ...(expectedInputSha256 ? { expectedInputSha256 } : {}),
+    });
+  } catch (error) {
+    throw new Error("lite_learning_integrity_failed:learning_control_result_commit_authority", {
+      cause: error,
+    });
+  }
+}
+
+function learningControlPositiveSlotCount(value: unknown): number {
+  const parsed = Number(value);
+  return Number.isFinite(parsed) ? Math.max(0, Math.trunc(parsed)) : 0;
+}
+
+function learningControlNodeVisible(args: {
+  node: NodeAuthorityStateV2;
+  consumerAgentId: string | null;
+  consumerTeamId: string | null;
+}): boolean {
+  const { node, consumerAgentId, consumerTeamId } = args;
+  return (node.memory_lane === "shared" && node.owner_team_id === null)
+    || (consumerAgentId !== null && node.owner_agent_id === consumerAgentId)
+    || (consumerTeamId !== null && node.owner_team_id === consumerTeamId);
+}
+
+function exactLearningControlOutcomeEvidence(
+  value: unknown,
+): LearningControlOperationOutcomeEvidenceV2 {
+  const evidence = exactObject(
+    value,
+    LEARNING_CONTROL_OPERATION_OUTCOME_EVIDENCE_FIELDS,
+    "learning_control_outcome_evidence",
+  );
+  const requested = exactStringArray(
+    evidence.requested_node_ids,
+    "learning_control_outcome_requested_node_ids",
+  );
+  const applied = exactStringArray(
+    evidence.applied_node_ids,
+    "learning_control_outcome_applied_node_ids",
+  );
+  const skipped = exactStringArray(
+    evidence.skipped_positive_attribution_memory_ids,
+    "learning_control_outcome_skipped_node_ids",
+  );
+  const missing = exactStringArray(
+    evidence.missing_node_ids,
+    "learning_control_outcome_missing_node_ids",
+  );
+  const partition = canonicalLearningControlMemoryIds([...applied, ...skipped, ...missing]);
+  if (evidence.contract_version !== LEARNING_CONTROL_OPERATION_OUTCOME_EVIDENCE_CONTRACT
+    || typeof evidence.tenant_id !== "string" || evidence.tenant_id.length === 0
+    || typeof evidence.scope !== "string" || evidence.scope.length === 0
+    || typeof evidence.job_id !== "string" || evidence.job_id.length === 0
+    || typeof evidence.operation_id !== "string" || evidence.operation_id.length === 0
+    || typeof evidence.source_episode_id !== "string" || evidence.source_episode_id.length === 0
+    || typeof evidence.source_feedback_event_id !== "string"
+      || evidence.source_feedback_event_id.length === 0
+    || typeof evidence.source_commit_id !== "string" || evidence.source_commit_id.length === 0
+    || typeof evidence.payload_sha256 !== "string" || !/^[a-f0-9]{64}$/u.test(evidence.payload_sha256)
+    || typeof evidence.domain_result_commit_id !== "string"
+      || evidence.domain_result_commit_id.length === 0
+    || !Number.isSafeInteger(evidence.domain_result_revision)
+      || Number(evidence.domain_result_revision) < 0
+    || typeof evidence.request_sha256 !== "string"
+      || !/^[a-f0-9]{64}$/u.test(evidence.request_sha256)
+    || typeof evidence.actor !== "string" || evidence.actor.length === 0
+    || !nullableString(evidence.consumer_agent_id)
+    || !nullableString(evidence.consumer_team_id)
+    || stableStringify(requested) !== stableStringify(canonicalLearningControlMemoryIds(requested))
+    || stableStringify(applied) !== stableStringify(canonicalLearningControlMemoryIds(applied))
+    || stableStringify(skipped) !== stableStringify(canonicalLearningControlMemoryIds(skipped))
+    || stableStringify(missing) !== stableStringify(canonicalLearningControlMemoryIds(missing))
+    || applied.length + skipped.length + missing.length !== requested.length
+    || stableStringify(partition) !== stableStringify(requested)
+    || !Array.isArray(evidence.observations)
+    || evidence.observations.length !== requested.length) {
+    throw new Error("lite_learning_integrity_failed:learning_control_outcome_evidence_binding");
+  }
+  const observations = evidence.observations.map((value, index) => {
+    const observation = exactObject(
+      value,
+      ["memory_id", "state"],
+      `learning_control_outcome_observation_${index}`,
+    );
+    if (observation.memory_id !== requested[index]) {
+      throw new Error("lite_learning_integrity_failed:learning_control_outcome_observation_order");
+    }
+    return {
+      memory_id: observation.memory_id,
+      state: observation.state === null
+        ? null
+        : learningControlNodeAuthorityState(
+          observation.state,
+          `learning_control_outcome_observation_state_${index}`,
+        ),
+    };
+  });
+  return { ...evidence, observations } as unknown as LearningControlOperationOutcomeEvidenceV2;
+}
+
+function learningControlExpectedDispositionFromObservations(args: {
+  evidence: LearningControlOperationOutcomeEvidenceV2;
+  statByMemoryId: ReadonlyMap<string, LearningControlMemoryStat>;
+}): {
+  applied: string[];
+  skipped: string[];
+  missing: string[];
+} {
+  const applied: string[] = [];
+  const skipped: string[] = [];
+  const missing: string[] = [];
+  for (const observation of args.evidence.observations) {
+    const memoryId = observation.memory_id;
+    const node = observation.state;
+    if (!node || !learningControlNodeVisible({
+      node,
+      consumerAgentId: args.evidence.consumer_agent_id ?? args.evidence.actor,
+      consumerTeamId: args.evidence.consumer_team_id,
+    })) {
+      missing.push(memoryId);
+      continue;
+    }
+    const slots = node.slots_json as Record<string, unknown>;
+    const stat = args.statByMemoryId.get(memoryId);
+    if (learningControlPositiveSlotCount(slots.positive_attributed_use_count) > 0
+      || learningControlPositiveSlotCount(slots.feedback_positive) > 0
+      || Number(stat?.positiveAttributedUseCount ?? 0) > 0) {
+      skipped.push(memoryId);
+    } else {
+      applied.push(memoryId);
+    }
+  }
+  return { applied, skipped, missing };
+}
+
 export function assertLiteLearningControlJobOperationIntegrity(
   db: SqliteDatabase,
   rawJob: Record<string, unknown>,
@@ -384,12 +823,18 @@ export function assertLiteLearningControlJobOperationIntegrity(
   if (!stored) throw new Error("lite_learning_integrity_failed:learning_control_job_missing");
   const job = parseJobRow(stored);
   const operation = db.prepare(
-    `SELECT request_sha256, receipt_json, commit_id
+    `SELECT tenant_id, scope, operation_kind, operation_id, request_sha256,
+            receipt_json, commit_id, created_at
      FROM lite_runtime_write_operations
      WHERE tenant_id = ? AND scope = ?
-       AND operation_kind = 'unused_exposure_learning_control_v1'
+       AND operation_kind = ?
        AND operation_id = ?`,
-  ).get(job.tenant_id, job.scope, job.operation_id) as SqlRow | undefined;
+  ).get(
+    job.tenant_id,
+    job.scope,
+    LEARNING_CONTROL_OPERATION_KIND,
+    job.operation_id,
+  ) as SqlRow | undefined;
   if (job.status === "pending" || job.status === "leased") {
     if (operation) {
       throw new Error("lite_learning_integrity_failed:learning_control_nonterminal_operation_receipt");
@@ -407,7 +852,7 @@ export function assertLiteLearningControlJobOperationIntegrity(
     tenant_id: job.tenant_id,
     scope: job.scope,
     job_id: job.job_id,
-    operation_kind: "unused_exposure_learning_control_v1",
+    operation_kind: LEARNING_CONTROL_OPERATION_KIND,
     operation_id: job.operation_id,
     source_episode_id: job.source_episode_id,
     source_feedback_event_id: job.source_feedback_event_id,
@@ -437,28 +882,143 @@ export function assertLiteLearningControlJobOperationIntegrity(
     }
     return;
   }
-  const commit = db.prepare(
+  const commit = learningControlCommitRow(db.prepare(
     `SELECT id, scope, parent_commit_id, input_sha256, diff_json, actor,
-            model_version, prompt_version, commit_hash, created_at
+            model_version, prompt_version, commit_hash, created_at,
+            digest_version, revision, mutation_digest, legacy_anchor_commit_id
      FROM lite_memory_commits WHERE id = ?`,
-  ).get(job.result_commit_id) as SqlRow | undefined;
-  if (!commit
-    || operation.commit_id !== job.result_commit_id
+  ).get(job.result_commit_id) as SqlRow | undefined);
+  if (operation.commit_id !== job.result_commit_id
+    || commit.scope !== job.scope
+    || commit.digest_version !== 2
+    || !Number.isSafeInteger(commit.revision)
+    || Number(commit.revision) < 1
     || commit.input_sha256 !== requestSha256
-    || typeof commit.scope !== "string"
-    || typeof commit.actor !== "string"
-    || typeof commit.diff_json !== "string"
-    || typeof commit.commit_hash !== "string"
-    || !/^[a-f0-9]{64}$/u.test(commit.commit_hash)
     || commit.model_version !== null
-    || commit.prompt_version !== null) {
+    || commit.prompt_version !== null
+    || operation.created_at !== commit.created_at
+    || job.completed_at !== commit.created_at) {
     throw new Error("lite_learning_integrity_failed:learning_control_result_commit");
   }
-  const diff = exactObject(
-    parseCanonicalJson(commit.diff_json, "learning_control_result_commit_diff_invalid"),
-    LEARNING_CONTROL_COMMIT_DIFF_FIELDS,
-    "learning_control_result_commit_diff",
+  assertLearningControlCommitV2Authority(db, commit, requestSha256);
+  let outcomeMutation: CanonicalAppliedAuthorityMutationV2;
+  try {
+    outcomeMutation = assertCanonicalV2MutationJson({
+      diffJson: commit.diff_json,
+      mutationDigest: String(commit.mutation_digest),
+      createdAt: commit.created_at,
+      scope: commit.scope,
+    }) as CanonicalAppliedAuthorityMutationV2;
+  } catch (error) {
+    throw new Error("lite_learning_integrity_failed:learning_control_outcome_commit_diff", {
+      cause: error,
+    });
+  }
+  if (outcomeMutation.authority_kind !== LEARNING_CONTROL_OPERATION_OUTCOME_AUTHORITY_KIND
+    || outcomeMutation.mutations.length !== 1) {
+    throw new Error("lite_learning_integrity_failed:learning_control_outcome_commit_kind");
+  }
+  const outcomeEntry = exactObject(
+    outcomeMutation.mutations[0],
+    ["table", "identity", "operation", "before", "requested", "after"],
+    "learning_control_outcome_mutation",
   );
+  const outcomeIdentity = exactObject(
+    outcomeEntry.identity,
+    ["tenant_id", "scope", "operation_kind", "operation_id"],
+    "learning_control_outcome_identity",
+  );
+  const outcomeAfter = exactObject(
+    outcomeEntry.after,
+    [
+      "tenant_id", "scope", "operation_kind", "operation_id", "request_sha256",
+      "receipt_json", "commit_id", "created_at",
+    ],
+    "learning_control_outcome_after",
+  );
+  const evidence = exactLearningControlOutcomeEvidence(outcomeEntry.requested);
+  const canonicalAfter = {
+    tenant_id: operation.tenant_id,
+    scope: operation.scope,
+    operation_kind: operation.operation_kind,
+    operation_id: operation.operation_id,
+    request_sha256: operation.request_sha256,
+    receipt_json: { ...receipt, result_commit_id: "$self" },
+    commit_id: operation.commit_id === commit.id ? "$self" : operation.commit_id,
+    created_at: operation.created_at,
+  };
+  const expectedOutcomeIdentity = {
+      tenant_id: job.tenant_id,
+      scope: job.scope,
+      operation_kind: LEARNING_CONTROL_OPERATION_KIND,
+      operation_id: job.operation_id,
+  };
+  const outcomeAfterMismatches = Object.keys(canonicalAfter).filter(
+    (field) => stableStringify(outcomeAfter[field]) !== stableStringify(
+      canonicalAfter[field as keyof typeof canonicalAfter],
+    ),
+  );
+  const outcomeBindingMismatches = [
+    outcomeEntry.table === "lite_runtime_write_operations" ? null : "table",
+    outcomeEntry.operation === "insert" ? null : "operation",
+    outcomeEntry.before === null ? null : "before",
+    stableStringify(outcomeIdentity) === stableStringify(expectedOutcomeIdentity) ? null : "identity",
+    outcomeAfterMismatches.length === 0
+      ? null : `after.${outcomeAfterMismatches.join("+")}`,
+    evidence.tenant_id === job.tenant_id ? null : "tenant_id",
+    evidence.scope === job.scope ? null : "scope",
+    evidence.job_id === job.job_id ? null : "job_id",
+    evidence.operation_id === job.operation_id ? null : "operation_id",
+    evidence.source_episode_id === job.source_episode_id ? null : "source_episode_id",
+    evidence.source_feedback_event_id === job.source_feedback_event_id
+      ? null : "source_feedback_event_id",
+    evidence.source_commit_id === job.source_commit_id ? null : "source_commit_id",
+    evidence.payload_sha256 === job.payload_sha256 ? null : "payload_sha256",
+    evidence.request_sha256 === requestSha256 ? null : "request_sha256",
+    evidence.actor === commit.actor ? null : "actor",
+    evidence.domain_result_commit_id === commit.parent_commit_id
+      ? null : "domain_result_commit_id",
+    evidence.domain_result_revision === Number(commit.revision) - 1
+      ? null : "domain_result_revision",
+  ].filter((field): field is string => field !== null);
+  if (outcomeBindingMismatches.length > 0) {
+    throw new Error(
+      `lite_learning_integrity_failed:learning_control_outcome_commit_binding:${outcomeBindingMismatches.join(",")}`,
+    );
+  }
+  const parent = learningControlCommitRow(db.prepare(
+    `SELECT id, scope, parent_commit_id, input_sha256, diff_json, actor,
+            model_version, prompt_version, commit_hash, created_at,
+            digest_version, revision, mutation_digest, legacy_anchor_commit_id
+     FROM lite_memory_commits WHERE id = ? AND scope = ?`,
+  ).get(commit.parent_commit_id, commit.scope) as SqlRow | undefined);
+  const parentTime = new Date(parent.created_at).getTime();
+  const outcomeTime = new Date(commit.created_at).getTime();
+  if (parent.id !== evidence.domain_result_commit_id
+    || parent.scope !== commit.scope
+    || (parent.digest_version === 2
+      && parent.revision !== evidence.domain_result_revision)
+    || (parent.digest_version === 1 && evidence.domain_result_revision !== 0)
+    || !Number.isFinite(parentTime)
+    || !Number.isFinite(outcomeTime)
+    || parentTime > outcomeTime) {
+    throw new Error("lite_learning_integrity_failed:learning_control_outcome_parent_fence");
+  }
+  const sourceCommit = learningControlCommitRow(db.prepare(
+    `SELECT id, scope, parent_commit_id, input_sha256, diff_json, actor,
+            model_version, prompt_version, commit_hash, created_at,
+            digest_version, revision, mutation_digest, legacy_anchor_commit_id
+     FROM lite_memory_commits WHERE id = ? AND scope = ?`,
+  ).get(job.source_commit_id, job.scope) as SqlRow | undefined);
+  const sourceTime = new Date(sourceCommit.created_at).getTime();
+  if (!Number.isFinite(sourceTime)
+    || sourceTime > parentTime
+    || (sourceCommit.digest_version === 2 && (
+      !Number.isSafeInteger(sourceCommit.revision)
+      || Number(sourceCommit.revision) > evidence.domain_result_revision
+    ))) {
+    throw new Error("lite_learning_integrity_failed:learning_control_outcome_source_commit_order");
+  }
   const feedbackEvent = db.prepare(
     `SELECT row_id, episode_id, payload_json
      FROM lite_learning_episode_events
@@ -492,6 +1052,17 @@ export function assertLiteLearningControlJobOperationIntegrity(
     || !guideReceipt || !feedback || !feedback.success) {
     throw new Error("lite_learning_integrity_failed:learning_control_result_commit_source");
   }
+  const consumerAgentId = typeof guideReceipt.consumer_agent_id === "string"
+    ? guideReceipt.consumer_agent_id
+    : null;
+  const consumerTeamId = typeof guideReceipt.consumer_team_id === "string"
+    ? guideReceipt.consumer_team_id
+    : null;
+  if (evidence.consumer_agent_id !== consumerAgentId
+    || evidence.consumer_team_id !== consumerTeamId
+    || (consumerAgentId !== null && evidence.actor !== consumerAgentId)) {
+    throw new Error("lite_learning_integrity_failed:learning_control_outcome_consumer_binding");
+  }
   const sourceItems = db.prepare(
     `SELECT memory_id FROM lite_learning_exposure_items
      WHERE tenant_id = ? AND scope = ? AND event_id = ?
@@ -504,63 +1075,134 @@ export function assertLiteLearningControlJobOperationIntegrity(
   ).all(job.tenant_id, job.scope, job.source_feedback_event_id) as Array<{ subject_id: string }>;
   const used = new Set(usedRows.map((row) => row.subject_id));
   const expectedRequested: string[] = [];
+  const statByMemoryId = new Map<string, LearningControlMemoryStat>();
+  const exposureCounts = new Map((db.prepare(
+    `SELECT item.memory_id, COUNT(*) AS count
+     FROM lite_learning_exposure_items AS item
+     JOIN lite_learning_episode_events AS exposure
+       ON exposure.tenant_id = item.tenant_id AND exposure.scope = item.scope
+      AND exposure.event_id = item.event_id AND exposure.event_kind = 'exposure_committed'
+     JOIN lite_product_guide_receipts AS guide
+       ON guide.tenant_id = exposure.tenant_id AND guide.scope = exposure.scope
+      AND guide.guide_trace_id = exposure.source_id
+     WHERE exposure.tenant_id = ? AND exposure.scope = ? AND exposure.row_id <= ?
+       AND guide.consumer_agent_id IS ? AND guide.consumer_team_id IS ?
+     GROUP BY item.memory_id`,
+  ).all(
+    job.tenant_id,
+    job.scope,
+    Number(feedbackEvent.row_id),
+    guideReceipt.consumer_agent_id ?? null,
+    guideReceipt.consumer_team_id ?? null,
+  ) as Array<{ memory_id: string; count: number }>).map(
+    (row) => [row.memory_id.toLowerCase(), Number(row.count)] as const,
+  ));
+  const positiveCounts = new Map((db.prepare(
+    `SELECT attribution.subject_id AS memory_id, COUNT(*) AS count
+     FROM lite_learning_feedback_attributions AS attribution
+     JOIN lite_learning_episode_events AS feedback_event
+       ON feedback_event.tenant_id = attribution.tenant_id
+      AND feedback_event.scope = attribution.scope
+      AND feedback_event.event_id = attribution.event_id
+      AND feedback_event.event_kind = 'feedback_attributed'
+     JOIN lite_learning_episode_events AS exposure
+       ON exposure.tenant_id = feedback_event.tenant_id
+      AND exposure.scope = feedback_event.scope
+      AND exposure.episode_id = feedback_event.episode_id
+      AND exposure.event_kind = 'exposure_committed'
+     JOIN lite_product_guide_receipts AS guide
+       ON guide.tenant_id = exposure.tenant_id AND guide.scope = exposure.scope
+      AND guide.guide_trace_id = exposure.source_id
+     WHERE feedback_event.tenant_id = ? AND feedback_event.scope = ?
+       AND feedback_event.row_id <= ? AND attribution.subject_kind = 'memory'
+       AND attribution.outcome = 'positive'
+       AND attribution.attribution_strength = 'positive_attribution'
+       AND attribution.boundary_outcome = 'aligned'
+       AND guide.consumer_agent_id IS ? AND guide.consumer_team_id IS ?
+     GROUP BY attribution.subject_id`,
+  ).all(
+    job.tenant_id,
+    job.scope,
+    Number(feedbackEvent.row_id),
+    guideReceipt.consumer_agent_id ?? null,
+    guideReceipt.consumer_team_id ?? null,
+  ) as Array<{ memory_id: string; count: number }>).map(
+    (row) => [row.memory_id.toLowerCase(), Number(row.count)] as const,
+  ));
   for (const memoryId of canonicalStrings(sourceItems
     .map((row) => row.memory_id)
     .filter((memoryId) => !used.has(memoryId)))) {
-    const exposureCount = db.prepare(
-      `SELECT COUNT(*) AS count
-       FROM lite_learning_exposure_items AS item
-       JOIN lite_learning_episode_events AS exposure
-         ON exposure.tenant_id = item.tenant_id AND exposure.scope = item.scope
-        AND exposure.event_id = item.event_id AND exposure.event_kind = 'exposure_committed'
-       JOIN lite_product_guide_receipts AS guide
-         ON guide.tenant_id = exposure.tenant_id AND guide.scope = exposure.scope
-        AND guide.guide_trace_id = exposure.source_id
-       WHERE exposure.tenant_id = ? AND exposure.scope = ? AND exposure.row_id <= ?
-         AND item.memory_id = ? AND guide.consumer_agent_id IS ?
-         AND guide.consumer_team_id IS ?`,
-    ).get(
-      job.tenant_id,
-      job.scope,
-      Number(feedbackEvent.row_id),
-      memoryId,
-      guideReceipt.consumer_agent_id ?? null,
-      guideReceipt.consumer_team_id ?? null,
-    ) as { count: number };
-    const positiveCount = db.prepare(
-      `SELECT COUNT(*) AS count
-       FROM lite_learning_feedback_attributions AS attribution
-       JOIN lite_learning_episode_events AS feedback_event
-         ON feedback_event.tenant_id = attribution.tenant_id
-        AND feedback_event.scope = attribution.scope
-        AND feedback_event.event_id = attribution.event_id
-        AND feedback_event.event_kind = 'feedback_attributed'
-       JOIN lite_learning_episode_events AS exposure
-         ON exposure.tenant_id = feedback_event.tenant_id
-        AND exposure.scope = feedback_event.scope
-        AND exposure.episode_id = feedback_event.episode_id
-        AND exposure.event_kind = 'exposure_committed'
-       JOIN lite_product_guide_receipts AS guide
-         ON guide.tenant_id = exposure.tenant_id AND guide.scope = exposure.scope
-        AND guide.guide_trace_id = exposure.source_id
-       WHERE feedback_event.tenant_id = ? AND feedback_event.scope = ?
-         AND feedback_event.row_id <= ? AND attribution.subject_kind = 'memory'
-         AND attribution.subject_id = ? AND attribution.outcome = 'positive'
-         AND attribution.attribution_strength = 'positive_attribution'
-         AND attribution.boundary_outcome = 'aligned'
-         AND guide.consumer_agent_id IS ? AND guide.consumer_team_id IS ?`,
-    ).get(
-      job.tenant_id,
-      job.scope,
-      Number(feedbackEvent.row_id),
-      memoryId,
-      guideReceipt.consumer_agent_id ?? null,
-      guideReceipt.consumer_team_id ?? null,
-    ) as { count: number };
-    if (Number(exposureCount.count) >= 2 && Number(positiveCount.count) === 0) {
-      expectedRequested.push(memoryId.toLowerCase());
+    const normalizedMemoryId = memoryId.toLowerCase();
+    const stat = {
+      exposureCount: exposureCounts.get(normalizedMemoryId) ?? 0,
+      positiveAttributedUseCount: positiveCounts.get(normalizedMemoryId) ?? 0,
+    };
+    statByMemoryId.set(normalizedMemoryId, stat);
+    if (stat.exposureCount >= 2 && stat.positiveAttributedUseCount === 0) {
+      expectedRequested.push(normalizedMemoryId);
     }
   }
+  const changedReceipt = receipt.changed_memory_ids as string[];
+  const skippedReceipt = receipt.skipped_positive_attribution_memory_ids as string[];
+  const missingReceipt = receipt.missing_node_ids as string[];
+  const expectedDisposition = learningControlExpectedDispositionFromObservations({
+    evidence,
+    statByMemoryId,
+  });
+  const receiptPartition = canonicalStrings([
+    ...changedReceipt,
+    ...skippedReceipt,
+    ...missingReceipt,
+  ]);
+  if (changedReceipt.length + skippedReceipt.length + missingReceipt.length
+      !== expectedRequested.length
+    || stableStringify(receiptPartition) !== stableStringify(expectedRequested)
+    || stableStringify(evidence.requested_node_ids) !== stableStringify(expectedRequested)
+    || stableStringify(evidence.applied_node_ids) !== stableStringify(changedReceipt)
+    || stableStringify(evidence.skipped_positive_attribution_memory_ids)
+      !== stableStringify(skippedReceipt)
+    || stableStringify(evidence.missing_node_ids) !== stableStringify(missingReceipt)
+    || stableStringify(changedReceipt) !== stableStringify(expectedDisposition.applied)
+    || stableStringify(skippedReceipt) !== stableStringify(expectedDisposition.skipped)
+    || stableStringify(missingReceipt) !== stableStringify(expectedDisposition.missing)) {
+    throw new Error("lite_learning_integrity_failed:learning_control_result_commit_binding");
+  }
+  if (changedReceipt.length === 0) {
+    if (parent.digest_version === 2) assertLearningControlCommitV2Authority(db, parent);
+    return;
+  }
+  if (parent.digest_version !== 2
+    || parent.input_sha256 !== requestSha256
+    || parent.actor !== evidence.actor
+    || parent.model_version !== null
+    || parent.prompt_version !== null) {
+    throw new Error("lite_learning_integrity_failed:learning_control_domain_commit");
+  }
+  assertLearningControlCommitV2Authority(db, parent, requestSha256);
+  let domainMutation: CanonicalAppliedAuthorityMutationV2;
+  try {
+    domainMutation = assertCanonicalV2MutationJson({
+      diffJson: parent.diff_json,
+      mutationDigest: String(parent.mutation_digest),
+      createdAt: parent.created_at,
+      scope: parent.scope,
+    }) as CanonicalAppliedAuthorityMutationV2;
+  } catch (error) {
+    throw new Error("lite_learning_integrity_failed:learning_control_domain_commit_diff", {
+      cause: error,
+    });
+  }
+  const rooted = learningControlV2OperationContext({
+    mutation: domainMutation,
+    scope: parent.scope,
+  });
+  const semanticDiff: unknown = rooted.operationContext;
+  const rootedNodes = rooted.nodes;
+  const diff = exactObject(
+    semanticDiff,
+    LEARNING_CONTROL_COMMIT_DIFF_FIELDS,
+    "learning_control_result_commit_diff",
+  );
   const requested = exactStringArray(diff.requested_node_ids, "learning_control_requested_node_ids");
   const resolved = exactStringArray(diff.resolved_node_ids, "learning_control_resolved_node_ids");
   const applied = exactStringArray(diff.applied_node_ids, "learning_control_applied_node_ids");
@@ -569,9 +1211,6 @@ export function assertLiteLearningControlJobOperationIntegrity(
     "learning_control_diff_skipped_positive_memory_ids",
   );
   const missing = exactStringArray(diff.missing_node_ids, "learning_control_diff_missing_node_ids");
-  const changedReceipt = receipt.changed_memory_ids as string[];
-  const skippedReceipt = receipt.skipped_positive_attribution_memory_ids as string[];
-  const missingReceipt = receipt.missing_node_ids as string[];
   const appliedSet = new Set(applied);
   const skippedSet = new Set(skipped);
   const missingSet = new Set(missing);
@@ -588,9 +1227,9 @@ export function assertLiteLearningControlJobOperationIntegrity(
     || diff.guide_trace_id !== sourceExposure.source_id
     || diff.guide_trace_id !== feedback.data.guide_trace_id
     || diff.run_id !== feedback.data.run_id
-    || diff.started_at !== job.completed_at
-    || diff.scope !== commit.scope
-    || diff.actor !== commit.actor
+    || diff.started_at !== commit.created_at
+    || diff.scope !== parent.scope
+    || diff.actor !== parent.actor
     || (typeof guideReceipt.consumer_agent_id === "string"
       && diff.actor !== guideReceipt.consumer_agent_id)
     || diff.reason !== "Repeated exposure without positive host attribution crossed the durable inspect-before-use gate."
@@ -606,28 +1245,24 @@ export function assertLiteLearningControlJobOperationIntegrity(
     || stableStringify(missing) !== stableStringify(missingReceipt)) {
     throw new Error("lite_learning_integrity_failed:learning_control_result_commit_binding");
   }
-  let parentHash = "";
-  if (commit.parent_commit_id !== null) {
-    const parent = db.prepare(
-      "SELECT commit_hash FROM lite_memory_commits WHERE id = ? AND scope = ?",
-    ).get(commit.parent_commit_id, commit.scope) as SqlRow | undefined;
-    if (!parent || typeof parent.commit_hash !== "string" || !/^[a-f0-9]{64}$/u.test(parent.commit_hash)) {
-      throw new Error("lite_learning_integrity_failed:learning_control_result_commit_parent");
+  const observationById = new Map(
+    evidence.observations.map((observation) => [observation.memory_id, observation.state]),
+  );
+  for (const node of rootedNodes) {
+    const observed = observationById.get(node.memoryId);
+    if (!observed || stableStringify(observed) !== stableStringify({
+      ...node.after,
+      commit_id: parent.id,
+    })) {
+      throw new Error("lite_learning_integrity_failed:learning_control_outcome_applied_observation");
     }
-    parentHash = parent.commit_hash;
   }
-  const expectedCommitHash = sha256Hex(stableStringify({
-    parentHash,
-    inputSha: commit.input_sha256,
-    diffSha: sha256Hex(commit.diff_json),
-    scope: commit.scope,
-    actor: commit.actor,
-    kind: "feedback_learning_control_inspect_before_use",
-  }));
-  if (commit.commit_hash !== expectedCommitHash
-    || commit.id !== stableUuid(`lite:commit:${expectedCommitHash}`)) {
-    throw new Error("lite_learning_integrity_failed:learning_control_result_commit_hash");
-  }
+  assertLearningControlNodeAfterStates({
+    nodes: rootedNodes,
+    operationContext: diff,
+    inputSha256: parent.input_sha256,
+    statByMemoryId,
+  });
 }
 
 export function assertNoOrphanLiteLearningControlOperations(db: SqliteDatabase): void {

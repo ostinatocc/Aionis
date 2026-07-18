@@ -17,7 +17,7 @@ import {
   type LiteRuntimeProtectedAuthorityDatabaseErrorCode,
   type LiteRuntimeProtectedAuthorityDatabasePin,
   type LiteRuntimeProtectedAuthorityTransactionCapability,
-} from "../../src/store/lite-runtime-protected-authority-database.ts";
+} from "../../packages/aionis-learning-authority/src/store/lite-runtime-protected-authority-database.ts";
 import { createSqliteDatabase } from "../../src/store/sqlite.ts";
 
 const SUPPORTED_PLATFORM = process.platform === "darwin" || process.platform === "linux";

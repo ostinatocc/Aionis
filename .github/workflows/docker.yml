@@ -32,6 +32,7 @@ jobs:
       AIONIS_SDK_REPO: ${{ github.workspace }}/external/aionis-sdk
       AIONIS_MANIFEST_REPO: ${{ github.workspace }}/external/AionisManifest
     outputs:
+      release_status: ${{ steps.release-metadata.outputs.release_status }}
       publish_latest: ${{ steps.release-metadata.outputs.publish_latest }}
       runtime_tag: ${{ steps.release-metadata.outputs.runtime_tag }}
       runtime_commit: ${{ steps.release-metadata.outputs.runtime_commit }}
@@ -69,10 +70,14 @@ jobs:
             import fs from "node:fs";
             const train = JSON.parse(fs.readFileSync("release-train.json", "utf8"));
             const output = process.env.GITHUB_OUTPUT;
+            if (!["development", "candidate", "stable"].includes(train.status)) {
+              throw new Error(`unsupported release-train status: ${train.status}`);
+            }
             for (const key of ["cli", "create", "sdk", "manifest", "mcp", "aifs", "claude_code", "substrate"]) {
               fs.appendFileSync(output, `${key}_ref=${train.packages[key].source_ref}\n`);
             }
             fs.appendFileSync(output, `runtime_tag=${train.runtime.source_tag}\n`);
+            fs.appendFileSync(output, `release_status=${train.status}\n`);
             fs.appendFileSync(output, `publish_latest=${train.status === "stable"}\n`);
           '
           echo "runtime_commit=$(git rev-parse HEAD)" >> "${GITHUB_OUTPUT}"
@@ -233,8 +238,11 @@ jobs:
           pack_exact mcp "${GITHUB_WORKSPACE}/external/aionis-mcp"
           pack_exact create "${GITHUB_WORKSPACE}/external/aionis-create"
 
-      - name: Full Lite test suite
-        run: npm run -s lite:test
+      - name: Static Lite test contracts
+        run: npm run -s lite:test:static
+
+      - name: Manifest product integration
+        run: npm run -s lite:test:core:manifest
 
       - name: Lite public smoke
         run: |
@@ -330,13 +338,119 @@ jobs:
           AIONIS_FRESH_INSTALL_SDK_SPEC="${{ steps.package-artifacts.outputs.sdk_spec }}" \
           AIONIS_FRESH_INSTALL_REPO="https://github.com/${GITHUB_REPOSITORY}.git" \
           AIONIS_FRESH_INSTALL_RUNTIME_REF="${{ steps.release-metadata.outputs.runtime_tag }}" \
+          AIONIS_FRESH_INSTALL_EXPECTED_RUNTIME_COMMIT="${{ steps.release-metadata.outputs.runtime_commit }}" \
+          AIONIS_FRESH_INSTALL_VERIFIED_RUNTIME_SOURCE="${GITHUB_WORKSPACE}" \
           node --import tsx "${GITHUB_WORKSPACE}/${{ github.event_name == 'workflow_dispatch' && 'external/release-harness/scripts/e2e/fresh-install-smoke.ts' || 'scripts/e2e/fresh-install-smoke.ts' }}"
 
-  docker:
-    name: Build once, verify digest, and promote Docker image
+  release-core:
+    name: Release core TypeScript (${{ matrix.shard }})
     needs: verify
+    runs-on: ubuntu-latest
+    timeout-minutes: ${{ matrix.timeout_minutes }}
+    strategy:
+      fail-fast: false
+      max-parallel: 5
+      matrix:
+        include:
+          - shard: bucket-0
+            timeout_minutes: 40
+          - shard: bucket-1
+            timeout_minutes: 30
+          - shard: bucket-2
+            timeout_minutes: 40
+          - shard: external-evidence
+            timeout_minutes: 25
+          - shard: deployment-authority
+            timeout_minutes: 90
+    steps:
+      - name: Checkout verified Runtime release candidate
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.verify.outputs.runtime_commit }}
+
+      - name: Verify release core source commit
+        env:
+          EXPECTED_RUNTIME_COMMIT: ${{ needs.verify.outputs.runtime_commit }}
+        run: |
+          set -euo pipefail
+          actual_commit="$(git rev-parse 'HEAD^{commit}')"
+          test "${actual_commit}" = "${EXPECTED_RUNTIME_COMMIT}"
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "24"
+          cache: npm
+
+      - name: Install protected-close ACL verifier
+        run: |
+          sudo apt-get update
+          sudo apt-get install --yes --no-install-recommends acl
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Run release core shard
+        run: npm run -s lite:test:core:${{ matrix.shard }}
+
+  release-recovery:
+    name: Release provisioning recovery (${{ matrix.shard }})
+    needs: verify
+    runs-on: ubuntu-latest
+    timeout-minutes: ${{ matrix.timeout_minutes }}
+    strategy:
+      fail-fast: false
+      max-parallel: 4
+      matrix:
+        include:
+          - shard: bootstrap
+            timeout_minutes: 35
+          - shard: receipt
+            timeout_minutes: 25
+          - shard: durable
+            timeout_minutes: 30
+          - shard: terminal
+            timeout_minutes: 25
+    steps:
+      - name: Checkout exact Runtime release candidate
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.verify.outputs.runtime_commit }}
+
+      - name: Verify release recovery source commit
+        env:
+          EXPECTED_RUNTIME_COMMIT: ${{ needs.verify.outputs.runtime_commit }}
+        run: |
+          set -euo pipefail
+          actual_commit="$(git rev-parse 'HEAD^{commit}')"
+          test "${actual_commit}" = "${EXPECTED_RUNTIME_COMMIT}"
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "24"
+          cache: npm
+
+      - name: Install protected-close ACL verifier
+        run: |
+          sudo apt-get update
+          sudo apt-get install --yes --no-install-recommends acl
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Run release recovery shard
+        run: npm run -s lite:test:recovery:${{ matrix.shard }}
+
+  publish:
+    name: Build once, verify digest, and publish Docker image
+    needs: [verify, release-core, release-recovery]
     if: >-
       needs.verify.result == 'success' &&
+      needs['release-core'].result == 'success' &&
+      needs['release-recovery'].result == 'success' &&
+      (needs.verify.outputs.release_status == 'candidate' ||
+      needs.verify.outputs.release_status == 'stable') &&
       (github.ref_type == 'tag' ||
       (github.event_name == 'workflow_dispatch' && inputs.publish == true))
     runs-on: ubuntu-latest

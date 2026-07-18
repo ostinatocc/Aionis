@@ -13,12 +13,23 @@ repair creates durable work that the normal Runtime worker later executes.
   `/var/lib/aionis/runtime.sqlite` or `.tmp/runtime.sqlite`). A bare filename,
   SQLite URI, filesystem root, shared sticky directory such as `/tmp`, or a
   symbolic-link main/sidecar file fails closed instead of changing a shared
-  parent or following the link.
-- On POSIX hosts, startup corrects an existing Runtime data directory to `0700`
-  and the SQLite main, WAL, SHM, and rollback-journal files to `0600`. The main
-  file is safely pre-created before SQLite opens it; Runtime does not change the
-  process-wide umask. Windows mode bits are not an ACL equivalent, so a Windows
-  deployment still requires an owner-private volume/ACL policy.
+  parent or following the link. The operator must also ensure that untrusted
+  local users cannot replace or rename that directory through a writable
+  ancestor; Runtime validates the dedicated directory, not the full ancestor
+  chain.
+- On POSIX hosts, startup creates a missing Runtime data directory as `0700`
+  and safely narrows an existing owner-controlled directory to `0700`. A new
+  SQLite main file is pre-created as `0600` before SQLite opens it, and newly
+  created WAL, SHM, and rollback-journal files must also verify as `0600`.
+  Runtime does not change the process-wide umask.
+- Startup does not reopen and chmod existing SQLite main, WAL, SHM, or
+  rollback-journal files while SQLite connections may be active. An existing
+  file with an incorrect POSIX mode fails closed and is left unchanged. Stop
+  Runtime and run the explicit offline `upgrade` operation to harden legacy
+  artifacts before opening the database.
+- POSIX `0700`/`0600` mode checks are not a Windows ACL guarantee. This runbook
+  does not claim equivalent Windows access control; a Windows deployment must
+  provide and validate an owner-private volume/ACL policy separately.
 - The first `SIGTERM` or `SIGINT` stops HTTP service through Fastify `app.close`,
   waits for active workers and sandbox finalization, closes every store, and
   exits `0` after a clean drain. A second signal or the 30-second shutdown
@@ -107,6 +118,12 @@ npx tsx scripts/runtime-data-ops.ts verify \
   --db /var/lib/aionis/runtime.sqlite
 ```
 
+`upgrade` is the explicit offline permission-hardening path for an existing
+POSIX database. Before opening the database for schema work, it hardens the
+dedicated data directory to `0700` and the existing main/WAL/SHM/journal
+artifacts to `0600`. Do not use this operation while Runtime or another SQLite
+process has the same database open.
+
 The upgrade report must show:
 
 - `before.classification` is `legacy_v0_3_4` or `current`;
@@ -116,6 +133,18 @@ The upgrade report must show:
 Do not proceed if `verify.ok` is false. Warnings about legacy pending
 projections or dead letters are handled in the next section; they are not
 SQLite corruption.
+
+Three authority warnings are intentionally more conservative. A
+`memory_commit_authority_legacy_opaque_rows_present` warning means rows adopted
+from v1 history cannot be reconstructed from a canonical v2 mutation.
+`runtime_operation_receipts_use_delegated_authority` means operation receipts
+are checked by their product or learning ledger rather than directly claimed
+by the memory commit chain. `memory_commit_authority_v5_adoption_present` means
+the v6 migration transactionally enumerated and sealed historical v5 terminal
+rows in an exact adoption manifest instead of rewriting their original
+evidence. These warnings are not corruption, but a formal release audit must
+count and explain all three instead of describing an upgraded database as
+entirely native-v2 history.
 
 `verify` also runs the same full-history integrity audit used when the real
 execution state and execution tree stores start. It rejects a current

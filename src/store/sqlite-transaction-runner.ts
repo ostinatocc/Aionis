@@ -12,8 +12,11 @@ export type SqliteTransactionRunOptions = Readonly<{
 
 export type SqliteTransactionRunner = {
   run<T>(fn: () => Promise<T>, options?: SqliteTransactionRunOptions): Promise<T>;
+  sealAndRun<T>(fn: () => Promise<T>, options?: SqliteTransactionRunOptions): Promise<T>;
   read<T>(fn: () => Promise<T> | T): Promise<T>;
   afterCommit(fn: () => Promise<void>): Promise<void>;
+  beforeCommit(fn: () => Promise<void> | void): void;
+  afterRollback(fn: () => Promise<void> | void): void;
   inTransaction(): boolean;
   /** Opaque identity for the current AsyncLocal transaction owner. */
   currentTransactionIdentity(): symbol | null;
@@ -24,6 +27,8 @@ export type SqliteTransactionPhase = "after_begin" | "before_commit" | "after_co
 type SqliteTransactionContext = {
   owner: symbol;
   afterCommit: Array<() => Promise<void>>;
+  beforeCommit: Array<() => Promise<void> | void>;
+  afterRollback: Array<() => Promise<void> | void>;
 };
 
 function assertBeginBusyRetry(options: SqliteBeginBusyRetry): void {
@@ -55,6 +60,7 @@ export function createSqliteTransactionRunner(args: {
   const storage = new AsyncLocalStorage<SqliteTransactionContext>();
   let activeOwner: symbol | null = null;
   let tail: Promise<void> = Promise.resolve();
+  let sealed = false;
 
   async function enqueue<T>(task: () => Promise<T>): Promise<T> {
     const previous = tail;
@@ -76,10 +82,16 @@ export function createSqliteTransactionRunner(args: {
       if (beginBusyRetry) assertBeginBusyRetry(beginBusyRetry);
       const current = storage.getStore();
       if (current && activeOwner === current.owner) return await fn();
+      if (sealed) throw new Error("sqlite_transaction_runner_sealed");
 
       const completed = await enqueue(async () => {
         const owner = Symbol("sqlite-transaction");
-        const context: SqliteTransactionContext = { owner, afterCommit: [] };
+        const context: SqliteTransactionContext = {
+          owner,
+          afterCommit: [],
+          beforeCommit: [],
+          afterRollback: [],
+        };
         activeOwner = owner;
         let began = false;
         try {
@@ -103,6 +115,7 @@ export function createSqliteTransactionRunner(args: {
           began = true;
           await args.onPhase?.("after_begin");
           const out = await storage.run(context, fn);
+          for (const callback of context.beforeCommit) await callback();
           await args.onPhase?.("before_commit");
           args.commit();
           return { out, afterCommit: context.afterCommit };
@@ -111,6 +124,7 @@ export function createSqliteTransactionRunner(args: {
             try {
               await args.onPhase?.("before_rollback");
               args.rollback();
+              for (const callback of context.afterRollback) await callback();
             } catch {
               // Preserve the original transaction failure. A failed rollback makes the
               // connection unusable, but must not hide the cause that triggered it.
@@ -141,9 +155,25 @@ export function createSqliteTransactionRunner(args: {
       return completed.out;
     },
 
+    async sealAndRun<T>(
+      fn: () => Promise<T>,
+      options: SqliteTransactionRunOptions = {},
+    ): Promise<T> {
+      if (storage.getStore()) {
+        throw new Error("sqlite_transaction_runner_cannot_seal_from_transaction");
+      }
+      if (sealed) throw new Error("sqlite_transaction_runner_sealed");
+      // run() queues synchronously before its first await. Seal immediately
+      // after that queue admission so every later caller is rejected.
+      const finalRun = this.run(fn, options);
+      sealed = true;
+      return await finalRun;
+    },
+
     async read<T>(fn: () => Promise<T> | T): Promise<T> {
       const current = storage.getStore();
       if (current && activeOwner === current.owner) return await fn();
+      if (sealed) throw new Error("sqlite_transaction_runner_sealed");
       return await enqueue(async () => await fn());
     },
 
@@ -153,7 +183,24 @@ export function createSqliteTransactionRunner(args: {
         current.afterCommit.push(fn);
         return;
       }
+      if (sealed) throw new Error("sqlite_transaction_runner_sealed");
       await fn();
+    },
+
+    beforeCommit(fn: () => Promise<void> | void): void {
+      const current = storage.getStore();
+      if (!current || activeOwner !== current.owner) {
+        throw new Error("sqlite_before_commit_requires_active_transaction");
+      }
+      current.beforeCommit.push(fn);
+    },
+
+    afterRollback(fn: () => Promise<void> | void): void {
+      const current = storage.getStore();
+      if (!current || activeOwner !== current.owner) {
+        throw new Error("sqlite_after_rollback_requires_active_transaction");
+      }
+      current.afterRollback.push(fn);
     },
 
     inTransaction(): boolean {

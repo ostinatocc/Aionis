@@ -5,6 +5,7 @@ import {
   chmodSync,
   existsSync,
   mkdtempSync,
+  mkdirSync,
   rmSync,
   statSync,
   symlinkSync,
@@ -17,13 +18,16 @@ import test from "node:test";
 
 import Fastify from "fastify";
 
+import { persistInitialExecutionDecisionAuthority } from "../../src/memory/execution-decision-authority.js";
 import { SandboxExecutor } from "../../src/memory/sandbox-executor.js";
 import { createSandboxStore } from "../../src/store/sandbox-access.js";
 import {
   createLiteRuntimeDatabase,
 } from "../../src/store/lite-runtime-database.js";
 import { createLiteRuntimeStore } from "../../src/store/lite-runtime-store.js";
+import { createLiteWriteStoreFromDatabase } from "../../src/store/lite-write-store.js";
 import {
+  hardenPrivateRuntimeSqlitePathOffline,
   preparePrivateRuntimeSqlitePath,
 } from "../../src/store/sqlite.js";
 import {
@@ -89,16 +93,17 @@ class ControlledShutdownHost implements RuntimeShutdownHost {
   }
 }
 
-test("Lite Runtime SQLite makes an existing data directory and all live artifacts owner-only", {
+test("Lite Runtime SQLite safely hardens an existing 0755 directory under umask 000", {
   skip: process.platform === "win32" ? "POSIX mode bits are not a Windows ACL" : false,
 }, async () => {
-  const root = mkdtempSync(join(tmpdir(), "aionis-runtime-permissions-"));
-  const directory = join(root, "authority");
-  const databasePath = join(directory, "runtime.sqlite");
+  const previousUmask = process.umask(0o000);
+  let root: string | null = null;
   try {
-    preparePrivateRuntimeSqlitePath(databasePath);
-    chmodSync(directory, 0o755);
-    chmodSync(databasePath, 0o644);
+    root = mkdtempSync(join(tmpdir(), "aionis-runtime-permissions-"));
+    const directory = join(root, "authority");
+    const databasePath = join(directory, "runtime.sqlite");
+    mkdirSync(directory, { mode: 0o755 });
+    assert.equal(mode(directory), 0o755);
 
     const database = createLiteRuntimeDatabase(databasePath);
     try {
@@ -107,6 +112,46 @@ test("Lite Runtime SQLite makes an existing data directory and all live artifact
       for (const artifact of [databasePath, `${databasePath}-wal`, `${databasePath}-shm`]) {
         assert.equal(existsSync(artifact), true, `${artifact} should exist while WAL connections are live`);
         assert.equal(mode(artifact), 0o600, `${artifact} should be owner-only`);
+      }
+    } finally {
+      await database.close();
+    }
+  } finally {
+    process.umask(previousUmask);
+    if (root !== null) rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("Lite Runtime SQLite rejects old 0644 databases until explicit offline hardening", {
+  skip: process.platform === "win32" ? "POSIX mode bits are not a Windows ACL" : false,
+}, async () => {
+  const root = mkdtempSync(join(tmpdir(), "aionis-runtime-mode-drift-"));
+  const directory = join(root, "authority");
+  const databasePath = join(directory, "runtime.sqlite");
+  try {
+    preparePrivateRuntimeSqlitePath(databasePath);
+    chmodSync(databasePath, 0o644);
+    assert.throws(
+      () => createLiteRuntimeDatabase(databasePath),
+      /runtime_sqlite_artifact_mode_invalid/u,
+    );
+    assert.equal(mode(databasePath), 0o644, "startup must not repair an existing file by pathname");
+
+    hardenPrivateRuntimeSqlitePathOffline(databasePath);
+    assert.equal(mode(directory), 0o700);
+    assert.equal(mode(databasePath), 0o600);
+    const database = createLiteRuntimeDatabase(databasePath);
+    try {
+      database.db.exec("CREATE TABLE mode_probe (value TEXT); INSERT INTO mode_probe VALUES ('ok')");
+      for (const artifact of [`${databasePath}-wal`, `${databasePath}-shm`]) {
+        assert.equal(existsSync(artifact), true);
+        chmodSync(artifact, 0o644);
+        assert.throws(
+          () => createLiteRuntimeDatabase(databasePath),
+          /runtime_sqlite_artifact_mode_invalid/u,
+        );
+        assert.equal(mode(artifact), 0o644, "startup must not repair a live SQLite sidecar");
+        chmodSync(artifact, 0o600);
       }
     } finally {
       await database.close();
@@ -262,6 +307,131 @@ test("bootstrap close attempts every worker and store before surfacing failures"
     "write_store",
     "runtime_store",
   ]));
+});
+
+test("Lite write-store close drains accepted work and seals later write and projection admission", async () => {
+  const root = mkdtempSync(join(tmpdir(), "aionis-write-store-drain-"));
+  const database = createLiteRuntimeDatabase(join(root, "authority", "runtime.sqlite"));
+  const store = createLiteWriteStoreFromDatabase(database, { annProjectionEnabled: false });
+  const accepted = deferred();
+  const releaseAccepted = deferred();
+  let activeTransaction: Promise<void> | null = null;
+  let closing: Promise<void> | null = null;
+  try {
+    database.db.exec("CREATE TABLE close_drain_probe (value TEXT NOT NULL)");
+    activeTransaction = store.withTx(async () => {
+      database.db.prepare("INSERT INTO close_drain_probe (value) VALUES (?)").run("accepted-before-close");
+      accepted.resolve();
+      await releaseAccepted.promise;
+    });
+    await within(accepted.promise, "accepted write transaction start");
+
+    let closeSettled = false;
+    closing = store.close();
+    void closing.then(
+      () => { closeSettled = true; },
+      () => { closeSettled = true; },
+    );
+
+    await assert.rejects(
+      store.withTx(async () => undefined),
+      /lite_write_store_closing/u,
+    );
+    await assert.rejects(
+      store.claimProjectionJobs({
+        leaseOwner: "shutdown-regression",
+        leaseMs: 1_000,
+        limit: 1,
+      }),
+      /sqlite_transaction_runner_sealed/u,
+    );
+    await Promise.resolve();
+    assert.equal(closeSettled, false, "close must wait for the already accepted transaction");
+
+    releaseAccepted.resolve();
+    await within(activeTransaction, "accepted write transaction finish");
+    await within(closing, "write-store close finish");
+    const probe = database.db.prepare(
+      "SELECT value FROM close_drain_probe",
+    ).get() as { value: string } | undefined;
+    assert.equal(probe?.value, "accepted-before-close");
+  } finally {
+    releaseAccepted.resolve();
+    await Promise.allSettled([
+      ...(activeTransaction ? [activeTransaction] : []),
+      ...(closing ? [closing] : []),
+    ]);
+    await database.close();
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("concurrent Lite write-store close calls share one safe shutdown", async () => {
+  const root = mkdtempSync(join(tmpdir(), "aionis-write-store-concurrent-close-"));
+  const databasePath = join(root, "authority", "runtime.sqlite");
+  const database = createLiteRuntimeDatabase(databasePath);
+  const store = createLiteWriteStoreFromDatabase(database, {
+    annProjectionEnabled: false,
+    closeDatabaseOnClose: true,
+  });
+  try {
+    const closes = [store.close(), store.close(), store.close()];
+    await within(Promise.all(closes), "concurrent write-store close");
+
+    const reopened = createLiteRuntimeDatabase(databasePath);
+    try {
+      const integrity = reopened.db.prepare<{ integrity_check: string }>(
+        "PRAGMA integrity_check",
+      ).get();
+      assert.equal(integrity.integrity_check, "ok");
+    } finally {
+      await reopened.close();
+    }
+  } finally {
+    await Promise.allSettled([store.close(), database.close()]);
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("Lite write-store close fails closed when its final authority audit finds live tamper", async () => {
+  const root = mkdtempSync(join(tmpdir(), "aionis-write-store-final-audit-"));
+  const database = createLiteRuntimeDatabase(join(root, "authority", "runtime.sqlite"));
+  const store = createLiteWriteStoreFromDatabase(database, { annProjectionEnabled: false });
+  const scope = "shutdown-final-audit";
+  const decisionId = "shutdown-final-audit-decision";
+  try {
+    await persistInitialExecutionDecisionAuthority({
+      store,
+      actor: "shutdown-regression",
+      decision: {
+        id: decisionId,
+        scope,
+        decisionKind: "tools_select",
+        runId: null,
+        selectedTool: "read",
+        candidatesJson: [{ tool: "read" }],
+        contextSha256: "a".repeat(64),
+        policySha256: "b".repeat(64),
+        sourceRuleIds: [],
+        metadataJson: { source: "shutdown-regression" },
+        commitId: null,
+        createdAt: "2026-07-19T00:00:00.000Z",
+      },
+    });
+    database.db.prepare(
+      `UPDATE lite_memory_execution_decisions
+       SET selected_tool = 'tampered-after-commit'
+       WHERE scope = ? AND id = ?`,
+    ).run(scope, decisionId);
+
+    await assert.rejects(
+      store.close(),
+      /lite_memory_commit_authority_terminal_row_mismatch/u,
+    );
+  } finally {
+    await database.close();
+    rmSync(root, { recursive: true, force: true });
+  }
 });
 
 test("sandbox shutdown cancels and waits for a real active child before the store closes", {

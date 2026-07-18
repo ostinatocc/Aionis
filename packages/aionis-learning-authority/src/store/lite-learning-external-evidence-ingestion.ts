@@ -1,10 +1,13 @@
 import { createHash } from "node:crypto";
 
 import stableStringify from "fast-json-stable-stringify";
+import {
+  appendLiteRuntimeWriteOperationAuthorityInCurrentTransaction,
+} from "../../../../src/store/lite-runtime-applied-authority.js";
 import { z } from "zod";
 
 import { LearningExternalCanonicalUtcMillisSchema } from
-  "../memory/learning-external-authority.js";
+  "../../../../src/memory/learning-external-authority.js";
 import {
   readLearningExternalEvidenceArchiveProofV1,
 } from "../memory/learning-external-evidence-archive.js";
@@ -18,7 +21,7 @@ import {
   validateLearningExternalEvidenceContractSetV1,
   type LearningExternalEvidenceIngestRequestV1,
   type LearningExternalEvidenceRunBundleV1,
-} from "../memory/learning-external-evidence.js";
+} from "../../../../src/memory/learning-external-evidence.js";
 import {
   LearningExternalPublicRunAuthorityV1Schema,
   learningExternalPublicRunAuthorityDigest,
@@ -26,7 +29,7 @@ import {
   type LearningExternalPublicRunAuthorityV1,
 } from "../memory/learning-external-public-authority.js";
 import type { LiteLearningAuthorityRow } from
-  "./lite-learning-confirmatory-authority.js";
+  "../../../../src/store/lite-learning-confirmatory-authority.js";
 import {
   assertPreparedLiteLearningExternalEvidenceArchivePinned,
   inspectPreparedLiteLearningExternalEvidenceArchive,
@@ -35,13 +38,15 @@ import {
 import {
   resolveLiteLearningExternalNormalLifecycleSnapshot,
   type LiteLearningExternalNormalLifecycleSnapshot,
-} from "./lite-learning-external-authority.js";
-import type { LiteRuntimeDatabase } from "./lite-runtime-database.js";
+} from "../../../../src/store/lite-learning-external-authority.js";
+import type { LiteRuntimeDatabase } from "../../../../src/store/lite-runtime-database.js";
 import {
   assertLiteRuntimeProtectedAuthorityTransactionCapability,
   type LiteRuntimeProtectedAuthorityTransactionCapability,
 } from "./lite-runtime-protected-authority-database.js";
-import type { SqliteDatabase } from "./sqlite.js";
+import type { SqliteDatabase } from "../../../../src/store/sqlite.js";
+import type { SqliteTransactionRunner } from
+  "../../../../src/store/sqlite-transaction-runner.js";
 
 const EXTERNAL_AUTHORITY_SCOPE = "learning_external_authority_v1" as const;
 const EXTERNAL_EVIDENCE_INGEST_OPERATION_KIND = "learning_evidence_ingest_v1" as const;
@@ -870,23 +875,21 @@ function insertArtifact(db: SqliteDatabase, artifact: LiteLearningAuthorityRow):
 
 function insertOperation(
   db: SqliteDatabase,
+  transaction: SqliteTransactionRunner,
   receipt: LiteLearningExternalEvidenceIngestOperationReceiptV1,
 ): void {
-  db.prepare(
-    `INSERT INTO lite_runtime_write_operations
-       (tenant_id, scope, operation_kind, operation_id, request_sha256,
-        receipt_json, commit_id, created_at)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
-  ).run(
-    receipt.tenant_id,
-    receipt.scope,
-    receipt.operation_kind,
-    receipt.operation_id,
-    receipt.request_sha256,
-    stableStringify(receipt),
-    receipt.bundle_commit_id,
-    receipt.recorded_at,
-  );
+  appendLiteRuntimeWriteOperationAuthorityInCurrentTransaction({
+    db,
+    transaction,
+    tenantId: receipt.tenant_id,
+    scope: receipt.scope,
+    operationKind: receipt.operation_kind,
+    operationId: receipt.operation_id,
+    requestSha256: receipt.request_sha256,
+    receiptJson: stableStringify(receipt),
+    commitId: receipt.bundle_commit_id,
+    createdAt: receipt.recorded_at,
+  });
 }
 
 let savepointSequence = 0;
@@ -977,7 +980,7 @@ export function createLiteLearningExternalEvidenceIngestionAccess(args: Readonly
         faultInjector?.("after_artifact_insert");
         const persisted = assertPersistedArtifact(db, validation);
         const receipt = buildPersistedIngestReceipt(validation, persisted);
-        insertOperation(db, receipt);
+        insertOperation(db, transaction, receipt);
         faultInjector?.("after_operation_insert");
         const operation = operationRow(
           db,

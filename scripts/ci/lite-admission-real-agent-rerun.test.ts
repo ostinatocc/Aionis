@@ -31,6 +31,8 @@ import {
   verifyLiteRuntimeDatabase,
 } from "../../src/store/lite-runtime-data-operations.js";
 import { createLiteWriteStore, createLiteWriteStoreFromDatabase } from "../../src/store/lite-write-store.js";
+import { applyMemoryWrite, prepareMemoryWrite } from "../../src/memory/write.js";
+import { stableUuid } from "../../src/util/uuid.js";
 import {
   runAdmissionRealAgentFiniteHoldoutCase,
   runAdmissionRealAgentFreshRuntimePair,
@@ -720,7 +722,7 @@ test("fresh Runtime pairs restore, mutate, destroy, and start the next unit with
   const observedRuntimeInodes: number[] = [];
   const postCloseRuntimeProbes: Array<() => unknown> = [];
   const scope = "finite-holdout-isolation";
-  const carriedNodeId = "unit-1-node";
+  const carriedNodeId = stableUuid("finite-holdout-isolation:unit-1-node");
   const carriedOperationId = "unit-1-safety-authority";
   try {
     const source = createLiteWriteStore(sourcePath, { annProjectionEnabled: false });
@@ -760,43 +762,40 @@ test("fresh Runtime pairs restore, mutate, destroy, and start the next unit with
           assert.equal(beforeJobs.length, 0);
           assert.equal(beforeReceipt, null);
           assert.equal(beforeAuthority.count, 0);
-          await store.withTx(async () => {
-            const commitId = await store.insertLegacyV1CommitForMigrationOrTestFixture({
-              scope,
-              parentCommitId: null,
-              inputSha256: digest(`unit-1-input:${arm}`),
-              diffJson: "{}",
-              actor: "finite-holdout-test",
-              modelVersion: null,
-              promptVersion: null,
-              commitHash: digest(`unit-1-commit:${arm}`),
-            });
-            await store.insertNode({
+          const prepared = await prepareMemoryWrite({
+            scope,
+            actor: "finite-holdout-test",
+            input_sha256: digest(`unit-1-input:${arm}`),
+            auto_embed: false,
+            memory_lane: "shared",
+            producer_agent_id: "finite-holdout-test",
+            nodes: [{
               id: carriedNodeId,
-              scope,
-              clientId: null,
-              type: "fact",
+              type: "concept",
               tier: "hot",
               title: "Unit 1 mutation",
-              textSummary: "This row must not appear in unit 2.",
-              slotsJson: "{}",
-              rawRef: null,
-              evidenceRef: null,
-              embeddingVector: null,
-              embeddingModel: null,
-              memoryLane: "shared",
-              producerAgentId: "finite-holdout-test",
-              ownerAgentId: null,
-              ownerTeamId: null,
-              embeddingStatus: "pending",
-              embeddingLastError: null,
+              text_summary: "This row must not appear in unit 2.",
+              slots: {},
               salience: 0.8,
               importance: 0.7,
               confidence: 0.9,
-              redactionVersion: 0,
-              commitId,
+            }],
+          }, scope, "default", {
+            maxTextLen: 20_000,
+            piiRedaction: false,
+          }, null);
+          await store.withTx(async () => {
+            const written = await applyMemoryWrite(prepared, {
+              maxTextLen: 20_000,
+              piiRedaction: false,
+              allowCrossScopeEdges: false,
+              write_access: store,
             });
-            await store.enqueueAnnProjection({ scope, nodeId: carriedNodeId, sourceCommitId: commitId });
+            await store.enqueueAnnProjection({
+              scope,
+              nodeId: carriedNodeId,
+              sourceCommitId: written.commit_id,
+            });
             await store.insertWriteOperation({
               tenantId: "default",
               scope,
@@ -804,7 +803,7 @@ test("fresh Runtime pairs restore, mutate, destroy, and start the next unit with
               operationId: carriedOperationId,
               requestSha256: digest(`unit-1-authority:${arm}`),
               receiptJson: JSON.stringify({ arm, status: "recorded" }),
-              commitId,
+              commitId: written.commit_id,
             });
             const policyConfigJson = JSON.stringify({
               behavior: "isolation-marker",
@@ -922,7 +921,10 @@ test("fresh Runtime pairs restore, mutate, destroy, and start the next unit with
     assert.equal(new Set(observedRuntimePaths).size, 4);
     assert.equal(new Set(observedRuntimeInodes).size, 4);
     const frozenBackup = await verifyLiteRuntimeDatabase(backupPath);
-    assert.equal(frozenBackup.sha256, backup.manifest.sha256);
+    assert.equal(
+      createHash("sha256").update(fs.readFileSync(backupPath)).digest("hex"),
+      backup.manifest.sha256,
+    );
     assert.deepEqual(frozenBackup.counts, backup.verification.counts);
     assert.deepEqual(frozenBackup.learning.replay?.table_counts, backup.verification.learning.replay?.table_counts);
 

@@ -31,7 +31,7 @@ import {
   learningExternalSupervisorBindingRowDigest,
   verifyLearningExternalReceiptWithExplicitSigner,
   type LearningExternalSignedReceiptEnvelopeV1,
-} from "./learning-external-authority.js";
+} from "../../../../src/memory/learning-external-authority.js";
 import {
   LearningExternalAttemptChainV1Schema,
   LearningExternalEvidenceArtifactKindSchema,
@@ -45,7 +45,7 @@ import {
   learningExternalPreterminalPayloadSetDigest,
   learningExternalRunnerOutputManifestDigest,
   learningExternalTerminalRunManifestDigest,
-} from "./learning-external-evidence.js";
+} from "../../../../src/memory/learning-external-evidence.js";
 
 const MAX_PUBLIC_RUN_AUTHORITY_BYTES = 32 * 1024 * 1024;
 const MAX_DRAIN_ENTRIES = 4_096;

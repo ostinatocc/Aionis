@@ -102,11 +102,10 @@ function assertCurrentV5Database(database: LiteRuntimeDatabase): void {
   const schema = inspectLiteRuntimeSchema(database.db);
   if (schema.classification !== "current"
     || schema.component !== LITE_RUNTIME_WRITE_SCHEMA_COMPONENT
-    || schema.detected_version !== LITE_RUNTIME_WRITE_SCHEMA_VERSION
-    || schema.detected_version !== 5) {
+    || schema.detected_version !== LITE_RUNTIME_WRITE_SCHEMA_VERSION) {
     return authorityHeadError(
       "current_v5_database_required",
-      "authority reads require the exact current Runtime v5 schema",
+      "authority reads require the exact current Runtime schema",
     );
   }
 }

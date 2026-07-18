@@ -14,7 +14,10 @@ import {
 } from "../../src/memory/agent-context-compiler.js";
 import { buildAionisMemoryPacket } from "../../src/memory/product-output/memory-packet.js";
 import { productGuideCandidateServingEnabled } from "../../src/product/guide-service.js";
-import { createLiteWriteStore } from "../../src/store/lite-write-store.js";
+import { inspectLiteMemoryCommitAuthority } from
+  "../../src/store/lite-memory-commit-integrity.js";
+import { createLiteRuntimeDatabase } from "../../src/store/lite-runtime-database.js";
+import { createLiteWriteStoreFromDatabase } from "../../src/store/lite-write-store.js";
 
 test("A/A and shadow guide phases cannot activate the candidate serving branch", () => {
   assert.equal(productGuideCandidateServingEnabled({ mode: "shadow", serving_arm: "control" }, true), false);
@@ -389,96 +392,160 @@ test("legacy slot-map compatibility never converts an omitted prior into no_prio
 
 test("batch guide prior lookup distinguishes empty, missing, and invisible nodes across SQL chunks", async () => {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), "aionis-guide-learning-prior-"));
-  const store = createLiteWriteStore(path.join(dir, "runtime.sqlite"));
+  const databasePath = path.join(dir, "runtime.sqlite");
   try {
-    const commitId = await store.insertLegacyV1CommitForMigrationOrTestFixture({
-      scope: "repo-a",
-      parentCommitId: null,
-      inputSha256: "guide-learning-prior-input",
-      diffJson: "{}",
-      actor: "test",
-      modelVersion: null,
-      promptVersion: null,
-      commitHash: "guide-learning-prior-commit",
+    const legacyDatabase = createLiteRuntimeDatabase(databasePath);
+    const legacyStore = createLiteWriteStoreFromDatabase(legacyDatabase, {
+      annProjectionEnabled: false,
+      allowLegacyV1Fixtures: true,
+      closeDatabaseOnClose: false,
     });
-    const insertNode = async (args: {
-      id: string;
-      slots: Record<string, unknown>;
-      memoryLane: "private" | "shared";
-      ownerAgentId?: string | null;
-      ownerTeamId?: string | null;
-    }): Promise<void> => {
-      await store.insertNode({
-        id: args.id,
+    let legacyStoreClosed = false;
+    try {
+      legacyDatabase.db.exec("BEGIN IMMEDIATE");
+      try {
+        // A real pre-v6 fixture has neither adoption object. Remove the
+        // dependent binding table before its manifest parent.
+        legacyDatabase.db.exec("DROP TABLE lite_runtime_authority_adoption_bindings");
+        legacyDatabase.db.exec("DROP TABLE lite_runtime_authority_adoption_manifests");
+        const metadataUpdate = legacyDatabase.db.prepare(
+          `UPDATE lite_runtime_schema_metadata
+           SET version = 5, updated_at = ?
+           WHERE component = 'write_projection'`,
+        ).run("2026-07-19T00:00:00.000Z");
+        assert.equal(Number(metadataUpdate.changes ?? 0), 1);
+        legacyDatabase.db.exec("COMMIT");
+      } catch (error) {
+        legacyDatabase.db.exec("ROLLBACK");
+        throw error;
+      }
+
+      const commitId = await legacyStore.insertLegacyV1CommitForMigrationOrTestFixture({
         scope: "repo-a",
-        clientId: null,
-        type: "fact",
-        tier: "hot",
-        title: args.id,
-        textSummary: args.id,
-        slotsJson: JSON.stringify(args.slots),
-        rawRef: null,
-        evidenceRef: null,
-        embeddingVector: null,
-        embeddingModel: null,
-        memoryLane: args.memoryLane,
-        producerAgentId: null,
-        ownerAgentId: args.ownerAgentId ?? null,
-        ownerTeamId: args.ownerTeamId ?? null,
-        embeddingStatus: "pending",
-        embeddingLastError: null,
-        salience: 0.8,
-        importance: 0.5,
-        confidence: 0.8,
-        redactionVersion: 0,
-        commitId,
+        parentCommitId: null,
+        inputSha256: "guide-learning-prior-input",
+        diffJson: "{}",
+        actor: "test",
+        modelVersion: null,
+        promptVersion: null,
+        commitHash: "guide-learning-prior-commit",
       });
-    };
-    await insertNode({ id: "mem-visible-empty", slots: {}, memoryLane: "shared" });
-    await insertNode({
-      id: "mem-private",
-      slots: { positive_attributed_use_count: 3 },
-      memoryLane: "private",
-      ownerAgentId: "owner-agent",
-    });
+      const insertNode = async (args: {
+        id: string;
+        slots: Record<string, unknown>;
+        memoryLane: "private" | "shared";
+        ownerAgentId?: string | null;
+        ownerTeamId?: string | null;
+      }): Promise<void> => {
+        await legacyStore.insertNode({
+          id: args.id,
+          scope: "repo-a",
+          clientId: null,
+          type: "fact",
+          tier: "hot",
+          title: args.id,
+          textSummary: args.id,
+          slotsJson: JSON.stringify(args.slots),
+          rawRef: null,
+          evidenceRef: null,
+          embeddingVector: null,
+          embeddingModel: null,
+          memoryLane: args.memoryLane,
+          producerAgentId: null,
+          ownerAgentId: args.ownerAgentId ?? null,
+          ownerTeamId: args.ownerTeamId ?? null,
+          embeddingStatus: "pending",
+          embeddingLastError: null,
+          salience: 0.8,
+          importance: 0.5,
+          confidence: 0.8,
+          redactionVersion: 0,
+          commitId,
+        });
+      };
+      await insertNode({ id: "mem-visible-empty", slots: {}, memoryLane: "shared" });
+      await insertNode({
+        id: "mem-private",
+        slots: { positive_attributed_use_count: 3 },
+        memoryLane: "private",
+        ownerAgentId: "owner-agent",
+      });
 
-    const memoryIds = [
-      "mem-visible-empty",
-      "mem-private",
-      ...Array.from({ length: 1_203 }, (_, index) => `mem-missing-${String(index).padStart(4, "0")}`),
-    ];
-    const publicResolution = await store.resolveGuideLearningPriorStates({
-      scope: "repo-a",
-      memoryIds,
-    });
-    assert.equal(publicResolution.size, memoryIds.length);
-    assert.deepEqual(publicResolution.get("mem-visible-empty"), {
-      status: "resolved",
-      memory_id: "mem-visible-empty",
-      node_type: "fact",
-      slots: {},
-    });
-    assert.deepEqual(publicResolution.get("mem-private"), {
-      status: "memory_visibility_mismatch",
-      memory_id: "mem-private",
-    });
-    assert.deepEqual(publicResolution.get("mem-missing-1202"), {
-      status: "memory_node_missing",
-      memory_id: "mem-missing-1202",
-    });
+      const legacyAuthority = inspectLiteMemoryCommitAuthority(legacyDatabase.db);
+      assert.equal(legacyAuthority.ok, true, JSON.stringify(legacyAuthority.findings));
+      assert.equal(legacyAuthority.legacy_commit_count, 1);
+      assert.equal(legacyAuthority.v2_commit_count, 0);
+      await legacyStore.close();
+      legacyStoreClosed = true;
+    } finally {
+      if (!legacyStoreClosed) await legacyStore.close();
+      await legacyDatabase.close();
+    }
 
-    const ownerResolution = await store.resolveGuideLearningPriorStates({
-      scope: "repo-a",
-      memoryIds: ["mem-private"],
-      consumerAgentId: "owner-agent",
+    const migratedDatabase = createLiteRuntimeDatabase(databasePath);
+    const store = createLiteWriteStoreFromDatabase(migratedDatabase, {
+      annProjectionEnabled: false,
+      closeDatabaseOnClose: false,
     });
-    assert.deepEqual(ownerResolution.get("mem-private"), {
-      status: "resolved",
-      memory_id: "mem-private",
-      node_type: "fact",
-      slots: { positive_attributed_use_count: 3 },
-    });
+    try {
+      const metadata = migratedDatabase.db.prepare(
+        `SELECT version FROM lite_runtime_schema_metadata
+         WHERE component = 'write_projection'`,
+      ).get() as { version: number } | undefined;
+      assert.equal(metadata?.version, 6);
+      const migratedAuthority = inspectLiteMemoryCommitAuthority(migratedDatabase.db);
+      assert.equal(migratedAuthority.ok, true, JSON.stringify(migratedAuthority.findings));
+      assert.ok(migratedAuthority.adoption_manifest_count > 0);
+      assert.ok(migratedAuthority.adoption_binding_count > 0);
+      assert.equal(
+        migratedAuthority.adoption_binding_verified_count,
+        migratedAuthority.adoption_binding_count,
+      );
+
+      const memoryIds = [
+        "mem-visible-empty",
+        "mem-private",
+        ...Array.from({ length: 1_203 }, (_, index) => `mem-missing-${String(index).padStart(4, "0")}`),
+      ];
+      const publicResolution = await store.resolveGuideLearningPriorStates({
+        scope: "repo-a",
+        memoryIds,
+      });
+      assert.equal(publicResolution.size, memoryIds.length);
+      assert.deepEqual(publicResolution.get("mem-visible-empty"), {
+        status: "resolved",
+        memory_id: "mem-visible-empty",
+        node_type: "fact",
+        slots: {},
+      });
+      assert.deepEqual(publicResolution.get("mem-private"), {
+        status: "memory_visibility_mismatch",
+        memory_id: "mem-private",
+      });
+      assert.deepEqual(publicResolution.get("mem-missing-1202"), {
+        status: "memory_node_missing",
+        memory_id: "mem-missing-1202",
+      });
+
+      const ownerResolution = await store.resolveGuideLearningPriorStates({
+        scope: "repo-a",
+        memoryIds: ["mem-private"],
+        consumerAgentId: "owner-agent",
+      });
+      assert.deepEqual(ownerResolution.get("mem-private"), {
+        status: "resolved",
+        memory_id: "mem-private",
+        node_type: "fact",
+        slots: { positive_attributed_use_count: 3 },
+      });
+    } finally {
+      try {
+        await store.close();
+      } finally {
+        await migratedDatabase.close();
+      }
+    }
   } finally {
-    await store.close();
+    fs.rmSync(dir, { recursive: true, force: true });
   }
 });

@@ -8,6 +8,14 @@ import { MemoryAnchorV1Schema } from "../../src/memory/schemas.ts";
 import { applyMemoryWrite, prepareMemoryWrite } from "../../src/memory/write.ts";
 import { createLiteWriteStore } from "../../src/store/lite-write-store.ts";
 import { createSqliteDatabase } from "../../src/store/sqlite.ts";
+import { runAppliedAuthorityMutationV2 } from "../../src/memory/applied-authority-mutation.ts";
+import {
+  applyNodeAuthorityPatchesV2,
+  buildNodeAuthorityMutationV2,
+  verifyNodeAuthorityPatchesV2,
+  type NodeAuthorityPatchV2,
+} from "../../src/memory/node-authority-mutation.ts";
+import { sha256Hex } from "../../src/util/crypto.ts";
 
 function tmpDbPath(name: string): string {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), "aionis-lite-execution-native-"));
@@ -580,8 +588,10 @@ test("lite write store materializes execution-native lookup across insert and an
       directDb.close();
     }
 
-    await store.updateNodeAnchorState({
-      scope: "default",
+    const beforeStates = await store.nodeStatesByIds("default", [nodeId]);
+    const beforeState = beforeStates.get(nodeId);
+    assert.ok(beforeState);
+    const patch: NodeAuthorityPatchV2 = {
       id: nodeId,
       slots: {
         summary_kind: "pattern_anchor",
@@ -601,7 +611,37 @@ test("lite write store materializes execution-native lookup across insert and an
       importance: workflowRows.rows[0]!.importance,
       confidence: workflowRows.rows[0]!.confidence,
       tier: "semantic",
+    };
+    const updated = await runAppliedAuthorityMutationV2({
+      store,
+      scope: "default",
+      actor: "execution-native-index-test",
+      inputSha256: sha256Hex(`execution-native-index:${nodeId}:pattern-v2`),
+      plan: async () => ({
+        status: "mutate" as const,
+        authorityKind: "execution_native_index_test_fixture",
+        mutations: [buildNodeAuthorityMutationV2({ before: beforeState, patch })],
+        async apply({ commitId }) {
+          await applyNodeAuthorityPatchesV2({
+            store,
+            scope: "default",
+            patches: [patch],
+            commitId,
+          });
+          return true;
+        },
+        async verify({ commitId }) {
+          return await verifyNodeAuthorityPatchesV2({
+            store,
+            scope: "default",
+            patches: [patch],
+            commitId,
+            errorLabel: "execution_native_index_test_fixture",
+          });
+        },
+      }),
     });
+    assert.equal(updated.status, "applied");
 
     const oldWorkflowRows = await store.findExecutionNativeNodes({
       scope: "default",

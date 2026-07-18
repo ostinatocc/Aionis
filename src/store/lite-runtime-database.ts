@@ -1,7 +1,7 @@
 import {
+  assertPrivateRuntimeSqliteArtifactModes,
   createPrivateRuntimeSqliteDatabase,
   createSqliteReadWriteExistingDatabase,
-  hardenPrivateRuntimeSqliteArtifacts,
   type SqliteDatabase,
 } from "./sqlite.js";
 import {
@@ -38,6 +38,7 @@ export function createLiteRuntimeReadDatabase(path: string): SqliteDatabase {
       PRAGMA journal_mode = WAL;
       PRAGMA query_only = ON;
     `);
+    assertPrivateRuntimeSqliteArtifactModes(path);
     return readDb;
   } catch (error) {
     readDb.close();
@@ -58,7 +59,7 @@ export function createLiteRuntimeDatabase(
       PRAGMA synchronous = FULL;
     `);
     readDb = createLiteRuntimeReadDatabase(path);
-    hardenPrivateRuntimeSqliteArtifacts(path);
+    assertPrivateRuntimeSqliteArtifactModes(path);
   } catch (error) {
     db.close();
     throw error;

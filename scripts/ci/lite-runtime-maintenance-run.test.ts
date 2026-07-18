@@ -10,10 +10,16 @@ import { registerRuntimeErrorHandler } from "../../src/server/http-server.ts";
 import { runRuntimeMaintenanceLite } from "../../src/memory/runtime-maintenance.ts";
 import { applyPreparedMemoryWrite, prepareMemoryWrite } from "../../src/memory/write.ts";
 import { registerMemoryFeedbackToolRoutes } from "./support/register-memory-feedback-tool-test-routes.ts";
-import { createSqliteDatabase } from "../../src/store/sqlite.ts";
-import { createLiteWriteStore } from "../../src/store/lite-write-store.ts";
+import { createLiteRuntimeDatabase } from "../../src/store/lite-runtime-database.ts";
+import { createLiteWriteStore, createLiteWriteStoreFromDatabase } from "../../src/store/lite-write-store.ts";
+import {
+  LITE_RUNTIME_AUTHORITY_ADOPTION_BINDING_TABLE,
+  LITE_RUNTIME_AUTHORITY_ADOPTION_MANIFEST_TABLE,
+  LITE_RUNTIME_AUTHORITY_ADOPTION_TRIGGERS,
+} from "../../src/store/lite-runtime-authority-adoption-contract.ts";
 import { InflightGate } from "../../src/util/inflight_gate.ts";
 import { stableUuid } from "../../src/util/uuid.ts";
+import { sha256Hex } from "../../src/util/crypto.ts";
 
 function tmpDbPath(name: string): string {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), "aionis-lite-runtime-maintenance-"));
@@ -27,6 +33,80 @@ const writeOpts = {
   piiRedaction: false,
   allowCrossScopeEdges: false,
 };
+
+async function openStoreWithAdoptedHistoricalEvidence(args: {
+  dbPath: string;
+  scope: string;
+  id: string;
+  clientId: string;
+  createdAt: string;
+  title: string;
+  textSummary: string;
+}) {
+  const database = createLiteRuntimeDatabase(args.dbPath);
+  const legacyStore = createLiteWriteStoreFromDatabase(database, {
+    closeDatabaseOnClose: true,
+    annProjectionEnabled: false,
+    allowLegacyV1Fixtures: true,
+  });
+  try {
+    for (const trigger of Object.keys(LITE_RUNTIME_AUTHORITY_ADOPTION_TRIGGERS)) {
+      database.db.exec(`DROP TRIGGER IF EXISTS ${trigger}`);
+    }
+    database.db.exec(`DROP TABLE IF EXISTS ${LITE_RUNTIME_AUTHORITY_ADOPTION_BINDING_TABLE}`);
+    database.db.exec(`DROP TABLE IF EXISTS ${LITE_RUNTIME_AUTHORITY_ADOPTION_MANIFEST_TABLE}`);
+    database.db.prepare(
+      `UPDATE lite_runtime_schema_metadata
+       SET version = 5, updated_at = ?
+       WHERE component = 'write_projection'`,
+    ).run("2026-07-18T00:00:00.000Z");
+    await legacyStore.withTx(async () => {
+      const inputSha256 = sha256Hex(`runtime-maintenance-history:${args.id}`);
+      const commitId = await legacyStore.insertLegacyV1CommitForMigrationOrTestFixture({
+        scope: args.scope,
+        parentCommitId: null,
+        inputSha256,
+        diffJson: "{}",
+        actor: "runtime-maintenance-history-fixture",
+        modelVersion: null,
+        promptVersion: null,
+        commitHash: sha256Hex(`runtime-maintenance-history-commit:${args.id}`),
+        createdAt: args.createdAt,
+      });
+      await legacyStore.insertNode({
+        id: args.id,
+        scope: args.scope,
+        clientId: args.clientId,
+        type: "evidence",
+        tier: "hot",
+        title: args.title,
+        textSummary: args.textSummary,
+        slotsJson: "{}",
+        rawRef: null,
+        evidenceRef: null,
+        embeddingVector: null,
+        embeddingModel: null,
+        memoryLane: "shared",
+        producerAgentId: "runtime-maintenance-test",
+        ownerAgentId: null,
+        ownerTeamId: null,
+        embeddingStatus: "pending",
+        embeddingLastError: null,
+        salience: 0.48,
+        importance: 0.52,
+        confidence: 0.58,
+        redactionVersion: 0,
+        commitId,
+        createdAt: args.createdAt,
+      });
+    });
+  } finally {
+    await legacyStore.close();
+  }
+  // The ordinary opener performs the real v5 -> v6 adoption and authenticates
+  // the historical node before current maintenance is allowed to mutate it.
+  return createLiteWriteStore(args.dbPath);
+}
 
 function dailyRuntimeEntropyControls() {
   return {
@@ -90,7 +170,6 @@ function buildRequestGuards() {
 
 test("runtime maintenance reports before and after learning, reuse, and forgetting effects", async () => {
   const dbPath = tmpDbPath("maintenance");
-  const store = createLiteWriteStore(dbPath);
   const tenantId = "tenant1";
   const scope = "runtime-maintenance-scope";
   const scopeKey = `tenant:${tenantId}::scope:${scope}`;
@@ -100,6 +179,15 @@ test("runtime maintenance reports before and after learning, reuse, and forgetti
   const freshEvidenceId = stableUuid(`${scopeKey}:node:runtime-maintenance:fresh-evidence`);
   const staleEvidenceId = stableUuid(`${scopeKey}:node:runtime-maintenance:stale-evidence`);
   const now = "2026-05-23T00:00:00.000Z";
+  const store = await openStoreWithAdoptedHistoricalEvidence({
+    dbPath,
+    scope: scopeKey,
+    id: staleEvidenceId,
+    clientId: "runtime-maintenance:stale-evidence",
+    createdAt: "2020-01-01T00:00:00.000Z",
+    title: "Stale execution evidence",
+    textSummary: "Stale low-level execution evidence may be cooled by controlled forgetting.",
+  });
 
   try {
     const prepared = await prepareMemoryWrite(
@@ -201,20 +289,6 @@ test("runtime maintenance reports before and after learning, reuse, and forgetti
             importance: 0.52,
             confidence: 0.58,
           },
-          {
-            id: staleEvidenceId,
-            client_id: "runtime-maintenance:stale-evidence",
-            type: "evidence",
-            tier: "hot",
-            memory_lane: "shared",
-            producer_agent_id: "runtime-maintenance-test",
-            title: "Stale execution evidence",
-            text_summary: "Stale low-level execution evidence may be cooled by controlled forgetting.",
-            slots: {},
-            salience: 0.48,
-            importance: 0.52,
-            confidence: 0.58,
-          },
         ],
         edges: [],
       },
@@ -233,15 +307,6 @@ test("runtime maintenance reports before and after learning, reuse, and forgetti
       piiRedaction: writeOpts.piiRedaction,
       allowCrossScopeEdges: writeOpts.allowCrossScopeEdges,
     }));
-    // Fixture-only tamper: simulate historical age without creating a Runtime mutation.
-    const directDb = createSqliteDatabase(dbPath);
-    try {
-      directDb.prepare("UPDATE lite_memory_nodes SET created_at = ? WHERE scope = ? AND id = ?")
-        .run("2020-01-01T00:00:00.000Z", scopeKey, staleEvidenceId);
-    } finally {
-      directDb.close();
-    }
-
     const out = await runRuntimeMaintenanceLite(store, {
       tenant_id: tenantId,
       scope,
@@ -316,64 +381,22 @@ test("runtime maintenance reports before and after learning, reuse, and forgetti
 
 test("runtime maintenance profiles apply different low-level forgetting horizons", async () => {
   const dbPath = tmpDbPath("profile-horizons");
-  const store = createLiteWriteStore(dbPath);
   const tenantId = "tenant1";
   const scope = "runtime-maintenance-profile-scope";
   const scopeKey = `tenant:${tenantId}::scope:${scope}`;
   const evidenceId = stableUuid(`${scopeKey}:node:runtime-maintenance:profile-evidence`);
+  const twoDaysOld = new Date(Date.now() - (48 * 60 * 60 * 1000)).toISOString();
+  const store = await openStoreWithAdoptedHistoricalEvidence({
+    dbPath,
+    scope: scopeKey,
+    id: evidenceId,
+    clientId: "runtime-maintenance:profile-evidence",
+    createdAt: twoDaysOld,
+    title: "Two-day execution evidence",
+    textSummary: "Two-day-old low-level execution evidence should be stale for daily but fresh for long-horizon maintenance.",
+  });
 
   try {
-    const prepared = await prepareMemoryWrite(
-      {
-        tenant_id: tenantId,
-        scope,
-        actor: "runtime-maintenance-test",
-        input_text: "seed profile horizon evidence",
-        auto_embed: false,
-        distill: { enabled: false },
-        nodes: [
-          {
-            id: evidenceId,
-            client_id: "runtime-maintenance:profile-evidence",
-            type: "evidence",
-            tier: "hot",
-            memory_lane: "shared",
-            producer_agent_id: "runtime-maintenance-test",
-            title: "Two-day execution evidence",
-            text_summary: "Two-day-old low-level execution evidence should be stale for daily but fresh for long-horizon maintenance.",
-            slots: {},
-            salience: 0.48,
-            importance: 0.52,
-            confidence: 0.58,
-          },
-        ],
-        edges: [],
-      },
-      scope,
-      "default",
-      {
-        maxTextLen: writeOpts.maxTextLen,
-        piiRedaction: writeOpts.piiRedaction,
-        allowCrossScopeEdges: writeOpts.allowCrossScopeEdges,
-      },
-      null,
-    );
-    sealAuthorityReceiptsForPreparedWrite(prepared);
-    await store.withTx(() => applyPreparedMemoryWrite(store, prepared, {
-      maxTextLen: writeOpts.maxTextLen,
-      piiRedaction: writeOpts.piiRedaction,
-      allowCrossScopeEdges: writeOpts.allowCrossScopeEdges,
-    }));
-    const twoDaysOld = new Date(Date.now() - (48 * 60 * 60 * 1000)).toISOString();
-    // Fixture-only tamper: simulate historical age without creating a Runtime mutation.
-    const directDb = createSqliteDatabase(dbPath);
-    try {
-      directDb.prepare("UPDATE lite_memory_nodes SET created_at = ? WHERE scope = ? AND id = ?")
-        .run(twoDaysOld, scopeKey, evidenceId);
-    } finally {
-      directDb.close();
-    }
-
     const longHorizon = await runRuntimeMaintenanceLite(store, {
       tenant_id: tenantId,
       scope,

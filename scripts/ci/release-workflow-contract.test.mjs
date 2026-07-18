@@ -16,6 +16,15 @@ function workflowStep(workflow, name) {
   return workflow.slice(start, next === -1 ? workflow.length : next);
 }
 
+function workflowJob(workflow, name) {
+  const headers = [...workflow.matchAll(/^  ([a-z0-9-]+):\s*$/gm)];
+  const index = headers.findIndex((match) => match[1] === name);
+  assert.notEqual(index, -1, `missing workflow job: ${name}`);
+  const start = headers[index].index;
+  const end = headers[index + 1]?.index ?? workflow.length;
+  return workflow.slice(start, end);
+}
+
 test("Docker release verifies all frozen package repositories before publication", () => {
   const workflow = read(".github/workflows/docker.yml");
   const frozenPackages = [
@@ -72,10 +81,16 @@ test("Docker release verifies all frozen package repositories before publication
 
 test("Docker image is built once, smoked by digest, and only then promoted", () => {
   const workflow = read(".github/workflows/docker.yml");
+  const verifyJob = workflowJob(workflow, "verify");
+  const publishJob = workflowJob(workflow, "publish");
   const buildActions = workflow.match(/uses: docker\/build-push-action@v6/g) ?? [];
 
   assert.match(workflow, /^  verify:\s*$/m);
-  assert.match(workflow, /^    needs: verify\s*$/m);
+  assert.match(workflow, /^  publish:\s*$/m);
+  assert.match(publishJob, /^    needs: \[verify, release-core, release-recovery\]\s*$/m);
+  assert.match(publishJob, /needs\.verify\.result == 'success'/);
+  assert.match(publishJob, /needs\['release-core'\]\.result == 'success'/);
+  assert.match(publishJob, /needs\['release-recovery'\]\.result == 'success'/);
   assert.match(workflow, /release_ref:[\s\S]*required: true[\s\S]*publish:[\s\S]*default: false/);
   assert.match(workflow, /group: docker-release-/);
   assert.match(workflow, /ref: \$\{\{ github\.event_name == 'workflow_dispatch' && inputs\.release_ref \|\| github\.ref_name \}\}/);
@@ -86,14 +101,49 @@ test("Docker image is built once, smoked by digest, and only then promoted", () 
   assert.doesNotMatch(workflow, /git merge-base --is-ancestor/);
   assert.match(workflow, /--expect-tag "\$\{AIONIS_RELEASE_EXPECTED_TAG\}"/);
   assert.match(workflow, /runtime_commit: \$\{\{ steps\.release-metadata\.outputs\.runtime_commit \}\}/);
+  assert.match(workflow, /release_status: \$\{\{ steps\.release-metadata\.outputs\.release_status \}\}/);
+  assert.match(
+    workflow,
+    /unsupported release-train status: \$\{train\.status\}/,
+  );
+  assert.match(workflow, /release_status=\$\{train\.status\}/);
   assert.match(workflow, /AIONIS_FRESH_INSTALL_RUNTIME_REF="\$\{\{ steps\.release-metadata\.outputs\.runtime_tag \}\}"/);
   assert.match(workflow, /^    permissions:\s*\n      contents: read\s*\n      packages: write$/m);
   assert.doesNotMatch(workflow, /^  packages: write$/m);
+  assert.match(
+    publishJob,
+    /needs\.verify\.outputs\.release_status == 'candidate'[\s\S]*needs\.verify\.outputs\.release_status == 'stable'/,
+  );
+  assert.doesNotMatch(publishJob, /release_status == 'development'/);
+  assert.match(publishJob, /uses: docker\/login-action@v3/);
+  assert.match(publishJob, /push: true/);
+  assert.doesNotMatch(verifyJob, /packages: write|docker\/login-action|push: true/);
   assert.match(workflow, /release-artifact-gate\.mjs[\s\\]*--check/);
   assert.match(workflow, /github\.event_name == 'workflow_dispatch' && inputs\.publish == true/);
-  assert.match(workflow, /npm run -s lite:test/);
+  assert.match(verifyJob, /^        run: npm run -s lite:test:static$/m);
+  assert.match(verifyJob, /^        run: npm run -s lite:test:core:manifest$/m);
+  assert.doesNotMatch(verifyJob, /^        run: npm run -s lite:test$/m);
+  assert.doesNotMatch(verifyJob, /^        run: npm run -s lite:test:core$/m);
+  assert.doesNotMatch(verifyJob, /lite:test:recovery:/);
   assert.match(workflow, /external-package-entrypoint-smoke\.ts/);
   assert.match(workflow, /fresh-install-smoke\.ts/);
+  assert.match(
+    workflow,
+    /AIONIS_FRESH_INSTALL_EXPECTED_RUNTIME_COMMIT="\$\{\{ steps\.release-metadata\.outputs\.runtime_commit \}\}"/,
+  );
+  assert.match(
+    workflow,
+    /AIONIS_FRESH_INSTALL_VERIFIED_RUNTIME_SOURCE="\$\{GITHUB_WORKSPACE\}"/,
+  );
+  const freshInstallSmoke = read("scripts/e2e/fresh-install-smoke.ts");
+  assert.match(freshInstallSmoke, /git", \["clone", "--bare", "--no-local"/);
+  assert.match(freshInstallSmoke, /args\.push\("--skip-install"\)/);
+  assert.match(freshInstallSmoke, /installedCommit === expectedCommit/);
+  assert.match(freshInstallSmoke, /--untracked-files=all/);
+  assert.match(
+    freshInstallSmoke,
+    /const installedRuntimeCommit = assertInstalledRuntimeCommit\([\s\S]*?const verifiedLifecycleOutput = [\s\S]*?completeVerifiedRuntimeInstall\(install\.targetDir\)/,
+  );
   assert.match(workflow, /docker-release-smoke\.sh/);
   assert.equal(buildActions.length, 1, "release workflow must perform one container build");
   assert.match(workflow, /platforms: linux\/amd64(?:\s|$)/);
@@ -142,6 +192,91 @@ test("Docker image is built once, smoked by digest, and only then promoted", () 
       workflow.indexOf("Smoke the exact published digest"),
     "the immutable provenance subject must resolve to the built digest before smoke",
   );
+});
+
+test("Docker release runs every core shard against the verified release commit", () => {
+  const workflow = read(".github/workflows/docker.yml");
+  const coreJob = workflowJob(workflow, "release-core");
+
+  assert.match(coreJob, /^    needs: verify$/m);
+  assert.match(coreJob, /^    timeout-minutes: \$\{\{ matrix\.timeout_minutes \}\}$/m);
+  assert.match(coreJob, /^      fail-fast: false$/m);
+  assert.match(coreJob, /^      max-parallel: 5$/m);
+  for (const [shard, timeout] of [
+    ["bucket-0", 40],
+    ["bucket-1", 30],
+    ["bucket-2", 40],
+    ["external-evidence", 25],
+    ["deployment-authority", 90],
+  ]) {
+    assert.match(
+      coreJob,
+      new RegExp(`- shard: ${shard}\\n\\s+timeout_minutes: ${String(timeout)}`),
+    );
+  }
+  assert.match(
+    coreJob,
+    /name: Checkout verified Runtime release candidate[\s\S]*?ref: \$\{\{ needs\.verify\.outputs\.runtime_commit \}\}/,
+  );
+  assert.match(
+    coreJob,
+    /name: Verify release core source commit[\s\S]*?EXPECTED_RUNTIME_COMMIT: \$\{\{ needs\.verify\.outputs\.runtime_commit \}\}[\s\S]*?git rev-parse 'HEAD\^\{commit\}'[\s\S]*?test "\$\{actual_commit\}" = "\$\{EXPECTED_RUNTIME_COMMIT\}"/,
+  );
+  assert.match(
+    coreJob,
+    /^        run: npm run -s lite:test:core:\$\{\{ matrix\.shard \}\}$/m,
+  );
+  assert.doesNotMatch(coreJob, /continue-on-error/);
+  assert.doesNotMatch(coreJob, /^\s+run: npm run -s lite:test:core\s*$/m);
+  assert.doesNotMatch(coreJob, /lite:test:(?:static|recovery)/);
+});
+
+test("Docker release runs all provisioning recovery shards against the verified release commit", () => {
+  const workflow = read(".github/workflows/docker.yml");
+  const recoveryJob = workflowJob(workflow, "release-recovery");
+
+  assert.match(recoveryJob, /^    needs: verify$/m);
+  assert.match(
+    recoveryJob,
+    /^    timeout-minutes: \$\{\{ matrix\.timeout_minutes \}\}$/m,
+  );
+  assert.match(recoveryJob, /^      fail-fast: false$/m);
+  assert.match(recoveryJob, /^      max-parallel: 4$/m);
+  for (const [shard, timeout] of [
+    ["bootstrap", 35],
+    ["receipt", 25],
+    ["durable", 30],
+    ["terminal", 25],
+  ]) {
+    assert.match(
+      recoveryJob,
+      new RegExp(`- shard: ${shard}\\n\\s+timeout_minutes: ${String(timeout)}`),
+    );
+  }
+  assert.match(
+    recoveryJob,
+    /name: Checkout exact Runtime release candidate[\s\S]*?ref: \$\{\{ needs\.verify\.outputs\.runtime_commit \}\}/,
+  );
+  assert.match(
+    recoveryJob,
+    /name: Verify release recovery source commit[\s\S]*?EXPECTED_RUNTIME_COMMIT: \$\{\{ needs\.verify\.outputs\.runtime_commit \}\}[\s\S]*?git rev-parse 'HEAD\^\{commit\}'[\s\S]*?test "\$\{actual_commit\}" = "\$\{EXPECTED_RUNTIME_COMMIT\}"/,
+  );
+  assert.match(
+    recoveryJob,
+    /name: Set up Node\.js[\s\S]*?node-version: "24"[\s\S]*?cache: npm/,
+  );
+  assert.match(
+    recoveryJob,
+    /name: Install protected-close ACL verifier[\s\S]*?sudo apt-get install --yes --no-install-recommends acl/,
+  );
+  assert.match(recoveryJob, /^        run: npm ci$/m);
+  assert.match(
+    recoveryJob,
+    /^        run: npm run -s lite:test:recovery:\$\{\{ matrix\.shard \}\}$/m,
+  );
+  assert.doesNotMatch(recoveryJob, /continue-on-error/);
+  assert.doesNotMatch(recoveryJob, /^\s+run: npm run -s lite:test(?:\s|$)/m);
+  assert.doesNotMatch(recoveryJob, /lite:test:(?:static|core)/);
 });
 
 test("cross-package release gates install tarballs packed from exact checkouts", () => {

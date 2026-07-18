@@ -5,45 +5,15 @@ import type {
   CanonicalAuthorityTableMutationV2,
 } from "../store/write-commit-authority.js";
 import { SELF_COMMIT_REFERENCE } from "./write-serialization.js";
-import { nodeEmbeddingAuthorityFieldsAfterTextUpdate } from "./node-embedding-freshness.js";
 import stableStringify from "fast-json-stable-stringify";
+import {
+  nodeAuthorityStateAfterPatchV2,
+  type NodeAuthorityPatchV2,
+  type NodeAuthorityStateV2,
+} from "./node-embedding-freshness.js";
 
-export type NodeAuthorityStateV2 = {
-  id: string;
-  scope: string;
-  client_id: string | null;
-  type: string;
-  tier: string;
-  title: string | null;
-  text_summary: string | null;
-  slots_json: unknown;
-  raw_ref: string | null;
-  evidence_ref: string | null;
-  embedding_vector_json: unknown;
-  embedding_model: string | null;
-  memory_lane: "private" | "shared";
-  producer_agent_id: string | null;
-  owner_agent_id: string | null;
-  owner_team_id: string | null;
-  embedding_status: "pending" | "ready" | "failed";
-  embedding_last_error: string | null;
-  salience: number;
-  importance: number;
-  confidence: number;
-  redaction_version: number;
-  commit_id: string;
-  created_at: string;
-};
-
-export type NodeAuthorityPatchV2 = {
-  id: string;
-  tier?: string;
-  slots: Record<string, unknown>;
-  textSummary: string | null;
-  salience: number;
-  importance: number;
-  confidence: number;
-};
+export { nodeAuthorityStateAfterPatchV2 } from "./node-embedding-freshness.js";
+export type { NodeAuthorityPatchV2, NodeAuthorityStateV2 } from "./node-embedding-freshness.js";
 
 export type NodeAuthorityHeadFence = {
   expectedHeadRevision: number;
@@ -128,26 +98,7 @@ export function buildNodeAuthorityMutationV2(args: {
       throw new Error(`node_authority_requested_evidence_key_reserved:${key}`);
     }
   }
-  const after = {
-    ...before,
-    ...(args.patch.tier ? { tier: args.patch.tier } : {}),
-    slots_json: args.patch.slots,
-    text_summary: args.patch.textSummary,
-    ...nodeEmbeddingAuthorityFieldsAfterTextUpdate({
-      beforeTextSummary: before.text_summary,
-      afterTextSummary: args.patch.textSummary,
-      current: {
-        embedding_vector_json: before.embedding_vector_json,
-        embedding_model: before.embedding_model,
-        embedding_status: before.embedding_status,
-        embedding_last_error: before.embedding_last_error,
-      },
-    }),
-    salience: args.patch.salience,
-    importance: args.patch.importance,
-    confidence: args.patch.confidence,
-    commit_id: SELF_COMMIT_REFERENCE,
-  };
+  const after = nodeAuthorityStateAfterPatchV2({ before, patch: args.patch });
   return {
     table: "lite_memory_nodes",
     identity: { scope: args.before.scope, id: args.patch.id },

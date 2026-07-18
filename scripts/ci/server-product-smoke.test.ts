@@ -1209,23 +1209,49 @@ test("Runtime services establish one tenant-scope anchor, replay it, and reject 
 test("Runtime services keep a legacy unanchored database available without claiming raw scopes", async () => {
   const writePath = tmpDbPath("tenant-anchor-legacy-write");
   const replayPath = tmpDbPath("tenant-anchor-legacy-replay");
+  const legacyCommitId = "11111111-1111-4111-8111-111111111111";
   const database = createLiteRuntimeDatabase(writePath);
-  const writeStore = createLiteWriteStoreFromDatabase(database, { annProjectionEnabled: false });
   try {
-    await writeStore.withTx(async () => {
-      await writeStore.insertLegacyV1CommitForMigrationOrTestFixture({
-        scope: "legacy-unprefixed-scope",
-        parentCommitId: null,
-        inputSha256: "1".repeat(64),
-        diffJson: "{}",
-        actor: "legacy-memory-writer",
-        modelVersion: null,
-        promptVersion: null,
-        commitHash: "2".repeat(64),
-      });
+    const initializedStore = createLiteWriteStoreFromDatabase(database, {
+      annProjectionEnabled: false,
     });
+    await initializedStore.close();
+    database.db.exec("BEGIN IMMEDIATE");
+    try {
+      database.db.exec("DROP TABLE lite_runtime_authority_adoption_bindings");
+      database.db.exec("DROP TABLE lite_runtime_authority_adoption_manifests");
+      const metadata = database.db.prepare(
+        `UPDATE lite_runtime_schema_metadata
+         SET version = 5, updated_at = ?
+         WHERE component = 'write_projection'`,
+      ).run("2026-07-18T00:00:00.000Z");
+      assert.equal(Number(metadata.changes), 1);
+      database.db.prepare(
+        `INSERT INTO lite_memory_commits
+          (id, scope, parent_commit_id, input_sha256, diff_json, actor,
+           model_version, prompt_version, commit_hash, created_at,
+           digest_version, revision, mutation_digest, legacy_anchor_commit_id)
+         VALUES (?, ?, NULL, ?, ?, ?, NULL, NULL, ?, ?, 1, NULL, NULL, NULL)`,
+      ).run(
+        legacyCommitId,
+        "legacy-unprefixed-scope",
+        "1".repeat(64),
+        "{}",
+        "legacy-memory-writer",
+        "2".repeat(64),
+        "2026-07-18T00:00:01.000Z",
+      );
+      database.db.exec("COMMIT");
+    } catch (error) {
+      database.db.exec("ROLLBACK");
+      throw error;
+    }
+    const historicalVersion = database.db.prepare(
+      `SELECT version FROM lite_runtime_schema_metadata
+       WHERE component = 'write_projection'`,
+    ).get() as { version: number } | undefined;
+    assert.equal(historicalVersion?.version, 5);
   } finally {
-    await writeStore.close();
     await database.close();
   }
 
@@ -1233,6 +1259,22 @@ test("Runtime services keep a legacy unanchored database available without claim
   const services = await createRuntimeServices(createRuntimeConfig(env));
   try {
     assert.ok(services.liteWriteStore);
+    const migrated = createLiteRuntimeDatabase(writePath);
+    try {
+      const migratedVersion = migrated.db.prepare(
+        `SELECT version FROM lite_runtime_schema_metadata
+         WHERE component = 'write_projection'`,
+      ).get() as { version: number } | undefined;
+      assert.equal(migratedVersion?.version, 6);
+      const migratedLegacyCommit = migrated.db.prepare(
+        `SELECT scope, digest_version FROM lite_memory_commits
+         WHERE id = ?`,
+      ).get(legacyCommitId) as { scope: string; digest_version: number } | undefined;
+      assert.equal(migratedLegacyCommit?.scope, "legacy-unprefixed-scope");
+      assert.equal(migratedLegacyCommit?.digest_version, 1);
+    } finally {
+      await migrated.close();
+    }
     assert.deepEqual(await tenantScopeAnchorRows(writePath), []);
   } finally {
     await closeConstructedRuntimeServices(services);

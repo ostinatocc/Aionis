@@ -2,11 +2,11 @@ import { readFileSync } from "node:fs";
 
 import {
   publishLearningExternalEvidenceReceipt,
-} from "../../../src/operator/learning-external-evidence-receipt-writer.js";
+} from "../../../packages/aionis-learning-authority/src/operator/learning-external-evidence-receipt-writer.js";
 import {
   ingestLiteLearningExternalEvidence,
   type LiteLearningExternalEvidenceServiceInput,
-} from "../../../src/store/lite-learning-external-evidence-service.js";
+} from "../../../packages/aionis-learning-authority/src/store/lite-learning-external-evidence-service.js";
 import type { SqliteTransactionPhase } from
   "../../../src/store/sqlite-transaction-runner.js";
 

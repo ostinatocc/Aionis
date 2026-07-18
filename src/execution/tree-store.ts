@@ -1,7 +1,7 @@
 import { z } from "zod";
 import {
+  assertPrivateRuntimeSqliteArtifactModes,
   createPrivateRuntimeSqliteDatabase,
-  hardenPrivateRuntimeSqliteArtifacts,
   ignoreSqliteDuplicateColumnError,
   type SqliteDatabase,
 } from "../store/sqlite.js";
@@ -178,7 +178,7 @@ export class LiteExecutionTreeStore implements ExecutionTreeStore {
         eventAfterJsonColumn: "tree_after_json",
         uniqueRevisionIndex: "idx_lite_execution_tree_operations_unique_revision",
       });
-      if (this.ownsDatabase) hardenPrivateRuntimeSqliteArtifacts(path);
+      if (this.ownsDatabase) assertPrivateRuntimeSqliteArtifactModes(path);
     } catch (error) {
       if (this.ownsReadDatabase) {
         try {

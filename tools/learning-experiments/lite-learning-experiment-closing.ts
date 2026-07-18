@@ -39,6 +39,8 @@ import {
   createLiteRuntimeProtectedWriteDatabase,
   type LiteRuntimeDatabase,
 } from "../../src/store/lite-runtime-database.js";
+import { appendLiteRuntimeWriteOperationAuthorityInCurrentTransaction } from
+  "../../src/store/lite-runtime-applied-authority.js";
 import {
   inspectLiteRuntimeSchema,
   LITE_RUNTIME_WRITE_SCHEMA_VERSION,
@@ -99,31 +101,19 @@ function createProtectedCloseWriteStore(
         );
       }
       const createdAt = new Date().toISOString();
-      db.prepare(
-        `INSERT INTO lite_runtime_write_operations
-           (tenant_id, scope, operation_kind, operation_id, request_sha256,
-            receipt_json, commit_id, created_at)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
-      ).run(
-        args.tenantId,
-        args.scope,
-        args.operationKind,
-        args.operationId,
-        args.requestSha256,
-        args.receiptJson,
-        args.commitId ?? null,
-        createdAt,
-      );
-      return {
-        tenant_id: args.tenantId,
+      return appendLiteRuntimeWriteOperationAuthorityInCurrentTransaction({
+        db,
+        transaction,
+        actor: args.authorityActor,
+        tenantId: args.tenantId,
         scope: args.scope,
-        operation_kind: args.operationKind,
-        operation_id: args.operationId,
-        request_sha256: args.requestSha256,
-        receipt_json: args.receiptJson,
-        commit_id: args.commitId ?? null,
-        created_at: createdAt,
-      };
+        operationKind: args.operationKind,
+        operationId: args.operationId,
+        requestSha256: args.requestSha256,
+        receiptJson: args.receiptJson,
+        commitId: args.commitId ?? null,
+        createdAt,
+      }).row;
     },
   };
 }

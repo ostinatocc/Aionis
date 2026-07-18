@@ -155,6 +155,7 @@ test("raw protected-table SQL stays in the write store and embedding projection 
     "giu",
   );
   const allowedWriteStore = "src/store/lite-write-store.ts";
+  const allowedCommitAuthority = "src/store/lite-memory-commit-authority.ts";
   const allowedProjection = "src/store/lite-projection-outbox.ts";
   const unexpected: Array<{ file: string; table: string }> = [];
 
@@ -164,6 +165,7 @@ test("raw protected-table SQL stays in the write store and embedding projection 
     for (const match of source.matchAll(mutationPattern)) {
       const table = match[1] ?? "unknown";
       if (relative === allowedWriteStore) continue;
+      if (relative === allowedCommitAuthority && table === "lite_memory_commits") continue;
       if (relative === allowedProjection && table === "lite_memory_nodes") continue;
       unexpected.push({ file: relative, table });
     }
@@ -217,11 +219,11 @@ test("production insertCommit rejects omitted and explicit v1 digests before tou
     ) => Promise<string>;
 
     await assert.rejects(
-      unsafeInsert(legacyPayload),
+      store.withTx(() => unsafeInsert(legacyPayload)),
       /lite_memory_commit_digest_v2_required/,
     );
     await assert.rejects(
-      unsafeInsert({ ...legacyPayload, digestVersion: 1 }),
+      store.withTx(() => unsafeInsert({ ...legacyPayload, digestVersion: 1 })),
       /lite_memory_commit_digest_v2_required/,
     );
 
@@ -242,7 +244,10 @@ test("production insertCommit rejects omitted and explicit v1 digests before tou
 
 test("explicit migration/test seam persists a readable v1 boundary without a v2 head", async () => {
   const temp = tempDatabase("legacy-seam");
-  const store = createLiteWriteStore(temp.databasePath, { annProjectionEnabled: false });
+  const store = createLiteWriteStore(temp.databasePath, {
+    annProjectionEnabled: false,
+    allowLegacyV1Fixtures: true,
+  });
   try {
     const createdAt = "2000-01-01T00:00:00.000Z";
     const commitId = await store.insertLegacyV1CommitForMigrationOrTestFixture({

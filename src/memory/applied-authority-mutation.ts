@@ -67,6 +67,7 @@ export type RunAppliedAuthorityMutationV2Args<T> = Readonly<{
   actor: string;
   modelVersion?: string | null;
   promptVersion?: string | null;
+  appliedAt?: string;
   expectedHeadRevision?: number;
   expectedHeadCommitId?: string | null;
   plan(
@@ -108,6 +109,13 @@ function assertCoordinatorInput<T>(args: RunAppliedAuthorityMutationV2Args<T>): 
     && (!Number.isSafeInteger(args.expectedHeadRevision) || args.expectedHeadRevision < 0)) {
     throw new Error("applied_authority_expected_head_revision_invalid");
   }
+  if (args.appliedAt !== undefined) {
+    const appliedAtMillis = new Date(args.appliedAt).getTime();
+    if (!Number.isFinite(appliedAtMillis)
+      || new Date(appliedAtMillis).toISOString() !== args.appliedAt) {
+      throw new Error("applied_authority_applied_at_invalid");
+    }
+  }
 }
 
 /**
@@ -134,7 +142,7 @@ export async function runAppliedAuthorityMutationV2<T>(
       });
     }
 
-    const appliedAt = new Date().toISOString();
+    const appliedAt = args.appliedAt ?? new Date().toISOString();
     const changesBeforePlan = args.store.authorityTransactionChangeCount();
     const plan = await args.plan({ head, appliedAt });
     if (args.store.authorityTransactionChangeCount() !== changesBeforePlan) {

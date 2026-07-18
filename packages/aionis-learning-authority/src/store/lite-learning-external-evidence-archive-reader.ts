@@ -1,3 +1,4 @@
+// External operator authority; the focused Runtime never imports this module.
 import { spawnSync } from "node:child_process";
 import { createHash, type Hash } from "node:crypto";
 import {

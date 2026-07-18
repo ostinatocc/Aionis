@@ -132,7 +132,9 @@ test("handoff/store replays its durable receipt after restart, including a serve
     firstBody = first.json();
     assert.equal(firstBody.contract_version, "aionis_handoff_store_result_v1");
     assert.match(firstBody.operation_id, /^handoff_[0-9a-f-]+$/);
-    assert.equal(countRows(firstRuntime, "lite_memory_commits"), 1);
+    // The semantic handoff and its durable operation receipt are independently
+    // bound into the direct-v2 authority chain.
+    assert.equal(countRows(firstRuntime, "lite_memory_commits"), 2);
     assert.equal(countRows(firstRuntime, "lite_runtime_write_operations", "operation_kind = ?", [OPERATION_KIND]), 1);
   } finally {
     await firstRuntime.close();
@@ -147,7 +149,7 @@ test("handoff/store replays its durable receipt after restart, including a serve
     });
     assert.equal(replay.statusCode, 200, replay.body);
     assert.deepEqual(replay.json(), firstBody!);
-    assert.equal(countRows(restarted, "lite_memory_commits"), 1);
+    assert.equal(countRows(restarted, "lite_memory_commits"), 2);
     assert.equal(countRows(restarted, "lite_memory_nodes"), 2);
     assert.equal(countRows(restarted, "lite_runtime_write_operations", "operation_kind = ?", [OPERATION_KIND]), 1);
   } finally {
@@ -166,7 +168,7 @@ test("concurrent handoff/store requests with the same operation id commit once",
     assert.equal(left.statusCode, 200, left.body);
     assert.equal(right.statusCode, 200, right.body);
     assert.deepEqual(left.json(), right.json());
-    assert.equal(countRows(runtime, "lite_memory_commits"), 1);
+    assert.equal(countRows(runtime, "lite_memory_commits"), 2);
     assert.equal(countRows(runtime, "lite_memory_nodes"), 2);
     assert.equal(countRows(runtime, "lite_runtime_write_operations", "operation_kind = ?", [OPERATION_KIND]), 1);
   } finally {
@@ -187,7 +189,7 @@ test("handoff/store rejects operation id reuse with different effective content 
     });
     assert.equal(conflicting.statusCode, 409, conflicting.body);
     assert.equal(conflicting.json().error, "handoff_operation_id_conflict");
-    assert.equal(countRows(runtime, "lite_memory_commits"), 1);
+    assert.equal(countRows(runtime, "lite_memory_commits"), 2);
     assert.equal(countRows(runtime, "lite_memory_nodes"), 2);
     assert.equal(countRows(runtime, "lite_runtime_write_operations", "operation_kind = ?", [OPERATION_KIND]), 1);
   } finally {
@@ -246,7 +248,7 @@ test("handoff/store replays the historical tree receipt after the live tree adva
     const replay = await runtime.app.inject({ method: "POST", url: "/v1/handoff/store", payload });
     assert.equal(replay.statusCode, 200, replay.body);
     assert.deepEqual(replay.json(), firstBody);
-    assert.equal(countRows(runtime, "lite_memory_commits"), 1);
+    assert.equal(countRows(runtime, "lite_memory_commits"), 2);
   } finally {
     await runtime.close();
   }
@@ -311,7 +313,7 @@ test("handoff/store binds authenticated ownership and never exposes another prin
     assert.equal(foreignReplay.statusCode, 409, foreignReplay.body);
     assert.equal(foreignReplay.json().error, "handoff_operation_id_conflict");
     assert.notDeepEqual(foreignReplay.json(), stored.json());
-    assert.equal(countRows(runtime, "lite_memory_commits"), 1);
+    assert.equal(countRows(runtime, "lite_memory_commits"), 2);
   } finally {
     await runtime.close();
   }
@@ -323,6 +325,9 @@ test("handoff/store fails closed on a corrupt durable receipt", async () => {
     const payload = basePayload("handoff-corrupt-receipt-1");
     const first = await runtime.app.inject({ method: "POST", url: "/v1/handoff/store", payload });
     assert.equal(first.statusCode, 200, first.body);
+    const originalReceipt = runtime.database.readDb.prepare<{ receipt_json: string }>(
+      "SELECT receipt_json FROM lite_runtime_write_operations WHERE operation_kind = ? AND operation_id = ?",
+    ).get(OPERATION_KIND, payload.operation_id).receipt_json;
     runtime.database.db.prepare(
       "UPDATE lite_runtime_write_operations SET receipt_json = ? WHERE operation_kind = ? AND operation_id = ?",
     ).run("{not-json", OPERATION_KIND, payload.operation_id);
@@ -330,7 +335,12 @@ test("handoff/store fails closed on a corrupt durable receipt", async () => {
     const replay = await runtime.app.inject({ method: "POST", url: "/v1/handoff/store", payload });
     assert.equal(replay.statusCode, 500, replay.body);
     assert.equal(replay.json().error, "handoff_operation_receipt_corrupt");
-    assert.equal(countRows(runtime, "lite_memory_commits"), 1);
+    assert.equal(countRows(runtime, "lite_memory_commits"), 2);
+    // close() performs an independent final authority audit. Restore the row
+    // after proving the request path fails closed so that audit can succeed.
+    runtime.database.db.prepare(
+      "UPDATE lite_runtime_write_operations SET receipt_json = ? WHERE operation_kind = ? AND operation_id = ?",
+    ).run(originalReceipt, OPERATION_KIND, payload.operation_id);
   } finally {
     await runtime.close();
   }

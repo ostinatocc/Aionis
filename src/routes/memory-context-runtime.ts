@@ -1151,6 +1151,9 @@ export function createMemoryPlanningContextService(args: {
     if (!Array.isArray(args.parsed.tool_candidates) || args.parsed.tool_candidates.length === 0) {
       return null;
     }
+    const prepareDeferredDecision = args.deferDecisionPersistence
+      && typeof args.parsed.run_id === "string"
+      && args.parsed.run_id.trim().length > 0;
     return selectTools(buildContextToolsRequest({
         recallParsed: args.recallParsed,
         parsed: args.parsed,
@@ -1163,7 +1166,7 @@ export function createMemoryPlanningContextService(args: {
         embedder,
         liteWriteStore,
         persistDecision: args.deferDecisionPersistence ? false : undefined,
-        onDecisionPrepared: args.deferDecisionPersistence ? args.onDecisionPrepared : undefined,
+        onDecisionPrepared: prepareDeferredDecision ? args.onDecisionPrepared : undefined,
         actor: args.parsed.consumer_agent_id ?? env.LITE_LOCAL_ACTOR_ID,
       },
     );

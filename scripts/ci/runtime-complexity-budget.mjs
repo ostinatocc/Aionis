@@ -7,15 +7,23 @@ import ts from "typescript";
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..", "..");
 const LARGEST_FILE_LIMIT = 20;
+const CODE_EXTENSIONS = ["ts", "tsx", "mts", "cts", "js", "mjs", "cjs"];
+const RESOURCE_EXTENSIONS = ["sql", "json"];
+const SCRIPT_ARTIFACT_EXTENSIONS = [...CODE_EXTENSIONS, "sh", "json"];
 
 function toPosix(value) {
   return value.split(path.sep).join("/");
 }
 
-function workspaceTypescriptFiles(pathspec) {
+function pathspecs(root, extensions) {
+  return extensions.map((extension) => `${root}/**/*.${extension}`);
+}
+
+function workspaceFiles(...pathspecList) {
+  if (pathspecList.length === 0) throw new Error("workspace inventory requires a pathspec");
   const listed = spawnSync(
     "git",
-    ["ls-files", "--cached", "--others", "--exclude-standard", pathspec],
+    ["ls-files", "--cached", "--others", "--exclude-standard", ...pathspecList],
     {
     cwd: ROOT,
     encoding: "utf8",
@@ -33,7 +41,7 @@ function workspaceTypescriptFiles(pathspec) {
 }
 
 function workspaceSourceFiles() {
-  return workspaceTypescriptFiles("src/**/*.ts");
+  return workspaceFiles(...pathspecs("src", CODE_EXTENSIONS));
 }
 
 function countLines(source) {
@@ -48,7 +56,7 @@ function parseSource(relativePath, source) {
     source,
     ts.ScriptTarget.Latest,
     false,
-    ts.ScriptKind.TS,
+    ts.getScriptKindFromFileName(relativePath),
   );
 }
 
@@ -107,7 +115,13 @@ function countEnvSchemaFields(sourceFile) {
 }
 
 function relativeModuleSpecifiers(sourceFile) {
-  const out = [];
+  const out = new Set();
+  const addModuleSpecifier = (moduleSpecifier) => {
+    if (!moduleSpecifier || !ts.isStringLiteralLike(moduleSpecifier)) return;
+    if (moduleSpecifier.text.startsWith("./") || moduleSpecifier.text.startsWith("../")) {
+      out.add(moduleSpecifier.text);
+    }
+  };
   for (const statement of sourceFile.statements) {
     let moduleSpecifier = null;
     if (ts.isImportDeclaration(statement) || ts.isExportDeclaration(statement)) {
@@ -118,12 +132,22 @@ function relativeModuleSpecifiers(sourceFile) {
     ) {
       moduleSpecifier = statement.moduleReference.expression;
     }
-    if (!moduleSpecifier || !ts.isStringLiteralLike(moduleSpecifier)) continue;
-    if (moduleSpecifier.text.startsWith("./") || moduleSpecifier.text.startsWith("../")) {
-      out.push(moduleSpecifier.text);
-    }
+    addModuleSpecifier(moduleSpecifier);
   }
-  return out;
+  const visit = (node) => {
+    if (ts.isCallExpression(node) && node.arguments.length > 0) {
+      const dynamicImport = node.expression.kind === ts.SyntaxKind.ImportKeyword;
+      const commonJsRequire = ts.isIdentifier(node.expression) && node.expression.text === "require";
+      if (dynamicImport || commonJsRequire) addModuleSpecifier(node.arguments[0]);
+    }
+    ts.forEachChild(node, visit);
+  };
+  visit(sourceFile);
+  return [...out].sort();
+}
+
+export function relativeModuleSpecifiersFromText(relativePath, source) {
+  return relativeModuleSpecifiers(parseSource(relativePath, source));
 }
 
 function resolveRelativeImport(fromPath, moduleSpecifier, sourceSet) {
@@ -131,12 +155,57 @@ function resolveRelativeImport(fromPath, moduleSpecifier, sourceSet) {
   const base = path.posix.normalize(path.posix.join(fromDir, moduleSpecifier));
   const extension = path.posix.extname(base);
   const candidates = [];
-  if (extension === ".js") candidates.push(`${base.slice(0, -3)}.ts`);
-  else if (extension === ".mjs") candidates.push(`${base.slice(0, -4)}.mts`);
-  else if (extension === ".cjs") candidates.push(`${base.slice(0, -4)}.cts`);
-  else if (extension === ".ts") candidates.push(base);
-  else if (!extension) candidates.push(`${base}.ts`, `${base}/index.ts`);
+  if (extension === ".js") candidates.push(base, `${base.slice(0, -3)}.ts`, `${base.slice(0, -3)}.tsx`);
+  else if (extension === ".mjs") candidates.push(base, `${base.slice(0, -4)}.mts`);
+  else if (extension === ".cjs") candidates.push(base, `${base.slice(0, -4)}.cts`);
+  else if ([".ts", ".tsx", ".mts", ".cts"].includes(extension)) candidates.push(base);
+  else if (!extension) {
+    for (const codeExtension of CODE_EXTENSIONS) {
+      candidates.push(`${base}.${codeExtension}`, `${base}/index.${codeExtension}`);
+    }
+  }
   return candidates.find((candidate) => sourceSet.has(candidate)) ?? null;
+}
+
+function buildImportGraph(sourcePaths, parsed) {
+  const sourceSet = new Set(sourcePaths);
+  const graph = new Map(sourcePaths.map((relativePath) => [relativePath, new Set()]));
+  for (const relativePath of sourcePaths) {
+    for (const moduleSpecifier of relativeModuleSpecifiers(parsed.get(relativePath))) {
+      const resolved = resolveRelativeImport(relativePath, moduleSpecifier, sourceSet);
+      if (resolved) graph.get(relativePath).add(resolved);
+    }
+  }
+  return graph;
+}
+
+function inventoryLines(paths) {
+  return paths.map((relativePath) => ({
+    path: relativePath,
+    lines: countLines(fs.readFileSync(path.join(ROOT, relativePath), "utf8")),
+  }));
+}
+
+function sumInventoryLines(entries) {
+  return entries.reduce((total, entry) => total + entry.lines, 0);
+}
+
+function largestInventoryLines(entries) {
+  return entries.reduce((largest, entry) => Math.max(largest, entry.lines), 0);
+}
+
+export function findUnclassifiedArtifactPaths(allPaths, coveredPaths) {
+  const covered = new Set(coveredPaths);
+  return [...allPaths].filter((relativePath) => !covered.has(relativePath)).sort();
+}
+
+function assertClosedArtifactInventory(root, coveredPaths) {
+  const uncovered = findUnclassifiedArtifactPaths(workspaceFiles(`${root}/**`), coveredPaths);
+  if (uncovered.length > 0) {
+    throw new Error(
+      `unsupported complexity artifact under ${root}: ${uncovered.join(", ")}`,
+    );
+  }
 }
 
 function stronglyConnectedImportCycles(graph) {
@@ -200,8 +269,31 @@ function reachableModules(graph, entryPath) {
 
 export function collectRuntimeComplexity() {
   const sourcePaths = workspaceSourceFiles();
-  const toolPaths = workspaceTypescriptFiles("tools/**/*.ts");
-  const sourceSet = new Set(sourcePaths);
+  const toolPaths = workspaceFiles(...pathspecs("tools", CODE_EXTENSIONS));
+  const runtimeResourcePaths = workspaceFiles(...pathspecs("src", RESOURCE_EXTENSIONS));
+  const authorityPackagePaths = workspaceFiles(...pathspecs(
+    "packages/aionis-learning-authority/src",
+    CODE_EXTENSIONS,
+  ));
+  const authorityPackageResourcePaths = workspaceFiles(...pathspecs(
+    "packages/aionis-learning-authority/src",
+    RESOURCE_EXTENSIONS,
+  ));
+  const scriptArtifactPaths = workspaceFiles(...pathspecs("scripts", SCRIPT_ARTIFACT_EXTENSIONS));
+  const ciArtifactPaths = scriptArtifactPaths.filter((relativePath) => relativePath.startsWith("scripts/ci/"));
+  const e2eSourcePaths = scriptArtifactPaths.filter((relativePath) => relativePath.startsWith("scripts/e2e/"));
+  const operationalScriptPaths = scriptArtifactPaths.filter((relativePath) => (
+    !relativePath.startsWith("scripts/ci/") && !relativePath.startsWith("scripts/e2e/")
+  ));
+  assertClosedArtifactInventory("src", [...sourcePaths, ...runtimeResourcePaths]);
+  assertClosedArtifactInventory("tools", toolPaths);
+  assertClosedArtifactInventory("packages", [
+    "packages/aionis-learning-authority/package.json",
+    "packages/aionis-learning-authority/README.md",
+    ...authorityPackagePaths,
+    ...authorityPackageResourcePaths,
+  ]);
+  assertClosedArtifactInventory("scripts", scriptArtifactPaths);
   const sources = new Map();
   const parsed = new Map();
   const fileLines = [];
@@ -216,13 +308,13 @@ export function collectRuntimeComplexity() {
     sourceLines += lines;
   }
 
-  const graph = new Map(sourcePaths.map((relativePath) => [relativePath, new Set()]));
-  for (const relativePath of sourcePaths) {
-    for (const moduleSpecifier of relativeModuleSpecifiers(parsed.get(relativePath))) {
-      const resolved = resolveRelativeImport(relativePath, moduleSpecifier, sourceSet);
-      if (resolved) graph.get(relativePath).add(resolved);
-    }
+  const graph = buildImportGraph(sourcePaths, parsed);
+  const authorityPackageParsed = new Map();
+  for (const relativePath of authorityPackagePaths) {
+    const source = fs.readFileSync(path.join(ROOT, relativePath), "utf8");
+    authorityPackageParsed.set(relativePath, parseSource(relativePath, source));
   }
+  const authorityPackageGraph = buildImportGraph(authorityPackagePaths, authorityPackageParsed);
 
   const boundaryPath = "src/server/lite-runtime-boundary.ts";
   const configPath = "src/config.ts";
@@ -236,10 +328,16 @@ export function collectRuntimeComplexity() {
     .filter((entry) => runtimeEntryModules.has(entry.path))
     .reduce((total, entry) => total + entry.lines, 0);
   const nonEntryLines = sourceLines - runtimeEntryLines;
-  let toolLines = 0;
-  for (const relativePath of toolPaths) {
-    toolLines += countLines(fs.readFileSync(path.join(ROOT, relativePath), "utf8"));
-  }
+  const toolFileLines = inventoryLines(toolPaths);
+  const runtimeResourceFileLines = inventoryLines(runtimeResourcePaths);
+  const authorityPackageFileLines = inventoryLines(authorityPackagePaths);
+  const authorityPackageResourceFileLines = inventoryLines(authorityPackageResourcePaths);
+  const ciArtifactFileLines = inventoryLines(ciArtifactPaths);
+  const e2eSourceFileLines = inventoryLines(e2eSourcePaths);
+  const operationalScriptFileLines = inventoryLines(operationalScriptPaths);
+  const runtimeResourceLines = sumInventoryLines(runtimeResourceFileLines);
+  const authorityPackageLines = sumInventoryLines(authorityPackageFileLines);
+  const authorityPackageResourceLines = sumInventoryLines(authorityPackageResourceFileLines);
 
   return {
     source_files: sourcePaths.length,
@@ -249,7 +347,26 @@ export function collectRuntimeComplexity() {
     non_entry_source_files: sourcePaths.length - runtimeEntryModules.size,
     non_entry_source_lines: nonEntryLines,
     tool_source_files: toolPaths.length,
-    tool_source_lines: toolLines,
+    tool_source_lines: sumInventoryLines(toolFileLines),
+    runtime_resource_files: runtimeResourcePaths.length,
+    runtime_resource_lines: runtimeResourceLines,
+    focused_runtime_artifact_lines: sourceLines + runtimeResourceLines,
+    authority_package_source_files: authorityPackagePaths.length,
+    authority_package_source_lines: authorityPackageLines,
+    authority_package_resource_files: authorityPackageResourcePaths.length,
+    authority_package_resource_lines: authorityPackageResourceLines,
+    authority_package_artifact_lines: authorityPackageLines + authorityPackageResourceLines,
+    authority_package_import_cycles: stronglyConnectedImportCycles(authorityPackageGraph),
+    authority_package_largest_file_lines: largestInventoryLines(authorityPackageFileLines),
+    ci_artifact_files: ciArtifactPaths.length,
+    ci_artifact_lines: sumInventoryLines(ciArtifactFileLines),
+    ci_largest_file_lines: largestInventoryLines(ciArtifactFileLines),
+    e2e_source_files: e2eSourcePaths.length,
+    e2e_source_lines: sumInventoryLines(e2eSourceFileLines),
+    e2e_largest_file_lines: largestInventoryLines(e2eSourceFileLines),
+    operational_script_files: operationalScriptPaths.length,
+    operational_script_lines: sumInventoryLines(operationalScriptFileLines),
+    operational_script_largest_file_lines: largestInventoryLines(operationalScriptFileLines),
     route_matrix_entries: countRouteMatrixEntries(parsed.get(boundaryPath)),
     env_schema_fields: countEnvSchemaFields(parsed.get(configPath)),
     import_cycles: stronglyConnectedImportCycles(graph),
@@ -280,6 +397,25 @@ function checkBudget(report, budgetPath) {
     ["non_entry_source_lines", report.non_entry_source_lines, positiveInteger(thresholds.non_entry_source_lines, "thresholds.non_entry_source_lines")],
     ["tool_source_files", report.tool_source_files, positiveInteger(thresholds.tool_source_files, "thresholds.tool_source_files")],
     ["tool_source_lines", report.tool_source_lines, positiveInteger(thresholds.tool_source_lines, "thresholds.tool_source_lines")],
+    ["runtime_resource_files", report.runtime_resource_files, positiveInteger(thresholds.runtime_resource_files, "thresholds.runtime_resource_files")],
+    ["runtime_resource_lines", report.runtime_resource_lines, positiveInteger(thresholds.runtime_resource_lines, "thresholds.runtime_resource_lines")],
+    ["focused_runtime_artifact_lines", report.focused_runtime_artifact_lines, positiveInteger(thresholds.focused_runtime_artifact_lines, "thresholds.focused_runtime_artifact_lines")],
+    ["authority_package_source_files", report.authority_package_source_files, positiveInteger(thresholds.authority_package_source_files, "thresholds.authority_package_source_files")],
+    ["authority_package_source_lines", report.authority_package_source_lines, positiveInteger(thresholds.authority_package_source_lines, "thresholds.authority_package_source_lines")],
+    ["authority_package_resource_files", report.authority_package_resource_files, positiveInteger(thresholds.authority_package_resource_files, "thresholds.authority_package_resource_files")],
+    ["authority_package_resource_lines", report.authority_package_resource_lines, positiveInteger(thresholds.authority_package_resource_lines, "thresholds.authority_package_resource_lines")],
+    ["authority_package_artifact_lines", report.authority_package_artifact_lines, positiveInteger(thresholds.authority_package_artifact_lines, "thresholds.authority_package_artifact_lines")],
+    ["authority_package_import_cycles", report.authority_package_import_cycles.length, positiveInteger(thresholds.authority_package_import_cycles, "thresholds.authority_package_import_cycles")],
+    ["authority_package_largest_file_lines", report.authority_package_largest_file_lines, positiveInteger(thresholds.authority_package_largest_file_lines, "thresholds.authority_package_largest_file_lines")],
+    ["ci_artifact_files", report.ci_artifact_files, positiveInteger(thresholds.ci_artifact_files, "thresholds.ci_artifact_files")],
+    ["ci_artifact_lines", report.ci_artifact_lines, positiveInteger(thresholds.ci_artifact_lines, "thresholds.ci_artifact_lines")],
+    ["ci_largest_file_lines", report.ci_largest_file_lines, positiveInteger(thresholds.ci_largest_file_lines, "thresholds.ci_largest_file_lines")],
+    ["e2e_source_files", report.e2e_source_files, positiveInteger(thresholds.e2e_source_files, "thresholds.e2e_source_files")],
+    ["e2e_source_lines", report.e2e_source_lines, positiveInteger(thresholds.e2e_source_lines, "thresholds.e2e_source_lines")],
+    ["e2e_largest_file_lines", report.e2e_largest_file_lines, positiveInteger(thresholds.e2e_largest_file_lines, "thresholds.e2e_largest_file_lines")],
+    ["operational_script_files", report.operational_script_files, positiveInteger(thresholds.operational_script_files, "thresholds.operational_script_files")],
+    ["operational_script_lines", report.operational_script_lines, positiveInteger(thresholds.operational_script_lines, "thresholds.operational_script_lines")],
+    ["operational_script_largest_file_lines", report.operational_script_largest_file_lines, positiveInteger(thresholds.operational_script_largest_file_lines, "thresholds.operational_script_largest_file_lines")],
     ["route_matrix_entries", report.route_matrix_entries, positiveInteger(thresholds.route_matrix_entries, "thresholds.route_matrix_entries")],
     ["env_schema_fields", report.env_schema_fields, positiveInteger(thresholds.env_schema_fields, "thresholds.env_schema_fields")],
     ["import_cycles", report.import_cycles.length, positiveInteger(thresholds.import_cycles, "thresholds.import_cycles")],
@@ -336,4 +472,6 @@ function main() {
   }
 }
 
-main();
+if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
+  main();
+}

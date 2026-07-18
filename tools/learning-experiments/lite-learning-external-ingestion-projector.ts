@@ -28,7 +28,7 @@ import type { AuthorityReceiptResolvedKeyring } from "../../src/util/authority-r
 import {
   LiteLearningExternalEvidenceIngestOperationReceiptV1Schema,
   type LiteLearningExternalEvidenceIngestOperationReceiptV1,
-} from "../../src/store/lite-learning-external-evidence-ingestion.js";
+} from "../../packages/aionis-learning-authority/src/store/lite-learning-external-evidence-ingestion.js";
 import { resolveLiteLearningExternalNormalLifecycleSnapshot } from "../../src/store/lite-learning-external-authority.js";
 import {
   assertLiteLearningEpisodeLedgerIntegrity,
@@ -479,11 +479,10 @@ function assertCurrentV5Schema(database: LiteRuntimeDatabase): void {
   const schema = inspectLiteRuntimeSchema(database.db);
   if (schema.classification !== "current"
     || schema.component !== LITE_RUNTIME_WRITE_SCHEMA_COMPONENT
-    || schema.detected_version !== LITE_RUNTIME_WRITE_SCHEMA_VERSION
-    || schema.detected_version !== 5) {
+    || schema.detected_version !== LITE_RUNTIME_WRITE_SCHEMA_VERSION) {
     return projectorError(
       "current_v5_database_required",
-      "D2 reconstruction accepts only the exact current write_projection v5 schema",
+      "D2 reconstruction accepts only the exact current write_projection schema",
     );
   }
 }

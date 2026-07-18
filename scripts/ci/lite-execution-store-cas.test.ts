@@ -1551,74 +1551,78 @@ function assertSingleCasWinner(results: [WorkerResult, WorkerResult], conflictCo
 }
 
 test("two independent SQLite connections cannot commit two state transitions at the same revision", async () => {
-  const dbPath = tempDbPath("state-concurrent");
-  const initial = state("state-concurrent");
-  const seed = createLiteExecutionStateStore(dbPath);
-  seed.initialize(initial);
-  await seed.close();
+  for (let round = 1; round <= 6; round += 1) {
+    const dbPath = tempDbPath(`state-concurrent-${round}`);
+    const initial = state(`state-concurrent-${round}`);
+    const seed = createLiteExecutionStateStore(dbPath);
+    seed.initialize(initial);
+    await seed.close();
 
-  const results = await runConcurrentMutations({
-    kind: "state",
-    dbPath,
-    mutations: [
-      transition({ state: initial, id: "state-worker-a", validation: "worker-a", expectedRevision: 1 }),
-      transition({ state: initial, id: "state-worker-b", validation: "worker-b", expectedRevision: 1 }),
-    ],
-  });
-  assertSingleCasWinner(results, "execution_state_revision_conflict");
+    const results = await runConcurrentMutations({
+      kind: "state",
+      dbPath,
+      mutations: [
+        transition({ state: initial, id: `state-worker-a-${round}`, validation: "worker-a", expectedRevision: 1 }),
+        transition({ state: initial, id: `state-worker-b-${round}`, validation: "worker-b", expectedRevision: 1 }),
+      ],
+    });
+    assertSingleCasWinner(results, "execution_state_revision_conflict");
 
-  const db = createSqliteDatabase(dbPath);
-  try {
-    const row = db.prepare<{ count: number }>(`
-      SELECT COUNT(*) AS count
-      FROM lite_execution_state_transitions
-      WHERE scope = ? AND state_id = ? AND revision = 2
-    `).get(initial.scope, initial.state_id);
-    assert.equal(Number(row.count), 1);
-    const current = db.prepare<{ revision: number }>(`
-      SELECT revision FROM lite_execution_states WHERE scope = ? AND state_id = ?
-    `).get(initial.scope, initial.state_id);
-    assert.equal(Number(current.revision), 2);
-  } finally {
-    db.close();
+    const db = createSqliteDatabase(dbPath);
+    try {
+      const row = db.prepare<{ count: number }>(`
+        SELECT COUNT(*) AS count
+        FROM lite_execution_state_transitions
+        WHERE scope = ? AND state_id = ? AND revision = 2
+      `).get(initial.scope, initial.state_id);
+      assert.equal(Number(row.count), 1, `round ${round}`);
+      const current = db.prepare<{ revision: number }>(`
+        SELECT revision FROM lite_execution_states WHERE scope = ? AND state_id = ?
+      `).get(initial.scope, initial.state_id);
+      assert.equal(Number(current.revision), 2, `round ${round}`);
+    } finally {
+      db.close();
+    }
   }
 });
 
 test("two independent SQLite connections cannot commit two tree operations at the same revision", async () => {
-  const dbPath = tempDbPath("tree-concurrent");
-  const initial = createExecutionTreeV1({
-    tree_id: "tree-concurrent",
-    scope: "execution-cas-scope",
-    task_brief: "Serialize concurrent execution tree branches",
-    at: baseAt,
-  });
-  const seed = createLiteExecutionTreeStore(dbPath);
-  seed.initialize(initial);
-  await seed.close();
+  for (let round = 1; round <= 6; round += 1) {
+    const dbPath = tempDbPath(`tree-concurrent-${round}`);
+    const initial = createExecutionTreeV1({
+      tree_id: `tree-concurrent-${round}`,
+      scope: "execution-cas-scope",
+      task_brief: "Serialize concurrent execution tree branches",
+      at: baseAt,
+    });
+    const seed = createLiteExecutionTreeStore(dbPath);
+    seed.initialize(initial);
+    await seed.close();
 
-  const results = await runConcurrentMutations({
-    kind: "tree",
-    dbPath,
-    mutations: [
-      growOperation({ treeId: initial.tree_id, id: "tree-worker-a", action: "worker A branch", expectedRevision: 1 }),
-      growOperation({ treeId: initial.tree_id, id: "tree-worker-b", action: "worker B branch", expectedRevision: 1 }),
-    ],
-  });
-  assertSingleCasWinner(results, "execution_tree_revision_conflict");
+    const results = await runConcurrentMutations({
+      kind: "tree",
+      dbPath,
+      mutations: [
+        growOperation({ treeId: initial.tree_id, id: `tree-worker-a-${round}`, action: "worker A branch", expectedRevision: 1 }),
+        growOperation({ treeId: initial.tree_id, id: `tree-worker-b-${round}`, action: "worker B branch", expectedRevision: 1 }),
+      ],
+    });
+    assertSingleCasWinner(results, "execution_tree_revision_conflict");
 
-  const db = createSqliteDatabase(dbPath);
-  try {
-    const row = db.prepare<{ count: number }>(`
-      SELECT COUNT(*) AS count
-      FROM lite_execution_tree_operations
-      WHERE scope = ? AND tree_id = ? AND revision = 2
-    `).get(initial.scope, initial.tree_id);
-    assert.equal(Number(row.count), 1);
-    const current = db.prepare<{ revision: number }>(`
-      SELECT revision FROM lite_execution_trees WHERE scope = ? AND tree_id = ?
-    `).get(initial.scope, initial.tree_id);
-    assert.equal(Number(current.revision), 2);
-  } finally {
-    db.close();
+    const db = createSqliteDatabase(dbPath);
+    try {
+      const row = db.prepare<{ count: number }>(`
+        SELECT COUNT(*) AS count
+        FROM lite_execution_tree_operations
+        WHERE scope = ? AND tree_id = ? AND revision = 2
+      `).get(initial.scope, initial.tree_id);
+      assert.equal(Number(row.count), 1, `round ${round}`);
+      const current = db.prepare<{ revision: number }>(`
+        SELECT revision FROM lite_execution_trees WHERE scope = ? AND tree_id = ?
+      `).get(initial.scope, initial.tree_id);
+      assert.equal(Number(current.revision), 2, `round ${round}`);
+    } finally {
+      db.close();
+    }
   }
 });

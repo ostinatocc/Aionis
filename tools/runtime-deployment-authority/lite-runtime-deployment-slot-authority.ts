@@ -34,7 +34,7 @@ import {
   openLiteRuntimeProtectedAuthorityDatabase,
   pinLiteRuntimeProtectedAuthorityDatabase,
   type LiteRuntimeProtectedAuthorityDatabasePin,
-} from "../../src/store/lite-runtime-protected-authority-database.js";
+} from "../../packages/aionis-learning-authority/src/store/lite-runtime-protected-authority-database.js";
 import { assertLiteRuntimeAuthorityIdentity } from "../../src/store/lite-learning-episode-ledger.js";
 import { normalizeSqliteSchemaSql } from "../../src/store/sqlite-schema-sql.js";
 import {

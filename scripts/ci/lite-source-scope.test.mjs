@@ -52,7 +52,7 @@ function listSourceFiles(dir) {
     const stat = fs.statSync(full);
     if (stat.isDirectory()) {
       out.push(...listSourceFiles(full));
-    } else if (/\.(ts|tsx|mts|cts|js|mjs)$/.test(name)) {
+    } else if (/\.(ts|tsx|mts|cts|js|mjs|cjs)$/.test(name)) {
       out.push(full);
     }
   }
@@ -117,6 +117,10 @@ test("generic lite outbox stays reserved for associative linking while durable p
     path.join(ROOT, "src", "store", "lite-learning-episode-ledger.ts"),
     "utf8",
   );
+  const learningEpisodeLedgerSchemaFile = fs.readFileSync(
+    path.join(ROOT, "src", "store", "sql", "lite-learning-episode-ledger-v3.sql"),
+    "utf8",
+  );
   const removedOutboxEvents = [
     "embed" + "_nodes",
     "topic" + "_cluster",
@@ -135,7 +139,8 @@ test("generic lite outbox stays reserved for associative linking while durable p
   assert.match(runtimeEntryFile, /startUnusedExposureLearningControlWorker/);
   assert.match(projectionStoreFile, /lite_memory_projection_jobs/);
   assert.equal(projectionStoreFile.includes("lite_memory_outbox"), false);
-  assert.match(learningEpisodeLedgerFile, /CREATE TABLE lite_learning_control_jobs/);
+  assert.match(learningEpisodeLedgerFile, /lite-learning-episode-ledger-v3\.sql/);
+  assert.match(learningEpisodeLedgerSchemaFile, /CREATE TABLE lite_learning_control_jobs/);
   assert.match(learningControlStoreFile, /lite_learning_control_jobs/);
   assert.match(learningControlStoreFile, /claimLearningControlJobs/);
   assert.match(learningControlWorkerFile, /claimLearningControlJobs/);
@@ -143,10 +148,44 @@ test("generic lite outbox stays reserved for associative linking while durable p
   assert.equal(learningControlWorkerFile.includes("lite_memory_outbox"), false);
 });
 
-test("focused repo keeps Runtime source only and does not vendor adapter package sources", () => {
+test("focused repo keeps Runtime source plus one private learning-authority extension and does not vendor adapter packages", () => {
   assert.equal(fs.existsSync(path.join(ROOT, "apps")), false, "apps wrapper surface should be absent");
   assert.equal(fs.existsSync(path.join(ROOT, "examples")), false, "example wrapper surface should be absent");
-  assert.equal(fs.existsSync(path.join(ROOT, "packages")), false, "package sources belong in split package repos");
+
+  const packagesDir = path.join(ROOT, "packages");
+  const packageEntries = fs.readdirSync(packagesDir, { withFileTypes: true });
+  const packageDirs = packageEntries.filter((entry) => entry.isDirectory()).map((entry) => entry.name).sort();
+  assert.deepEqual(
+    packageDirs,
+    ["aionis-learning-authority"],
+    "only the non-publishable learning authority extension may live beside the focused Runtime",
+  );
+  assert.deepEqual(
+    packageEntries.filter((entry) => !entry.isDirectory()).map((entry) => entry.name).sort(),
+    [],
+    "the packages root must not contain ungoverned direct files",
+  );
+  const learningAuthorityRootEntries = fs.readdirSync(
+    path.join(packagesDir, "aionis-learning-authority"),
+    { withFileTypes: true },
+  );
+  assert.deepEqual(
+    learningAuthorityRootEntries.map((entry) => entry.name).sort(),
+    ["README.md", "package.json", "src"],
+    "the private authority extension root must stay closed",
+  );
+  const learningAuthorityPackage = readJson("packages/aionis-learning-authority/package.json");
+  assert.equal(learningAuthorityPackage.name, "@aionis/learning-authority");
+  assert.equal(learningAuthorityPackage.private, true, "the authority extension must never become a publishable adapter");
+
+  for (const file of listSourceFiles(path.join(ROOT, "src"))) {
+    const source = fs.readFileSync(file, "utf8");
+    assert.equal(
+      source.includes("packages/aionis-learning-authority") || source.includes("@aionis/learning-authority"),
+      false,
+      `${path.relative(ROOT, file)} must not make the Runtime depend on the operator authority extension`,
+    );
+  }
   assert.equal(fs.existsSync(path.join(ROOT, "claude-plugins")), false, "Claude Code plugin source belongs in the split plugin repo");
   assert.equal(fs.existsSync(path.join(ROOT, ".claude-plugin")), false, "Claude plugin marketplace metadata belongs in the split plugin repo");
 });
@@ -159,7 +198,7 @@ test("root package stays Runtime-only and delegates adapters to external package
   assert.equal(packageJson.scripts?.["packages:test"], undefined);
   assert.equal(
     packageJson.scripts?.["lite:test"],
-    "node --test scripts/ci/*.mjs && npx tsx --test --test-concurrency=1 scripts/ci/*.ts",
+    "node scripts/ci/support/run-lite-tests.mjs full",
   );
   assert.equal(packageJson.scripts?.["test:focused"], "npm run -s typecheck && npm run -s lite:test");
   assert.equal(packageJson.scripts?.["build"], "npm run -s typecheck");

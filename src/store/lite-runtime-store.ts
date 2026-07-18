@@ -8,8 +8,8 @@ import type {
   SandboxStoreAccess,
 } from "./sandbox-access.js";
 import {
+  assertPrivateRuntimeSqliteArtifactModes,
   createPrivateRuntimeSqliteDatabase,
-  hardenPrivateRuntimeSqliteArtifacts,
   ignoreSqliteDuplicateColumnError,
   type SqliteDatabase,
 } from "./sqlite.js";
@@ -607,7 +607,7 @@ function initialize(db: SqliteDatabase) {
 export function createLiteRuntimeStore(path: string): LiteRuntimeStore {
   const db = createPrivateRuntimeSqliteDatabase(path);
   initialize(db);
-  hardenPrivateRuntimeSqliteArtifacts(path);
+  assertPrivateRuntimeSqliteArtifactModes(path);
   const session = createLiteRuntimeStoreSession(db);
   const transaction = createSqliteTransactionRunner({
     begin: () => db.exec("BEGIN IMMEDIATE"),

@@ -33,8 +33,8 @@ import type {
   RecallStoreCapabilities,
 } from "./recall-access.js";
 import {
+  assertPrivateRuntimeSqliteArtifactModes,
   createPrivateRuntimeSqliteDatabase,
-  hardenPrivateRuntimeSqliteArtifacts,
   type SqliteDatabase,
 } from "./sqlite.js";
 
@@ -1892,7 +1892,7 @@ export function createLiteRecallStore(
     });
   };
 
-  hardenPrivateRuntimeSqliteArtifacts(path);
+  assertPrivateRuntimeSqliteArtifactModes(path);
   return {
     createRecallAccess(): RecallStoreAccess {
       return {

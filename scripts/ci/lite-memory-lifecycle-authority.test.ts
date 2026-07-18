@@ -23,7 +23,7 @@ import {
 import type { WriteExistingNodeState } from "../../src/store/write-access.ts";
 import {
   APPLIED_AUTHORITY_TABLE_CONTRACTS,
-  normalizeSelfCommitReferences,
+  normalizeAppliedAuthorityRow,
 } from "../../src/store/write-commit-authority.ts";
 import { HttpError } from "../../src/util/http.ts";
 
@@ -164,7 +164,9 @@ function authorityNodeState(
     commit_id: state.commitId,
     created_at: state.createdAt,
   };
-  return selfCommitId ? normalizeSelfCommitReferences(row, selfCommitId) : row;
+  return selfCommitId
+    ? normalizeAppliedAuthorityRow("lite_memory_nodes", row, selfCommitId)
+    : row;
 }
 
 function commitCount(database: LiteRuntimeDatabase): number {

@@ -25,7 +25,7 @@ import {
   LearningExternalEvidenceReceiptWriterError,
   publishLearningExternalEvidenceReceipt,
   type LearningExternalEvidenceReceiptWriterPhase,
-} from "../../src/operator/learning-external-evidence-receipt-writer.js";
+} from "../../packages/aionis-learning-authority/src/operator/learning-external-evidence-receipt-writer.js";
 
 const CANONICAL_RECEIPT = stableStringify({
   operation_id: "learning-evidence-operation-001",
@@ -145,7 +145,7 @@ test("receipt writer recovers exact replay after SIGKILL leaves destination and 
     const destination = join(directory, "sigkill-receipt.json");
     const writerModuleUrl = pathToFileURL(join(
       process.cwd(),
-      "src/operator/learning-external-evidence-receipt-writer.ts",
+      "packages/aionis-learning-authority/src/operator/learning-external-evidence-receipt-writer.ts",
     )).href;
     const childSource = `
       import { publishLearningExternalEvidenceReceipt } from ${JSON.stringify(writerModuleUrl)};

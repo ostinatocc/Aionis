@@ -8,6 +8,7 @@ import { createLiteWriteStore } from "../../src/store/lite-write-store.ts";
 import { prepareMemoryWrite, applyMemoryWrite } from "../../src/memory/write.ts";
 import { rehydrateAnchorPayloadLite } from "../../src/memory/rehydrate-anchor.ts";
 import { buildAionisUri } from "../../src/memory/uri.ts";
+import { persistInitialExecutionDecisionAuthority } from "../../src/memory/execution-decision-authority.ts";
 
 function tmpDbPath(name: string): string {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), "aionis-lite-anchor-"));
@@ -128,7 +129,10 @@ async function seedAnchorFixture() {
     write_access: store,
   }));
 
-  await store.insertExecutionDecision({
+  await persistInitialExecutionDecisionAuthority({
+    store,
+    actor: "local-user",
+    decision: {
     id: decisionId,
     scope: "default",
     decisionKind: "tools_select",
@@ -143,9 +147,14 @@ async function seedAnchorFixture() {
       matched_rules: 1,
     },
     commitId: null,
+    createdAt: "2026-07-18T08:00:00.000Z",
+    },
   });
 
-  await store.insertExecutionDecision({
+  await persistInitialExecutionDecisionAuthority({
+    store,
+    actor: "local-user",
+    decision: {
     id: secondaryDecisionId,
     scope: "default",
     decisionKind: "tools_select",
@@ -160,6 +169,8 @@ async function seedAnchorFixture() {
       matched_rules: 1,
     },
     commitId: null,
+    createdAt: "2026-07-18T08:00:01.000Z",
+    },
   });
 
   return { store, payloadNodeId, secondaryPayloadNodeId, anchorNodeId, decisionId, secondaryDecisionId, runId };

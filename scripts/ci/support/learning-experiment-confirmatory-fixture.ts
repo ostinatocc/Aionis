@@ -313,7 +313,10 @@ export function openConfirmatoryFixtureRuntime(
   options: { faultInjector?: LiteRuntimeDatabaseFaultInjector } = {},
 ): ConfirmatoryFixtureRuntime {
   const database = createLiteRuntimeDatabase(databasePath, options);
-  const writeStore = createLiteWriteStoreFromDatabase(database, { annProjectionEnabled: false });
+  const writeStore = createLiteWriteStoreFromDatabase(database, {
+    annProjectionEnabled: false,
+    allowLegacyV1Fixtures: true,
+  });
   return {
     database,
     writeStore,

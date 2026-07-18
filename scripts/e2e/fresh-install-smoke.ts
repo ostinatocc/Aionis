@@ -5,7 +5,7 @@ import fs from "node:fs";
 import net from "node:net";
 import os from "node:os";
 import path from "node:path";
-import { fileURLToPath } from "node:url";
+import { fileURLToPath, pathToFileURL } from "node:url";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { StdioClientTransport } from "@modelcontextprotocol/sdk/client/stdio.js";
 import { asRecord, assertCondition } from "./runtime-agent-loop.ts";
@@ -84,6 +84,7 @@ function installFreshRuntime(input: {
   createSpec: string;
   repoOverride: string | null;
   runtimeRef: string | null;
+  deferLifecycleUntilVerified: boolean;
 }): { targetDir: string; installerOutput: string } {
   const args = [
     "exec",
@@ -102,6 +103,9 @@ function installFreshRuntime(input: {
   if (input.runtimeRef) {
     args.push("--branch", input.runtimeRef);
   }
+  if (input.deferLifecycleUntilVerified) {
+    args.push("--skip-install");
+  }
 
   const installerOutput = run(npmCommand(), args, {
     cwd: input.tmpRoot,
@@ -113,6 +117,104 @@ function installFreshRuntime(input: {
   const targetDir = path.join(input.tmpRoot, "FreshRuntime");
   assertCondition(fs.existsSync(targetDir), "fresh installer did not create Runtime directory");
   return { targetDir, installerOutput };
+}
+
+function completeVerifiedRuntimeInstall(targetDir: string): string {
+  const installOutput = run(npmCommand(), ["install"], {
+    cwd: targetDir,
+    env: cleanNoKeyEnv(),
+    label: "install verified Runtime dependencies",
+    maxOutputChars: 16_000,
+  });
+  const buildOutput = run(npmCommand(), ["run", "-s", "build"], {
+    cwd: targetDir,
+    env: cleanNoKeyEnv(),
+    label: "build verified Runtime source",
+    maxOutputChars: 16_000,
+  });
+  return `${installOutput}${buildOutput}`;
+}
+
+export function prepareVerifiedRuntimeCloneSource(input: {
+  tmpRoot: string;
+  sourceDir: string;
+  sourceRef: string;
+  expectedCommit: string;
+}): { repo: string; branch: string } {
+  if (!/^[a-f0-9]{40}$/u.test(input.expectedCommit)) {
+    throw new Error("AIONIS_FRESH_INSTALL_EXPECTED_RUNTIME_COMMIT must be a 40-character lowercase commit");
+  }
+  const sourceHead = run("git", ["rev-parse", "HEAD^{commit}"], {
+    cwd: input.sourceDir,
+    label: "resolve verified Runtime source HEAD",
+  }).trim();
+  assertCondition(
+    sourceHead === input.expectedCommit,
+    `verified Runtime source HEAD ${sourceHead} does not equal ${input.expectedCommit}`,
+  );
+  const sourceRefCommit = run("git", ["rev-parse", "--verify", `${input.sourceRef}^{commit}`], {
+    cwd: input.sourceDir,
+    label: `resolve verified Runtime source ref ${input.sourceRef}`,
+  }).trim();
+  assertCondition(
+    sourceRefCommit === input.expectedCommit,
+    `verified Runtime source ref ${input.sourceRef} resolves to ${sourceRefCommit}; expected ${input.expectedCommit}`,
+  );
+
+  // Stage a local bare repository before the installer executes any Runtime
+  // lifecycle script. The installer can therefore clone only the already
+  // verified commit, even if the public release tag moves concurrently.
+  const stagedRepo = path.join(input.tmpRoot, "verified-runtime-source.git");
+  run("git", ["clone", "--bare", "--no-local", input.sourceDir, stagedRepo], {
+    cwd: input.tmpRoot,
+    label: "stage verified Runtime source",
+  });
+  const branch = `aionis-verified-${input.expectedCommit.slice(0, 12)}`;
+  run("git", ["update-ref", `refs/heads/${branch}`, input.expectedCommit], {
+    cwd: stagedRepo,
+    label: "bind verified Runtime staging branch",
+  });
+  const stagedCommit = run("git", ["rev-parse", "--verify", `${branch}^{commit}`], {
+    cwd: stagedRepo,
+    label: "verify staged Runtime source",
+  }).trim();
+  assertCondition(
+    stagedCommit === input.expectedCommit,
+    `staged Runtime source resolved ${stagedCommit}; expected ${input.expectedCommit}`,
+  );
+  return { repo: pathToFileURL(stagedRepo).href, branch };
+}
+
+export function assertInstalledRuntimeCommit(
+  targetDir: string,
+  expectedCommit: string | null,
+): string {
+  if (expectedCommit !== null && !/^[a-f0-9]{40}$/u.test(expectedCommit)) {
+    throw new Error("AIONIS_FRESH_INSTALL_EXPECTED_RUNTIME_COMMIT must be a 40-character lowercase commit");
+  }
+  const installedCommit = run("git", ["rev-parse", "HEAD^{commit}"], {
+    cwd: targetDir,
+    label: "resolve freshly installed Runtime commit",
+  }).trim();
+  assertCondition(
+    /^[a-f0-9]{40}$/u.test(installedCommit),
+    `fresh installer produced an invalid Runtime commit identity: ${installedCommit}`,
+  );
+  if (expectedCommit !== null) {
+    assertCondition(
+      installedCommit === expectedCommit,
+      `fresh installer resolved Runtime commit ${installedCommit}; expected ${expectedCommit}`,
+    );
+  }
+  const sourceChanges = run("git", ["status", "--porcelain=v1", "--untracked-files=all"], {
+    cwd: targetDir,
+    label: "verify freshly installed Runtime tracked tree",
+  }).trim();
+  assertCondition(
+    sourceChanges.length === 0,
+    `fresh installer changed Runtime source files after cloning ${installedCommit}: ${sourceChanges}`,
+  );
+  return installedCommit;
 }
 
 function readInstalledEnv(targetDir: string): Record<string, string> {
@@ -332,8 +434,46 @@ async function main(): Promise<void> {
   const sdkSpec = process.env.AIONIS_FRESH_INSTALL_SDK_SPEC?.trim() || null;
   const repoOverride = process.env.AIONIS_FRESH_INSTALL_REPO?.trim() || null;
   const runtimeRef = process.env.AIONIS_FRESH_INSTALL_RUNTIME_REF?.trim() || null;
+  const expectedRuntimeCommit =
+    process.env.AIONIS_FRESH_INSTALL_EXPECTED_RUNTIME_COMMIT?.trim() || null;
+  const verifiedRuntimeSource =
+    process.env.AIONIS_FRESH_INSTALL_VERIFIED_RUNTIME_SOURCE?.trim() || null;
 
-  const install = installFreshRuntime({ tmpRoot, createSpec, repoOverride, runtimeRef });
+  let installerRepo = repoOverride;
+  let installerRef = runtimeRef;
+  if (verifiedRuntimeSource !== null) {
+    assertCondition(runtimeRef !== null, "verified Runtime source requires AIONIS_FRESH_INSTALL_RUNTIME_REF");
+    assertCondition(
+      expectedRuntimeCommit !== null,
+      "verified Runtime source requires AIONIS_FRESH_INSTALL_EXPECTED_RUNTIME_COMMIT",
+    );
+    const staged = prepareVerifiedRuntimeCloneSource({
+      tmpRoot,
+      sourceDir: path.resolve(verifiedRuntimeSource),
+      sourceRef: runtimeRef,
+      expectedCommit: expectedRuntimeCommit,
+    });
+    installerRepo = staged.repo;
+    installerRef = staged.branch;
+  }
+
+  const install = installFreshRuntime({
+    tmpRoot,
+    createSpec,
+    repoOverride: installerRepo,
+    runtimeRef: installerRef,
+    deferLifecycleUntilVerified: expectedRuntimeCommit !== null,
+  });
+  const installedRuntimeCommit = assertInstalledRuntimeCommit(
+    install.targetDir,
+    expectedRuntimeCommit,
+  );
+  const verifiedLifecycleOutput = expectedRuntimeCommit === null
+    ? null
+    : completeVerifiedRuntimeInstall(install.targetDir);
+  if (verifiedLifecycleOutput !== null) {
+    assertInstalledRuntimeCommit(install.targetDir, expectedRuntimeCommit);
+  }
   const installedEnv = readInstalledEnv(install.targetDir);
   assertCondition(installedEnv.EMBEDDING_PROVIDER === "none", `fresh installer should default to EMBEDDING_PROVIDER=none; got ${installedEnv.EMBEDDING_PROVIDER ?? "missing"}`);
 
@@ -355,6 +495,14 @@ async function main(): Promise<void> {
         create_spec: createSpec,
         repo_override: repoOverride,
         runtime_ref: runtimeRef,
+        verified_runtime_source: verifiedRuntimeSource !== null,
+        installer_repo_is_verified_staging: verifiedRuntimeSource !== null,
+        installer_ref: installerRef,
+        expected_runtime_commit: expectedRuntimeCommit,
+        installed_runtime_commit: installedRuntimeCommit,
+        installer_lifecycle_deferred_until_commit_verification:
+          expectedRuntimeCommit !== null,
+        verified_lifecycle_output_tail: verifiedLifecycleOutput?.slice(-2_000) ?? null,
         target_dir: install.targetDir,
         embedding_provider: installedEnv.EMBEDDING_PROVIDER,
         installer_output_tail: install.installerOutput.slice(-2_000),
@@ -370,6 +518,12 @@ async function main(): Promise<void> {
       },
       checks: {
         installer_completed: true,
+        runtime_commit_resolved: true,
+        exact_runtime_commit: expectedRuntimeCommit === null
+          ? null
+          : installedRuntimeCommit === expectedRuntimeCommit,
+        runtime_lifecycle_started_after_commit_verification:
+          expectedRuntimeCommit === null ? null : verifiedLifecycleOutput !== null,
         no_key_env_written: installedEnv.EMBEDDING_PROVIDER === "none",
         runtime_started_without_embedding_key: true,
         mcp_context_ok: asRecord(mcp).ok === true,

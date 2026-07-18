@@ -26,12 +26,30 @@ test("root scripts start the focused Runtime directly", () => {
   assert.equal(rootPkg.scripts["runtime:pack:dry-run"], undefined);
 });
 
-test("focused Runtime does not vendor adapter package entrypoints outside core startup", () => {
+test("focused Runtime keeps only a private operator authority extension outside core startup", () => {
   assert.equal(fs.existsSync(path.join(ROOT, "apps")), false, "apps wrapper should be deleted");
   assert.equal(fs.existsSync(path.join(ROOT, "examples")), false, "example wrappers should be deleted");
 
   const packagesDir = path.join(ROOT, "packages");
-  assert.equal(fs.existsSync(packagesDir), false, "publishable SDK, MCP, installer, and plugin packages live in standalone repos");
+  const packageDirs = fs.readdirSync(packagesDir)
+    .filter((name) => fs.statSync(path.join(packagesDir, name)).isDirectory())
+    .sort();
+  assert.deepEqual(
+    packageDirs,
+    ["aionis-learning-authority"],
+    "publishable SDK, MCP, installer, and plugin packages must remain in standalone repos",
+  );
+
+  const learningAuthorityPackage = readJson(
+    path.join(packagesDir, "aionis-learning-authority", "package.json"),
+  );
+  assert.equal(learningAuthorityPackage.name, "@aionis/learning-authority");
+  assert.equal(learningAuthorityPackage.private, true);
+
+  for (const rel of ["src/index.ts", "src/runtime-entry.ts"]) {
+    const source = fs.readFileSync(path.join(ROOT, rel), "utf8");
+    assert.equal(source.includes("aionis-learning-authority"), false, `${rel} must not start operator authority code`);
+  }
 });
 
 test("root startup script owns local Runtime env", () => {

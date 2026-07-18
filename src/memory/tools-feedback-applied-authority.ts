@@ -6,8 +6,8 @@ import type {
 } from "../store/lite-write-store.js";
 import type { WriteExistingNodeState } from "../store/write-access.js";
 import {
-  materializeSelfCommitReferences,
-  normalizeSelfCommitReferences,
+  materializeAppliedAuthorityRow,
+  normalizeAppliedAuthorityRow,
   type CanonicalAuthorityMutationVerificationV2,
   type CanonicalAuthorityTableMutationV2,
 } from "../store/write-commit-authority.js";
@@ -453,7 +453,11 @@ async function applyNodePlan(args: {
   plan: ToolFeedbackNodePlan;
   commitId: string;
 }): Promise<void> {
-  const after = materializeSelfCommitReferences(args.plan.after, args.commitId);
+  const after = materializeAppliedAuthorityRow(
+    "lite_memory_nodes",
+    args.plan.after,
+    args.commitId,
+  );
   const slots = after.slots_json as Record<string, unknown>;
   assertAuthorityWriteReceipts([{
     id: String(after.id),
@@ -523,7 +527,7 @@ function verification(
   return {
     table,
     identity,
-    after: normalizeSelfCommitReferences(after, commitId),
+    after: normalizeAppliedAuthorityRow(table, after, commitId),
   };
 }
 
@@ -616,7 +620,11 @@ export async function persistToolFeedbackAppliedAuthority(args: {
         authorityKind: "tool_feedback",
         mutations,
         async apply({ commitId }) {
-          const materializedDecision = materializeSelfCommitReferences(decisionAfter, commitId);
+          const materializedDecision = materializeAppliedAuthorityRow(
+            "lite_memory_execution_decisions",
+            decisionAfter,
+            commitId,
+          );
           if (prepared.decision.create) {
             await store.insertExecutionDecision({
               id: String(materializedDecision.id),
@@ -645,7 +653,8 @@ export async function persistToolFeedbackAppliedAuthority(args: {
           }
 
           for (const feedback of prepared.rule_feedback) {
-            const after = materializeSelfCommitReferences(
+            const after = materializeAppliedAuthorityRow(
+              "lite_memory_rule_feedback",
               preparedRuleFeedbackAfter(prepared, feedback),
               commitId,
             );

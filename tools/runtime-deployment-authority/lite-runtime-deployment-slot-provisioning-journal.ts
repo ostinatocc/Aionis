@@ -24,7 +24,7 @@ import stableStringify from "fast-json-stable-stringify";
 import {
   assertLiteRuntimeProtectedFilesystemNoDelegatedAccessControlList,
   assertLiteRuntimeProtectedFilesystemTrustedDirectoryChain,
-} from "../../src/store/lite-runtime-protected-authority-database.js";
+} from "../../packages/aionis-learning-authority/src/store/lite-runtime-protected-authority-database.js";
 import {
   createSqliteReadOnlyDatabase,
   createSqliteReadWriteExistingDatabase,

@@ -1,3 +1,4 @@
+import { readFileSync } from "node:fs";
 import type { ExecutionNativeV1 } from "../memory/schemas.js";
 import {
   resolveNodeAnchorKind,
@@ -37,12 +38,25 @@ import {
   LITE_RUNTIME_WRITE_SCHEMA_VERSION,
   recordCurrentLiteRuntimeWriteSchema,
   WRITE_SCHEMA_V5,
+  WRITE_SCHEMA_V6,
 } from "./lite-runtime-schema.js";
 import {
   compareAndSwapLiteMemoryScopeHead,
+  insertLiteMemoryCommitV2InCurrentTransaction,
   migrateLiteMemoryCommitAuthorityV5,
   readLiteMemoryScopeHead,
 } from "./lite-memory-commit-authority.js";
+import {
+  appendLiteRuntimeWriteOperationAuthorityInCurrentTransaction,
+} from "./lite-runtime-applied-authority.js";
+import { authorityFenceForRuntimeTransaction } from
+  "./lite-runtime-authority-transaction-fence.js";
+import {
+  beginLiteRuntimeOwnedSchemaMigration,
+  type LiteRuntimeOwnedSchemaMigration,
+} from "./lite-runtime-authority-transaction-fence.js";
+import { migrateLiteRuntimeAuthorityAdoptionV6 } from
+  "./lite-runtime-authority-adoption.js";
 import {
   assertLiteLearningEpisodeLedgerIntegrity,
   migrateLiteLearningEpisodeLedgerSchema,
@@ -80,11 +94,17 @@ import {
   writeNodeFingerprint,
 } from "./write-access.js";
 import {
-  assertCanonicalV2MutationJson,
-  canonicalV2CommitHash,
-} from "./write-commit-authority.js";
+  assertLiteMemoryPendingCommitClaimsAuthorityRow,
+  assertLiteMemoryCommitV2SelfIntegrity,
+} from
+  "./lite-memory-commit-integrity.js";
 import { memoryNodeVisible } from "./memory-visibility.js";
 import { ignoreSqliteDuplicateColumnError, type SqliteDatabase } from "./sqlite.js";
+
+const LITE_WRITE_BASE_V2_SCHEMA_SQL = readFileSync(
+  new URL("./sql/lite-write-base-v2.sql", import.meta.url),
+  "utf8",
+);
 
 type LiteLatestNodeView = {
   id: string;
@@ -326,6 +346,19 @@ export type LiteWriteStore = WriteStoreAccess & LiteProjectionOutboxAccess & {
     requestSha256: string;
     receiptJson: string;
     commitId?: string | null;
+    createdAt?: string;
+    authorityActor?: string;
+  }): Promise<LiteWriteOperationRow>;
+  insertWriteOperationEnclosedByPendingCommit(args: {
+    tenantId: string;
+    scope: string;
+    operationKind: string;
+    operationId: string;
+    requestSha256: string;
+    receiptJson: string;
+    commitId: string | null;
+    createdAt: string;
+    authorityCommitId: string;
   }): Promise<LiteWriteOperationRow>;
   insertProductGuideReceipt(args: {
     tenantId: string;
@@ -585,6 +618,8 @@ export type LiteWriteStoreOptions = {
   annProjectionEnabled?: boolean;
   schemaMigrationFaultInjector?: (phase: LiteWriteSchemaMigrationPhase) => void;
   authorityReceiptKeyring?: AuthorityReceiptResolvedKeyring;
+  /** @internal CI/evaluation fixture escape hatch; never enable in Runtime. */
+  allowLegacyV1Fixtures?: boolean;
 };
 
 export type LiteWriteSchemaMigrationPhase =
@@ -593,6 +628,7 @@ export type LiteWriteSchemaMigrationPhase =
   | "after_authority_identity"
   | "after_learning_ledger_structures"
   | "after_commit_authority_structures"
+  | "after_authority_adoption_structures"
   | "after_v3_shape_verification"
   | "before_metadata_update"
   | "after_metadata_update_before_commit";
@@ -1193,11 +1229,14 @@ function migrationPreservationCounts(db: SqliteDatabase): Record<string, number>
 function assertMigrationPreservedRows(
   before: Readonly<Record<string, number>>,
   after: Readonly<Record<string, number>>,
+  expectedCommitIncrease = 0,
 ): void {
   for (const table of SCHEMA_MIGRATION_PRESERVATION_TABLES) {
-    if ((before[table] ?? 0) !== (after[table] ?? 0)) {
+    const expected = (before[table] ?? 0)
+      + (table === "lite_memory_commits" ? expectedCommitIncrease : 0);
+    if (expected !== (after[table] ?? 0)) {
       throw new Error(
-        `lite_runtime_schema_migration_row_count_changed:${table}:${before[table] ?? 0}:${after[table] ?? 0}`,
+        `lite_runtime_schema_migration_row_count_changed:${table}:${expected}:${after[table] ?? 0}`,
       );
     }
   }
@@ -1224,14 +1263,17 @@ export function createLiteWriteStoreFromDatabase(
   const learningIntegrityOptions = {
     authorityReceiptKeyring: opts.authorityReceiptKeyring,
   };
+  const allowLegacyV1Fixtures = opts.allowLegacyV1Fixtures === true;
 
   const initialSchema = assertLiteRuntimeSchemaPreflight(db);
   prepareLiteRuntimeWriteConnection(db);
   let schemaMigrationOpen = false;
+  let schemaMigration: LiteRuntimeOwnedSchemaMigration | null = null;
+  let fullCommitAuthorityAudited = false;
   let migrationSourceVersion: number | null = null;
   let migrationBeforeCounts: Record<string, number> | null = null;
   if (initialSchema.classification !== "current") {
-    db.exec("BEGIN IMMEDIATE");
+    schemaMigration = beginLiteRuntimeOwnedSchemaMigration(db);
     schemaMigrationOpen = true;
     try {
       const lockedSchema = assertLiteRuntimeSchemaPreflight(db);
@@ -1241,7 +1283,9 @@ export function createLiteWriteStoreFromDatabase(
           new Date().toISOString(),
           learningIntegrityOptions,
         );
-        db.exec("COMMIT");
+        fullCommitAuthorityAudited = true;
+        schemaMigration.commit();
+        schemaMigration = null;
         schemaMigrationOpen = false;
       } else {
         migrationSourceVersion = lockedSchema.detected_version;
@@ -1250,26 +1294,22 @@ export function createLiteWriteStoreFromDatabase(
     } catch (error) {
       if (schemaMigrationOpen) {
         try {
-          db.exec("ROLLBACK");
+          schemaMigration?.rollback();
         } finally {
+          schemaMigration = null;
           schemaMigrationOpen = false;
         }
       }
       throw error;
     }
-  } else {
-    assertLiteLearningEpisodeLedgerIntegrity(
-      db,
-      new Date().toISOString(),
-      learningIntegrityOptions,
-    );
   }
 
   const rollbackSchemaMigration = (error: unknown): never => {
     if (schemaMigrationOpen) {
       try {
-        db.exec("ROLLBACK");
+        schemaMigration?.rollback();
       } finally {
+        schemaMigration = null;
         schemaMigrationOpen = false;
       }
     }
@@ -1302,264 +1342,7 @@ export function createLiteWriteStoreFromDatabase(
 
   if (schemaMigrationOpen && (migrationSourceVersion === null || migrationSourceVersion === 2)) {
     try {
-      db.exec(`
-    CREATE TABLE IF NOT EXISTS lite_memory_commits (
-      id TEXT PRIMARY KEY,
-      scope TEXT NOT NULL,
-      parent_commit_id TEXT,
-      input_sha256 TEXT NOT NULL,
-      diff_json TEXT NOT NULL,
-      actor TEXT NOT NULL,
-      model_version TEXT,
-      prompt_version TEXT,
-      commit_hash TEXT NOT NULL UNIQUE,
-      created_at TEXT NOT NULL
-    );
-    CREATE INDEX IF NOT EXISTS idx_lite_memory_commits_scope_created
-      ON lite_memory_commits(scope, created_at DESC, id DESC);
-
-    CREATE TABLE IF NOT EXISTS lite_memory_nodes (
-      id TEXT PRIMARY KEY,
-      scope TEXT NOT NULL,
-      client_id TEXT,
-      type TEXT NOT NULL,
-      tier TEXT NOT NULL,
-      title TEXT,
-      text_summary TEXT,
-      slots_json TEXT NOT NULL,
-      raw_ref TEXT,
-      evidence_ref TEXT,
-      embedding_vector_json TEXT,
-      embedding_model TEXT,
-      memory_lane TEXT NOT NULL,
-      producer_agent_id TEXT,
-      owner_agent_id TEXT,
-      owner_team_id TEXT,
-      embedding_status TEXT NOT NULL,
-      embedding_last_error TEXT,
-      salience REAL NOT NULL,
-      importance REAL NOT NULL,
-      confidence REAL NOT NULL,
-      redaction_version INTEGER NOT NULL,
-      commit_id TEXT NOT NULL,
-      created_at TEXT NOT NULL
-    );
-    CREATE INDEX IF NOT EXISTS idx_lite_memory_nodes_scope ON lite_memory_nodes(scope);
-    CREATE INDEX IF NOT EXISTS idx_lite_memory_nodes_scope_created ON lite_memory_nodes(scope, created_at DESC, id DESC);
-    CREATE INDEX IF NOT EXISTS idx_lite_memory_nodes_scope_commit ON lite_memory_nodes(scope, commit_id);
-    CREATE INDEX IF NOT EXISTS idx_lite_memory_nodes_scope_status ON lite_memory_nodes(scope, embedding_status);
-    CREATE INDEX IF NOT EXISTS idx_lite_memory_nodes_scope_recall_stage1
-      ON lite_memory_nodes(scope, tier, embedding_status, type, salience DESC, confidence DESC, created_at DESC, id DESC);
-    CREATE INDEX IF NOT EXISTS idx_lite_memory_nodes_scope_type_created ON lite_memory_nodes(scope, type, created_at DESC, id DESC);
-    CREATE INDEX IF NOT EXISTS idx_lite_memory_nodes_scope_client ON lite_memory_nodes(scope, client_id);
-    CREATE INDEX IF NOT EXISTS idx_lite_memory_nodes_scope_type_client_created ON lite_memory_nodes(scope, type, client_id, created_at DESC, id DESC);
-    CREATE INDEX IF NOT EXISTS idx_lite_memory_nodes_scope_type_summary_kind_created
-      ON lite_memory_nodes(scope, type, json_extract(slots_json, '$.summary_kind'), created_at DESC, id DESC);
-    CREATE INDEX IF NOT EXISTS idx_lite_memory_nodes_scope_type_summary_tool_created
-      ON lite_memory_nodes(scope, type, json_extract(slots_json, '$.summary_kind'), json_extract(slots_json, '$.selected_tool'), created_at DESC, id DESC);
-
-    CREATE TABLE IF NOT EXISTS lite_memory_execution_native_index (
-      scope TEXT NOT NULL,
-      node_id TEXT NOT NULL,
-      execution_kind TEXT,
-      anchor_kind TEXT,
-      pattern_state TEXT,
-      task_signature TEXT,
-      task_family TEXT,
-      error_signature TEXT,
-      workflow_signature TEXT,
-      pattern_signature TEXT,
-      repo_signature TEXT,
-      file_cluster TEXT,
-      target_files_text TEXT,
-      tool_chain_signature TEXT,
-      failure_mode TEXT,
-      verification_signature TEXT,
-      acceptance_check_signature TEXT,
-      compression_layer TEXT,
-      created_at TEXT NOT NULL,
-      updated_at TEXT NOT NULL,
-      PRIMARY KEY(scope, node_id)
-    );
-    CREATE INDEX IF NOT EXISTS idx_lite_memory_execution_native_scope_created
-      ON lite_memory_execution_native_index(scope, created_at DESC, node_id DESC);
-    CREATE INDEX IF NOT EXISTS idx_lite_memory_execution_native_scope_kind_created
-      ON lite_memory_execution_native_index(scope, execution_kind, created_at DESC, node_id DESC);
-    CREATE INDEX IF NOT EXISTS idx_lite_memory_execution_native_scope_workflow_created
-      ON lite_memory_execution_native_index(scope, workflow_signature, created_at DESC, node_id DESC);
-    CREATE INDEX IF NOT EXISTS idx_lite_memory_execution_native_scope_task_created
-      ON lite_memory_execution_native_index(scope, task_signature, created_at DESC, node_id DESC);
-    CREATE INDEX IF NOT EXISTS idx_lite_memory_execution_native_scope_error_created
-      ON lite_memory_execution_native_index(scope, error_signature, created_at DESC, node_id DESC);
-    CREATE INDEX IF NOT EXISTS idx_lite_memory_execution_native_scope_pattern_created
-      ON lite_memory_execution_native_index(scope, pattern_signature, created_at DESC, node_id DESC);
-    CREATE INDEX IF NOT EXISTS idx_lite_memory_execution_native_scope_layer_created
-      ON lite_memory_execution_native_index(scope, compression_layer, created_at DESC, node_id DESC);
-
-    CREATE TABLE IF NOT EXISTS lite_memory_keyword_index (
-      scope TEXT NOT NULL,
-      node_id TEXT NOT NULL,
-      title TEXT,
-      text_summary TEXT,
-      slots_text TEXT NOT NULL,
-      searchable_text TEXT NOT NULL,
-      updated_at TEXT NOT NULL,
-      PRIMARY KEY(scope, node_id)
-    );
-    CREATE INDEX IF NOT EXISTS idx_lite_memory_keyword_scope_node
-      ON lite_memory_keyword_index(scope, node_id);
-    CREATE INDEX IF NOT EXISTS idx_lite_memory_keyword_scope_updated
-      ON lite_memory_keyword_index(scope, updated_at DESC, node_id DESC);
-
-    CREATE TABLE IF NOT EXISTS lite_memory_rule_defs (
-      rule_node_id TEXT PRIMARY KEY,
-      scope TEXT NOT NULL,
-      state TEXT NOT NULL,
-      if_json TEXT NOT NULL,
-      then_json TEXT NOT NULL,
-      exceptions_json TEXT NOT NULL,
-      rule_scope TEXT NOT NULL,
-      target_agent_id TEXT,
-      target_team_id TEXT,
-      positive_count INTEGER NOT NULL DEFAULT 0,
-      negative_count INTEGER NOT NULL DEFAULT 0,
-      commit_id TEXT NOT NULL,
-      created_at TEXT NOT NULL,
-      updated_at TEXT NOT NULL
-    );
-    CREATE INDEX IF NOT EXISTS idx_lite_memory_rule_defs_scope_created
-      ON lite_memory_rule_defs(scope, created_at DESC, rule_node_id ASC);
-
-    CREATE TABLE IF NOT EXISTS lite_memory_edges (
-      id TEXT PRIMARY KEY,
-      scope TEXT NOT NULL,
-      type TEXT NOT NULL,
-      src_id TEXT NOT NULL,
-      dst_id TEXT NOT NULL,
-      weight REAL NOT NULL,
-      confidence REAL NOT NULL,
-      decay_rate REAL NOT NULL,
-      metadata_json TEXT NOT NULL DEFAULT '{}',
-      commit_id TEXT NOT NULL,
-      created_at TEXT NOT NULL,
-      UNIQUE(scope, type, src_id, dst_id)
-    );
-    CREATE INDEX IF NOT EXISTS idx_lite_memory_edges_scope ON lite_memory_edges(scope);
-    CREATE INDEX IF NOT EXISTS idx_lite_memory_edges_scope_commit ON lite_memory_edges(scope, commit_id);
-    CREATE INDEX IF NOT EXISTS idx_lite_memory_edges_scope_src_weight_conf
-      ON lite_memory_edges(scope, src_id, weight DESC, confidence DESC, id ASC);
-    CREATE INDEX IF NOT EXISTS idx_lite_memory_edges_scope_dst_weight_conf
-      ON lite_memory_edges(scope, dst_id, weight DESC, confidence DESC, id ASC);
-
-    CREATE TABLE IF NOT EXISTS lite_memory_association_candidates (
-      id TEXT PRIMARY KEY,
-      scope TEXT NOT NULL,
-      src_id TEXT NOT NULL,
-      dst_id TEXT NOT NULL,
-      relation_kind TEXT NOT NULL,
-      status TEXT NOT NULL,
-      score REAL NOT NULL,
-      confidence REAL NOT NULL,
-      feature_summary_json TEXT NOT NULL,
-      evidence_json TEXT NOT NULL,
-      source_commit_id TEXT,
-      worker_run_id TEXT,
-      promoted_edge_id TEXT,
-      created_at TEXT NOT NULL,
-      updated_at TEXT NOT NULL,
-      UNIQUE(scope, src_id, dst_id, relation_kind)
-    );
-    CREATE INDEX IF NOT EXISTS idx_lite_memory_association_candidates_scope_src_score
-      ON lite_memory_association_candidates(scope, src_id, score DESC, confidence DESC);
-    CREATE INDEX IF NOT EXISTS idx_lite_memory_association_candidates_scope_dst_score
-      ON lite_memory_association_candidates(scope, dst_id, score DESC, confidence DESC);
-
-    CREATE TABLE IF NOT EXISTS lite_memory_outbox (
-      row_id INTEGER PRIMARY KEY AUTOINCREMENT,
-      scope TEXT NOT NULL,
-      commit_id TEXT NOT NULL,
-      event_type TEXT NOT NULL,
-      job_key TEXT NOT NULL,
-      payload_sha256 TEXT NOT NULL,
-      payload_json TEXT NOT NULL,
-      created_at TEXT NOT NULL,
-      UNIQUE(scope, event_type, job_key)
-    );
-    CREATE INDEX IF NOT EXISTS idx_lite_memory_outbox_scope_commit ON lite_memory_outbox(scope, commit_id);
-    CREATE INDEX IF NOT EXISTS idx_lite_memory_outbox_event_created ON lite_memory_outbox(event_type, created_at, row_id);
-
-    CREATE TABLE IF NOT EXISTS lite_runtime_write_operations (
-      tenant_id TEXT NOT NULL,
-      scope TEXT NOT NULL,
-      operation_kind TEXT NOT NULL,
-      operation_id TEXT NOT NULL,
-      request_sha256 TEXT NOT NULL,
-      receipt_json TEXT NOT NULL,
-      commit_id TEXT,
-      created_at TEXT NOT NULL,
-      PRIMARY KEY (tenant_id, scope, operation_kind, operation_id)
-    );
-    CREATE INDEX IF NOT EXISTS idx_lite_runtime_write_operations_created
-      ON lite_runtime_write_operations(created_at DESC);
-
-    CREATE TABLE IF NOT EXISTS lite_product_guide_receipts (
-      tenant_id TEXT NOT NULL,
-      scope TEXT NOT NULL,
-      guide_trace_id TEXT NOT NULL,
-      run_id TEXT,
-      consumer_agent_id TEXT,
-      consumer_team_id TEXT,
-      query_sha256 TEXT NOT NULL,
-      context_sha256 TEXT NOT NULL,
-      ledger_sha256 TEXT NOT NULL,
-      ledger_json TEXT NOT NULL,
-      commit_id TEXT NOT NULL,
-      created_at TEXT NOT NULL,
-      PRIMARY KEY (tenant_id, scope, guide_trace_id)
-    );
-    CREATE INDEX IF NOT EXISTS idx_lite_product_guide_receipts_scope_created
-      ON lite_product_guide_receipts(tenant_id, scope, created_at DESC, guide_trace_id DESC);
-    CREATE INDEX IF NOT EXISTS idx_lite_product_guide_receipts_run_created
-      ON lite_product_guide_receipts(tenant_id, scope, run_id, created_at DESC, guide_trace_id DESC);
-
-    CREATE TABLE IF NOT EXISTS lite_memory_execution_decisions (
-      id TEXT PRIMARY KEY,
-      scope TEXT NOT NULL,
-      decision_kind TEXT NOT NULL,
-      run_id TEXT,
-      selected_tool TEXT,
-      candidates_json TEXT NOT NULL,
-      context_sha256 TEXT NOT NULL,
-      policy_sha256 TEXT NOT NULL,
-      source_rule_ids_json TEXT NOT NULL,
-      metadata_json TEXT NOT NULL,
-      commit_id TEXT,
-      created_at TEXT NOT NULL
-    );
-    CREATE INDEX IF NOT EXISTS idx_lite_memory_execution_decisions_scope_created
-      ON lite_memory_execution_decisions(scope, created_at DESC, id DESC);
-    CREATE INDEX IF NOT EXISTS idx_lite_memory_execution_decisions_scope_run_created
-      ON lite_memory_execution_decisions(scope, run_id, created_at DESC, id DESC);
-    CREATE INDEX IF NOT EXISTS idx_lite_memory_execution_decisions_scope_tool_context_created
-      ON lite_memory_execution_decisions(scope, selected_tool, context_sha256, created_at DESC, id DESC);
-
-    CREATE TABLE IF NOT EXISTS lite_memory_rule_feedback (
-      id TEXT PRIMARY KEY,
-      scope TEXT NOT NULL,
-      rule_node_id TEXT NOT NULL,
-      run_id TEXT,
-      outcome TEXT NOT NULL,
-      note TEXT,
-      source TEXT NOT NULL,
-      decision_id TEXT,
-      commit_id TEXT,
-      created_at TEXT NOT NULL
-    );
-    CREATE INDEX IF NOT EXISTS idx_lite_memory_rule_feedback_scope_run_created
-      ON lite_memory_rule_feedback(scope, run_id, created_at DESC, id DESC);
-    CREATE INDEX IF NOT EXISTS idx_lite_memory_rule_feedback_scope_rule_created
-      ON lite_memory_rule_feedback(scope, rule_node_id, created_at DESC, id DESC);
-      `);
+      db.exec(LITE_WRITE_BASE_V2_SCHEMA_SQL);
   try {
     db.exec("ALTER TABLE lite_memory_rule_defs ADD COLUMN positive_count INTEGER NOT NULL DEFAULT 0");
   } catch (err) {
@@ -1764,6 +1547,26 @@ export function createLiteWriteStoreFromDatabase(
 
   let projectionOutbox!: ReturnType<typeof createLiteProjectionOutboxAccess>;
   try {
+    if (!schemaMigrationOpen && !fullCommitAuthorityAudited) {
+      db.exec("BEGIN IMMEDIATE");
+      try {
+        assertLiteLearningEpisodeLedgerIntegrity(
+          db,
+          new Date().toISOString(),
+          learningIntegrityOptions,
+        );
+        db.exec("COMMIT");
+        fullCommitAuthorityAudited = true;
+      } catch (error) {
+        try {
+          db.exec("ROLLBACK");
+        } catch {
+          // Preserve the integrity failure that caused startup to fail closed.
+        }
+        throw error;
+      }
+    }
+
     rebuildExecutionNativeIndex();
     rebuildKeywordIndex();
 
@@ -1772,7 +1575,7 @@ export function createLiteWriteStoreFromDatabase(
       if (migrationSourceVersion === 3) {
         migrateLiteLearningEpisodeLedgerV3ToV4(db);
         opts.schemaMigrationFaultInjector?.("after_learning_ledger_structures");
-      } else if (migrationSourceVersion !== 4) {
+      } else if (migrationSourceVersion === null || migrationSourceVersion === 2) {
         opts.schemaMigrationFaultInjector?.("after_v2_structures");
 
         migrateLiteSkillCandidateReviewSchema(db, { includeLearningEpisodeLinks: true });
@@ -1793,6 +1596,21 @@ export function createLiteWriteStoreFromDatabase(
         migrationBeforeCounts ?? {},
         migrationPreservationCounts(db),
       );
+
+      if (!schemaMigration) {
+        throw new Error("lite_runtime_schema_migration_authority_session_missing");
+      }
+      const adoptionMigration = migrateLiteRuntimeAuthorityAdoptionV6({
+        db,
+        authorityFence: schemaMigration.authorityFence,
+      });
+      opts.schemaMigrationFaultInjector?.("after_authority_adoption_structures");
+      assertLiteRuntimeSchemaContractShape(db, WRITE_SCHEMA_V6);
+      assertMigrationPreservedRows(
+        migrationBeforeCounts ?? {},
+        migrationPreservationCounts(db),
+        adoptionMigration.appendedCommitCount,
+      );
       opts.schemaMigrationFaultInjector?.("after_v3_shape_verification");
       opts.schemaMigrationFaultInjector?.("before_metadata_update");
 
@@ -1809,20 +1627,64 @@ export function createLiteWriteStoreFromDatabase(
         new Date().toISOString(),
         learningIntegrityOptions,
       );
-      db.exec("COMMIT");
+      fullCommitAuthorityAudited = true;
+      schemaMigration.commit();
+      schemaMigration = null;
       schemaMigrationOpen = false;
     }
+
   } catch (error) {
     rollbackSchemaMigration(error);
   }
 
   let writeStoreClosed = false;
+  let writeStoreClosing: Promise<void> | null = null;
+  const pendingV2CommitsByTransaction = new Map<symbol, Set<string>>();
+  const trackPendingV2Commit = (commitId: string): void => {
+    const identity = transaction.currentTransactionIdentity();
+    if (identity === null) {
+      throw new Error("lite_memory_pending_v2_commit_requires_transaction_identity");
+    }
+    let pending = pendingV2CommitsByTransaction.get(identity);
+    if (!pending) {
+      pending = new Set<string>();
+      pendingV2CommitsByTransaction.set(identity, pending);
+      transaction.beforeCommit(() => {
+        const unresolved = [...pending!];
+        pendingV2CommitsByTransaction.delete(identity);
+        if (unresolved.length > 0) {
+          throw new Error(
+            `lite_memory_pending_v2_commit_not_published:${unresolved.join(",")}`,
+          );
+        }
+      });
+      transaction.afterRollback(() => {
+        pendingV2CommitsByTransaction.delete(identity);
+      });
+    }
+    pending.add(commitId);
+  };
+  const runWriteTransaction = async <T>(
+    fn: () => Promise<T>,
+    options?: SqliteTransactionRunOptions,
+  ): Promise<T> => {
+    if (writeStoreClosed || writeStoreClosing !== null) {
+      throw new Error("lite_write_store_closing");
+    }
+    return await transaction.run(fn, options);
+  };
+  const runStoreRead = async <T>(fn: () => Promise<T> | T): Promise<T> => {
+    if (writeStoreClosed || writeStoreClosing !== null) {
+      throw new Error("lite_write_store_closing");
+    }
+    return await transaction.read(fn);
+  };
   return {
     capability_version: WRITE_STORE_ACCESS_CAPABILITY_VERSION,
     ...projectionOutbox,
 
     async withTx<T>(fn: () => Promise<T>, options?: SqliteTransactionRunOptions): Promise<T> {
-      return await transaction.run(fn, options);
+      return await runWriteTransaction(fn, options);
     },
 
     async afterCommit(fn): Promise<void> {
@@ -1850,7 +1712,7 @@ export function createLiteWriteStoreFromDatabase(
     },
 
     async getWriteOperation(args): Promise<LiteWriteOperationRow | null> {
-      return await transaction.read(() => (
+      return await runStoreRead(() => (
         db.prepare(
           `SELECT tenant_id, scope, operation_kind, operation_id,
                   request_sha256, receipt_json, commit_id, created_at
@@ -1875,32 +1737,69 @@ export function createLiteWriteStoreFromDatabase(
       if (!transaction.inTransaction()) {
         throw new Error("Runtime write operation receipt must be inserted inside the shared Runtime transaction");
       }
-      const createdAt = nowIso();
-      db.prepare(
-        `INSERT INTO lite_runtime_write_operations
-           (tenant_id, scope, operation_kind, operation_id, request_sha256,
-            receipt_json, commit_id, created_at)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
-      ).run(
-        args.tenantId,
-        args.scope,
-        args.operationKind,
-        args.operationId,
-        args.requestSha256,
-        args.receiptJson,
-        args.commitId ?? null,
+      const createdAt = args.createdAt ?? nowIso();
+      return appendLiteRuntimeWriteOperationAuthorityInCurrentTransaction({
+        db,
+        transaction,
+        tenantId: args.tenantId,
+        scope: args.scope,
+        operationKind: args.operationKind,
+        operationId: args.operationId,
+        requestSha256: args.requestSha256,
+        receiptJson: args.receiptJson,
+        commitId: args.commitId ?? null,
         createdAt,
-      );
-      return {
+        actor: args.authorityActor,
+      }).row;
+    },
+
+    async insertWriteOperationEnclosedByPendingCommit(args): Promise<LiteWriteOperationRow> {
+      if (args.scope === LITE_WRITE_OPERATION_RESERVED_SCOPE) {
+        throw new Error(LITE_WRITE_OPERATION_RESERVED_SCOPE_ERROR);
+      }
+      if (!transaction.inTransaction()) {
+        throw new Error("Runtime enclosed operation receipt must be inserted inside the shared Runtime transaction");
+      }
+      const row: LiteWriteOperationRow = {
         tenant_id: args.tenantId,
         scope: args.scope,
         operation_kind: args.operationKind,
         operation_id: args.operationId,
         request_sha256: args.requestSha256,
         receipt_json: args.receiptJson,
-        commit_id: args.commitId ?? null,
-        created_at: createdAt,
+        commit_id: args.commitId,
+        created_at: args.createdAt,
       };
+      const identity = {
+        tenant_id: args.tenantId,
+        scope: args.scope,
+        operation_kind: args.operationKind,
+        operation_id: args.operationId,
+      };
+      assertLiteMemoryPendingCommitClaimsAuthorityRow({
+        db,
+        scope: args.scope,
+        commitId: args.authorityCommitId,
+        table: "lite_runtime_write_operations",
+        identity,
+        persistedRow: row,
+      });
+      db.prepare(
+        `INSERT INTO lite_runtime_write_operations
+           (tenant_id, scope, operation_kind, operation_id, request_sha256,
+            receipt_json, commit_id, created_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+      ).run(
+        row.tenant_id,
+        row.scope,
+        row.operation_kind,
+        row.operation_id,
+        row.request_sha256,
+        row.receipt_json,
+        row.commit_id,
+        row.created_at,
+      );
+      return row;
     },
 
     async insertProductGuideReceipt(args): Promise<LiteProductGuideReceiptRow> {
@@ -1955,7 +1854,7 @@ export function createLiteWriteStoreFromDatabase(
     },
 
     async getProductGuideReceipt(args): Promise<LiteProductGuideReceiptRow | null> {
-      return await transaction.read(() => (
+      return await runStoreRead(() => (
         db.prepare(
           `SELECT tenant_id, scope, guide_trace_id, run_id, consumer_agent_id, consumer_team_id,
                   query_sha256, context_sha256, ledger_sha256, ledger_json, commit_id, created_at
@@ -1966,7 +1865,7 @@ export function createLiteWriteStoreFromDatabase(
     },
 
     async listProductGuideReceipts(args): Promise<LiteProductGuideReceiptRow[]> {
-      return await transaction.read(() => {
+      return await runStoreRead(() => {
         const where = ["tenant_id = ?", "scope = ?"];
         const params: unknown[] = [args.tenantId, args.scope];
         if (args.runId) {
@@ -1985,7 +1884,7 @@ export function createLiteWriteStoreFromDatabase(
     },
 
     async resolveGuideLearningPriorStates(args): Promise<Map<string, LiteGuideLearningPriorStateResolution>> {
-      return await transaction.read(() => {
+      return await runStoreRead(() => {
         const memoryIds: string[] = [];
         const seen = new Set<string>();
         for (const memoryId of args.memoryIds) {
@@ -2035,7 +1934,7 @@ export function createLiteWriteStoreFromDatabase(
     },
 
     async findNodes(args): Promise<{ rows: LiteFindNodeRow[]; has_more: boolean }> {
-      return await transaction.read(() => {
+      return await runStoreRead(() => {
       const where: string[] = ["scope = ?"];
       const params: unknown[] = [args.scope];
       if (args.id) {
@@ -2095,7 +1994,7 @@ export function createLiteWriteStoreFromDatabase(
     },
 
     async findExecutionNativeNodes(args): Promise<{ rows: LiteExecutionNativeNodeRow[]; has_more: boolean }> {
-      return await transaction.read(() => {
+      return await runStoreRead(() => {
       const where: string[] = ["i.scope = ?"];
       const params: unknown[] = [args.scope];
       if (args.executionKind) {
@@ -2174,7 +2073,7 @@ export function createLiteWriteStoreFromDatabase(
     },
 
     async findLatestNodeByClientId(scope: string, type: string, clientId: string): Promise<LiteLatestNodeView | null> {
-      return await transaction.read(() => {
+      return await runStoreRead(() => {
       const row = db.prepare(
         `SELECT id
          FROM lite_memory_nodes
@@ -2267,7 +2166,7 @@ export function createLiteWriteStoreFromDatabase(
     },
 
     async resolveCommit(args): Promise<LiteResolveCommitRow | null> {
-      return await transaction.read(() => {
+      return await runStoreRead(() => {
       const row = db.prepare(
         `SELECT
            c.id,
@@ -2708,7 +2607,7 @@ export function createLiteWriteStoreFromDatabase(
     },
 
     async latestCommit(scope: string) {
-      return await transaction.read(() => {
+      return await runStoreRead(() => {
         const head = readLiteMemoryScopeHead(db, scope);
         return head
           ? {
@@ -2742,7 +2641,7 @@ export function createLiteWriteStoreFromDatabase(
     },
 
     async getRuleFeedback(scope, id): Promise<LiteRuleFeedbackRow | null> {
-      return await transaction.read(() => {
+      return await runStoreRead(() => {
         const row = db.prepare(
           `SELECT id, scope, rule_node_id, run_id, outcome, note, source,
                   decision_id, commit_id, created_at
@@ -2764,7 +2663,7 @@ export function createLiteWriteStoreFromDatabase(
       latest_feedback_at: string | null;
       rows: LiteRuleFeedbackRow[];
     }> {
-      return await transaction.read(() => {
+      return await runStoreRead(() => {
       const stats = db.prepare(
         `SELECT
            COUNT(*) AS total,
@@ -2818,7 +2717,7 @@ export function createLiteWriteStoreFromDatabase(
     },
 
     async toolRunLifecycleRowidCutoffs(args) {
-      return await transaction.read(() => {
+      return await runStoreRead(() => {
         const decision = db.prepare(
           `SELECT COALESCE(MAX(rowid), 0) AS rowid_cutoff
            FROM lite_memory_execution_decisions
@@ -2969,7 +2868,7 @@ export function createLiteWriteStoreFromDatabase(
       ids: string[],
     ): Promise<Map<string, WriteExistingNodeState>> {
       if (ids.length === 0) return new Map();
-      return await transaction.read(() => {
+      return await runStoreRead(() => {
         const out = new Map<string, WriteExistingNodeState>();
         const uniqueIds = Array.from(new Set(ids));
         for (let offset = 0; offset < uniqueIds.length; offset += 400) {
@@ -3047,7 +2946,7 @@ export function createLiteWriteStoreFromDatabase(
       ruleNodeIds: string[],
     ): Promise<Map<string, WriteExistingRuleDefState>> {
       if (ruleNodeIds.length === 0) return new Map();
-      return await transaction.read(() => {
+      return await runStoreRead(() => {
         const out = new Map<string, WriteExistingRuleDefState>();
         const uniqueIds = Array.from(new Set(ruleNodeIds));
         for (let offset = 0; offset < uniqueIds.length; offset += 400) {
@@ -3101,7 +3000,7 @@ export function createLiteWriteStoreFromDatabase(
 
     async resolveEdgeStatesByIdentity(args): Promise<Map<string, WriteExistingEdgeState>> {
       if (args.identities.length === 0) return new Map();
-      return await transaction.read(() => {
+      return await runStoreRead(() => {
         const out = new Map<string, WriteExistingEdgeState>();
         const unique = new Map(args.identities.map((identity) => [writeEdgeIdentityKey(identity), identity]));
         const identities = Array.from(unique.values());
@@ -3150,7 +3049,7 @@ export function createLiteWriteStoreFromDatabase(
     },
 
     async lifecycleCandidateNodes(scope: string, limit: number): Promise<WriteLifecycleCandidateNodeRow[]> {
-      return await transaction.read(() => {
+      return await runStoreRead(() => {
       const boundedLimit = Math.max(1, Math.min(2000, Math.floor(limit)));
       const rows = db.prepare(`
         SELECT
@@ -3203,11 +3102,22 @@ export function createLiteWriteStoreFromDatabase(
     },
 
     async readScopeHead(scope) {
-      return await transaction.read(() => readLiteMemoryScopeHead(db, scope));
+      return await runStoreRead(() => readLiteMemoryScopeHead(db, scope));
     },
 
     async compareAndSwapScopeHead(args) {
-      return compareAndSwapLiteMemoryScopeHead({ db, transaction, request: args });
+      const result = compareAndSwapLiteMemoryScopeHead({
+        db,
+        authorityFence: authorityFenceForRuntimeTransaction(transaction),
+        request: args,
+      });
+      if (result.status === "advanced") {
+        const identity = transaction.currentTransactionIdentity();
+        if (identity !== null) {
+          pendingV2CommitsByTransaction.get(identity)?.delete(args.commitId);
+        }
+      }
+      return result;
     },
 
     async parentCommitHash(scope: string, parentCommitId: string): Promise<string | null> {
@@ -3218,125 +3128,26 @@ export function createLiteWriteStoreFromDatabase(
     },
 
     async insertCommit(args: WriteCommitInsertArgs): Promise<string> {
-      const untrustedArgs = args as Partial<WriteCommitInsertArgs> | null | undefined;
-      if (!untrustedArgs || untrustedArgs.digestVersion !== 2) {
-        throw new Error("lite_memory_commit_digest_v2_required");
-      }
-      if (!transaction.inTransaction()) {
-        throw new Error("lite_memory_commit_v2_requires_shared_transaction");
-      }
-      if (!Number.isSafeInteger(args.revision) || args.revision < 1) {
-        throw new Error("lite_memory_commit_v2_revision_invalid");
-      }
-      const createdAt = new Date(args.createdAt);
-      if (!Number.isFinite(createdAt.getTime()) || createdAt.toISOString() !== args.createdAt) {
-        throw new Error("lite_memory_commit_v2_created_at_invalid");
-      }
-      assertCanonicalV2MutationJson({
-        diffJson: args.diffJson,
-        mutationDigest: args.mutationDigest,
-        createdAt: args.createdAt,
-        scope: args.scope,
+      const commitId = insertLiteMemoryCommitV2InCurrentTransaction({
+        db,
+        authorityFence: authorityFenceForRuntimeTransaction(transaction),
+        commit: args,
       });
-      let parentHash = "";
-      if (args.parentCommitId !== null) {
-        const parent = db.prepare(
-          `SELECT commit_hash
-           FROM lite_memory_commits
-           WHERE scope = ? AND id = ?
-           LIMIT 1`,
-        ).get(args.scope, args.parentCommitId) as { commit_hash: string } | undefined;
-        if (!parent) {
-          throw new Error(`lite_memory_commit_v2_parent_missing:${args.parentCommitId}`);
-        }
-        parentHash = parent.commit_hash;
+      const persistedHead = db.prepare(
+        `SELECT revision FROM lite_memory_scope_heads WHERE scope = ?`,
+      ).get(args.scope) as { revision: number } | undefined;
+      if (!persistedHead || persistedHead.revision < args.revision) {
+        trackPendingV2Commit(commitId);
       }
-      const expectedCommitHash = canonicalV2CommitHash({
-        digestVersion: 2,
-        revision: args.revision,
-        parentHash,
-        inputSha256: args.inputSha256,
-        mutationDigest: args.mutationDigest,
-        scope: args.scope,
-        actor: args.actor,
-        modelVersion: args.modelVersion,
-        promptVersion: args.promptVersion,
-      });
-      if (args.commitHash !== expectedCommitHash) {
-        throw new Error("lite_memory_commit_v2_commit_hash_mismatch");
-      }
-
-      const existing = db.prepare(
-        `SELECT id, scope, parent_commit_id, input_sha256, diff_json, actor,
-                model_version, prompt_version, commit_hash, created_at,
-                digest_version, revision, mutation_digest, legacy_anchor_commit_id
-         FROM lite_memory_commits
-         WHERE commit_hash = ?
-         LIMIT 1`,
-      ).get(args.commitHash) as {
-        id: string;
-        scope: string;
-        parent_commit_id: string | null;
-        input_sha256: string;
-        diff_json: string;
-        actor: string;
-        model_version: string | null;
-        prompt_version: string | null;
-        commit_hash: string;
-        created_at: string;
-        digest_version: 1 | 2;
-        revision: number | null;
-        mutation_digest: string | null;
-        legacy_anchor_commit_id: string | null;
-      } | undefined;
-      if (existing?.id) {
-        const exactReplay = existing.digest_version === 2
-          && existing.scope === args.scope
-          && existing.parent_commit_id === args.parentCommitId
-          && existing.input_sha256 === args.inputSha256
-          && existing.diff_json === args.diffJson
-          && existing.actor === args.actor
-          && existing.model_version === args.modelVersion
-          && existing.prompt_version === args.promptVersion
-          && existing.created_at === args.createdAt
-          && existing.revision === args.revision
-          && existing.mutation_digest === args.mutationDigest
-          && existing.legacy_anchor_commit_id === args.legacyAnchorCommitId;
-        if (!exactReplay) {
-          throw new Error(`lite_memory_commit_v2_hash_collision:${args.commitHash}`);
-        }
-        return existing.id;
-      }
-
-      const id = stableUuid(`lite:commit:${args.commitHash}`);
-      db.prepare(
-        `INSERT INTO lite_memory_commits
-          (id, scope, parent_commit_id, input_sha256, diff_json, actor,
-           model_version, prompt_version, commit_hash, created_at,
-           digest_version, revision, mutation_digest, legacy_anchor_commit_id)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-      ).run(
-        id,
-        args.scope,
-        args.parentCommitId,
-        args.inputSha256,
-        args.diffJson,
-        args.actor,
-        args.modelVersion,
-        args.promptVersion,
-        args.commitHash,
-        args.createdAt,
-        2,
-        args.revision,
-        args.mutationDigest,
-        args.legacyAnchorCommitId,
-      );
-      return id;
+      return commitId;
     },
 
     async insertLegacyV1CommitForMigrationOrTestFixture(
       args: LegacyV1CommitMigrationOrTestFixtureArgs,
     ): Promise<string> {
+      if (!allowLegacyV1Fixtures) {
+        throw new Error("lite_memory_legacy_v1_fixture_writes_disabled");
+      }
       if (readLiteMemoryScopeHead(db, args.scope)?.persisted === true) {
         throw new Error(`lite_memory_commit_v1_after_v2_head_forbidden:${args.scope}`);
       }
@@ -3371,7 +3182,7 @@ export function createLiteWriteStoreFromDatabase(
     },
 
     async insertNode(args: WriteNodeInsertArgs): Promise<void> {
-      await transaction.run(async () => {
+      await runWriteTransaction(async () => {
         db.prepare(
         `INSERT OR IGNORE INTO lite_memory_nodes
           (id, scope, client_id, type, tier, title, text_summary, slots_json, raw_ref, evidence_ref,
@@ -3661,7 +3472,7 @@ export function createLiteWriteStoreFromDatabase(
 
     async setNodeEmbeddingReady(args): Promise<void> {
       assertDim(args.embedding, 1536);
-      await transaction.run(async () => {
+      await runWriteTransaction(async () => {
         db.prepare(
           `UPDATE lite_memory_nodes
            SET embedding_vector_json = ?,
@@ -3690,7 +3501,7 @@ export function createLiteWriteStoreFromDatabase(
     },
 
     async updateNodeAnchorState(args): Promise<LiteFindNodeRow | null> {
-      return await transaction.run(async () => {
+      return await runWriteTransaction(async () => {
       const { rows: existingRows } = await this.findNodes({
         scope: args.scope,
         id: args.id,
@@ -3785,10 +3596,12 @@ export function createLiteWriteStoreFromDatabase(
     },
 
     async setNodeEmbeddingFailed(args): Promise<void> {
-      await transaction.run(async () => {
+      await runWriteTransaction(async () => {
         db.prepare(
           `UPDATE lite_memory_nodes
-           SET embedding_status = 'failed',
+           SET embedding_vector_json = NULL,
+               embedding_model = NULL,
+               embedding_status = 'failed',
                embedding_last_error = ?
            WHERE scope = ?
              AND id = ?`,
@@ -3813,23 +3626,29 @@ export function createLiteWriteStoreFromDatabase(
 
     async close(): Promise<void> {
       if (writeStoreClosed) return;
-      let integrityError: unknown = null;
-      try {
-        await transaction.read(() => assertLiteLearningEpisodeLedgerIntegrity(
-          db,
-          new Date().toISOString(),
-          learningIntegrityOptions,
-        ));
-      } catch (error) {
-        integrityError = error;
-      } finally {
-        if (closeDatabaseOnClose) {
-          await database.close();
+      if (writeStoreClosing !== null) return await writeStoreClosing;
+      writeStoreClosing = (async () => {
+        let integrityError: unknown = null;
+        try {
+          // Installing writeStoreClosing above rejects every new operation.
+          // This queued BEGIN IMMEDIATE therefore drains all work accepted
+          // before close and audits one final, stable, full authority view.
+          await transaction.sealAndRun(async () => {
+            assertLiteLearningEpisodeLedgerIntegrity(
+              db,
+              new Date().toISOString(),
+              learningIntegrityOptions,
+            );
+          });
+        } catch (error) {
+          integrityError = error;
+        } finally {
+          if (closeDatabaseOnClose) await database.close();
           writeStoreClosed = true;
         }
-      }
-      if (integrityError !== null) throw integrityError;
-      writeStoreClosed = true;
+        if (integrityError !== null) throw integrityError;
+      })();
+      return await writeStoreClosing;
     },
 
     healthSnapshot() {

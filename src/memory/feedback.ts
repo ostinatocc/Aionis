@@ -13,7 +13,7 @@ import {
   ruleDefAuthorityRow,
   ruleFeedbackAuthorityRow,
 } from "./rule-authority-mutation.js";
-import { normalizeSelfCommitReferences } from "../store/write-commit-authority.js";
+import { normalizeAppliedAuthorityRow } from "../store/write-commit-authority.js";
 import type { LiteWriteStore } from "../store/lite-write-store.js";
 
 type FeedbackOptions = {
@@ -157,12 +157,20 @@ export async function ruleFeedback(
             {
               table: "lite_memory_rule_defs",
               identity: ruleIdentity,
-              after: normalizeSelfCommitReferences(ruleDefAuthorityRow(actualRule), commitId),
+              after: normalizeAppliedAuthorityRow(
+                "lite_memory_rule_defs",
+                ruleDefAuthorityRow(actualRule),
+                commitId,
+              ),
             },
             {
               table: "lite_memory_rule_feedback",
               identity: feedbackIdentity,
-              after: normalizeSelfCommitReferences(ruleFeedbackAuthorityRow(actualFeedback), commitId),
+              after: normalizeAppliedAuthorityRow(
+                "lite_memory_rule_feedback",
+                ruleFeedbackAuthorityRow(actualFeedback),
+                commitId,
+              ),
             },
           ];
         },

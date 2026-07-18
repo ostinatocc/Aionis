@@ -8,12 +8,104 @@ import {
   learningGatePolicyEvidenceIntentCompatible,
   resolveLearningGatePolicy,
 } from "./learning-gate-policy.js";
+import type { NodeAuthorityStateV2 } from "./node-embedding-freshness.js";
 
 const LEARNING_GATE_POLICY = resolveLearningGatePolicy(
   LEARNING_GATE_POLICY_ID,
   LEARNING_GATE_POLICY_VERSION,
 );
 const LEARNING_GATE_CONFIG = LEARNING_GATE_POLICY.config;
+
+export const LEARNING_CONTROL_OPERATION_KIND = "unused_exposure_learning_control_v1" as const;
+export const LEARNING_CONTROL_OPERATION_OUTCOME_AUTHORITY_KIND =
+  "learning_control_operation_outcome" as const;
+export const LEARNING_CONTROL_OPERATION_OUTCOME_EVIDENCE_CONTRACT =
+  "unused_exposure_learning_control_outcome_evidence_v2" as const;
+
+export const LEARNING_CONTROL_OPERATION_OUTCOME_EVIDENCE_FIELDS = [
+  "contract_version", "tenant_id", "scope", "job_id", "operation_id",
+  "source_episode_id", "source_feedback_event_id", "source_commit_id",
+  "payload_sha256", "domain_result_commit_id", "domain_result_revision",
+  "request_sha256", "actor", "consumer_agent_id", "consumer_team_id",
+  "requested_node_ids", "applied_node_ids",
+  "skipped_positive_attribution_memory_ids", "missing_node_ids", "observations",
+] as const;
+
+export type LearningControlOperationOutcomeObservationV2 = Readonly<{
+  memory_id: string;
+  state: NodeAuthorityStateV2 | null;
+}>;
+
+export type LearningControlOperationOutcomeEvidenceV2 = Readonly<{
+  contract_version: typeof LEARNING_CONTROL_OPERATION_OUTCOME_EVIDENCE_CONTRACT;
+  tenant_id: string;
+  scope: string;
+  job_id: string;
+  operation_id: string;
+  source_episode_id: string;
+  source_feedback_event_id: string;
+  source_commit_id: string;
+  payload_sha256: string;
+  domain_result_commit_id: string;
+  domain_result_revision: number;
+  request_sha256: string;
+  actor: string;
+  consumer_agent_id: string | null;
+  consumer_team_id: string | null;
+  requested_node_ids: readonly string[];
+  applied_node_ids: readonly string[];
+  skipped_positive_attribution_memory_ids: readonly string[];
+  missing_node_ids: readonly string[];
+  observations: readonly LearningControlOperationOutcomeObservationV2[];
+}>;
+
+function compareLearningControlMemoryId(left: string, right: string): number {
+  return Buffer.compare(Buffer.from(left, "utf8"), Buffer.from(right, "utf8"));
+}
+
+export function canonicalLearningControlMemoryIds(values: readonly string[]): string[] {
+  return [...new Set(values)].sort(compareLearningControlMemoryId);
+}
+
+export function buildLearningControlOperationOutcomeEvidenceV2(args: Omit<
+  LearningControlOperationOutcomeEvidenceV2,
+  "contract_version"
+>): LearningControlOperationOutcomeEvidenceV2 {
+  const requested = canonicalLearningControlMemoryIds(args.requested_node_ids);
+  const applied = canonicalLearningControlMemoryIds(args.applied_node_ids);
+  const skipped = canonicalLearningControlMemoryIds(
+    args.skipped_positive_attribution_memory_ids,
+  );
+  const missing = canonicalLearningControlMemoryIds(args.missing_node_ids);
+  const partition = canonicalLearningControlMemoryIds([...applied, ...skipped, ...missing]);
+  const observations = [...args.observations].sort((left, right) =>
+    compareLearningControlMemoryId(left.memory_id, right.memory_id)
+  );
+  if (requested.some((memoryId) => memoryId.length === 0)
+    || applied.length !== args.applied_node_ids.length
+    || skipped.length !== args.skipped_positive_attribution_memory_ids.length
+    || missing.length !== args.missing_node_ids.length
+    || partition.length !== applied.length + skipped.length + missing.length
+    || partition.length !== requested.length
+    || partition.some((memoryId, index) => memoryId !== requested[index])
+    || observations.length !== requested.length
+    || observations.some((observation, index) =>
+      observation.memory_id !== requested[index]
+      || (observation.state !== null && observation.state.id !== observation.memory_id)
+      || (observation.state !== null && observation.state.scope !== args.scope)
+    )) {
+    throw new Error("learning_control_operation_outcome_evidence_invalid");
+  }
+  return {
+    contract_version: LEARNING_CONTROL_OPERATION_OUTCOME_EVIDENCE_CONTRACT,
+    ...args,
+    requested_node_ids: requested,
+    applied_node_ids: applied,
+    skipped_positive_attribution_memory_ids: skipped,
+    missing_node_ids: missing,
+    observations,
+  };
+}
 
 const BoundedIdSchema = z.string().trim().min(1).max(256);
 const BoundedKindSchema = z.string().trim().min(1).max(120);

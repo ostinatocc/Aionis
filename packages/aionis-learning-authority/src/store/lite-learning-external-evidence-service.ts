@@ -6,7 +6,7 @@ import {
   LearningExternalEvidenceArtifactKindSchema,
   LearningExternalEvidenceIngestRequestV1Schema,
   type LearningExternalEvidenceArtifactKind,
-} from "../memory/learning-external-evidence.js";
+} from "../../../../src/memory/learning-external-evidence.js";
 import {
   closePreparedLiteLearningExternalEvidenceArchive,
   assertPreparedLiteLearningExternalEvidenceArchivePinned,
@@ -17,7 +17,7 @@ import {
 import {
   createLiteLearningEpisodeLedgerAccess,
   type LiteLearningAuthorityRow,
-} from "./lite-learning-episode-ledger.js";
+} from "../../../../src/store/lite-learning-episode-ledger.js";
 import {
   createLiteLearningExternalEvidenceIngestionAccess,
   type LiteLearningExternalEvidenceIngestionPhase,
@@ -26,11 +26,11 @@ import {
 import {
   type LiteRuntimeDatabase,
   type LiteRuntimeDatabaseFaultInjector,
-} from "./lite-runtime-database.js";
+} from "../../../../src/store/lite-runtime-database.js";
 import {
   inspectLiteRuntimeSchema,
   LITE_RUNTIME_WRITE_SCHEMA_VERSION,
-} from "./lite-runtime-schema.js";
+} from "../../../../src/store/lite-runtime-schema.js";
 import {
   assertLiteRuntimeProtectedAuthorityDatabasePinned,
   closeLiteRuntimeProtectedAuthorityDatabasePin,

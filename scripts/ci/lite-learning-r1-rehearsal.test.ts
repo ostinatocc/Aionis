@@ -334,6 +334,8 @@ async function createPopulatedV2Fixture(dbPath: string): Promise<void> {
     for (const table of [...LITE_LEARNING_LEDGER_REQUIRED_TABLE_NAMES].reverse()) {
       db.exec(`DROP TABLE IF EXISTS ${quoteIdentifier(table)}`);
     }
+    db.exec("DROP TABLE lite_runtime_authority_adoption_bindings");
+    db.exec("DROP TABLE lite_runtime_authority_adoption_manifests");
     for (const column of ["record_sha256", "after_episode_id", "baseline_episode_id"]) {
       db.exec(`ALTER TABLE lite_product_measurements DROP COLUMN ${quoteIdentifier(column)}`);
     }
@@ -487,12 +489,19 @@ test("dormant R1 explicitly migrates, verifies, backs up, restores, and replays 
     const upgrade = await runDataOps<LiteRuntimeUpgradeReport>(["upgrade", "--db", runtimePath]);
     assert.equal(upgrade.before.classification, "supported_previous_v2");
     assert.equal(upgrade.after.classification, "current");
-    assert.equal(upgrade.after.detected_version, 5);
+    assert.equal(upgrade.after.detected_version, 6);
     assert.deepEqual(upgrade.preserved_counts.before, preservedVerificationCounts(v2Snapshot));
-    assert.deepEqual(upgrade.preserved_counts.after, preservedVerificationCounts(v2Snapshot));
+    const expectedPostAdoptionCounts = {
+      ...preservedVerificationCounts(v2Snapshot),
+      commits: v2Snapshot.counts.lite_memory_commits + 1,
+    };
+    assert.deepEqual(upgrade.preserved_counts.after, expectedPostAdoptionCounts);
     const migratedSnapshot = protectedSnapshot(runtimePath, v2Snapshot.columns);
-    assert.deepEqual(migratedSnapshot.counts, v2Snapshot.counts);
-    assert.equal(migratedSnapshot.digest, v2Snapshot.digest);
+    assert.deepEqual(migratedSnapshot.counts, {
+      ...v2Snapshot.counts,
+      lite_memory_commits: v2Snapshot.counts.lite_memory_commits + 1,
+    });
+    assert.notEqual(migratedSnapshot.digest, v2Snapshot.digest);
 
     primaryRuntime = await startRuntime({
       writePath: runtimePath,
@@ -501,11 +510,11 @@ test("dormant R1 explicitly migrates, verifies, backs up, restores, and replays 
     });
     const liveVerification = await runDataOps<LiteRuntimeDataVerification>(["verify", "--db", runtimePath]);
     assert.equal(liveVerification.ok, true);
-    assert.equal(liveVerification.schema.detected_version, 5);
+    assert.equal(liveVerification.schema.detected_version, 6);
     assert.match(liveVerification.database_instance_id ?? "", /^[0-9a-f]{64}$/);
     assert.deepEqual(
       preservedVerificationCounts(protectedSnapshot(runtimePath, v2Snapshot.columns)),
-      preservedVerificationCounts(v2Snapshot),
+      preservedVerificationCounts(migratedSnapshot),
     );
     const liveBundleDigest = authorityBundleDigest(runtimePath, v2Snapshot.columns);
 
@@ -517,7 +526,7 @@ test("dormant R1 explicitly migrates, verifies, backs up, restores, and replays 
       backupPath,
     ]);
     assert.equal(backup.verification.ok, true);
-    assert.equal(backup.manifest.sha256, backup.verification.sha256);
+    assert.equal(backup.manifest.sha256, backup.verification.snapshot_fingerprint.sha256);
     assert.equal(backup.manifest.database_instance_id, liveVerification.database_instance_id);
     assert.equal(backup.verification.database_instance_id, liveVerification.database_instance_id);
     assert.equal(sha256(fs.readFileSync(backupPath)), backup.manifest.sha256);
@@ -537,11 +546,14 @@ test("dormant R1 explicitly migrates, verifies, backs up, restores, and replays 
     assert.equal(restored.source_manifest.sha256, backup.manifest.sha256);
     assert.equal(restored.verification.ok, true);
     assert.equal(restored.verification.database_instance_id, liveVerification.database_instance_id);
-    assert.equal(sha256(fs.readFileSync(restoredPath)), restored.verification.sha256);
+    assert.equal(
+      sha256(fs.readFileSync(restoredPath)),
+      restored.verification.snapshot_fingerprint.sha256,
+    );
     assert.equal(authorityBundleDigest(restoredPath, v2Snapshot.columns), liveBundleDigest);
     const restoredSnapshot = protectedSnapshot(restoredPath, v2Snapshot.columns);
-    assert.deepEqual(restoredSnapshot.counts, v2Snapshot.counts);
-    assert.equal(restoredSnapshot.digest, v2Snapshot.digest);
+    assert.deepEqual(restoredSnapshot.counts, migratedSnapshot.counts);
+    assert.equal(restoredSnapshot.digest, migratedSnapshot.digest);
 
     restoredRuntime = await startRuntime({
       writePath: restoredPath,
@@ -556,7 +568,7 @@ test("dormant R1 explicitly migrates, verifies, backs up, restores, and replays 
     assert.equal(replayVerification.database_instance_id, liveVerification.database_instance_id);
     assert.deepEqual(
       preservedVerificationCounts(protectedSnapshot(restoredPath, v2Snapshot.columns)),
-      preservedVerificationCounts(v2Snapshot),
+      preservedVerificationCounts(migratedSnapshot),
     );
     assert.equal(authorityBundleDigest(restoredPath, v2Snapshot.columns), liveBundleDigest);
   } finally {

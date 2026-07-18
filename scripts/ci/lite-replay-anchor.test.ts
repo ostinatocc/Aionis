@@ -26,6 +26,14 @@ import { createLiteReplayStore } from "../../src/store/lite-replay-store.ts";
 import { createLiteWriteStore } from "../../src/store/lite-write-store.ts";
 import { AionisMemoryPacketSchema } from "../../src/memory/product-output-contract.ts";
 import { sealAuthorityReceiptsForPreparedWrite } from "./authority-fixture-helpers.ts";
+import { runAppliedAuthorityMutationV2 } from "../../src/memory/applied-authority-mutation.ts";
+import {
+  applyNodeAuthorityPatchesV2,
+  buildNodeAuthorityMutationV2,
+  verifyNodeAuthorityPatchesV2,
+  type NodeAuthorityPatchV2,
+} from "../../src/memory/node-authority-mutation.ts";
+import { sha256Hex } from "../../src/util/crypto.ts";
 
 function tmpDbPath(name: string): string {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), "aionis-lite-replay-anchor-"));
@@ -1566,17 +1574,47 @@ test("replayPlaybookPromote normalizes latest stable playbooks onto workflow anc
       issuedAt: "2026-03-20T00:00:00.000Z",
       evidenceRefs: ["test:normalize-latest-stable:authority-fixture"],
     });
-    const updatedSeed = await liteWriteStore.updateNodeAnchorState({
-      scope: "default",
+    const beforeStates = await liteWriteStore.nodeStatesByIds("default", [sourceNodeId]);
+    const beforeState = beforeStates.get(sourceNodeId);
+    assert.ok(beforeState);
+    const patch: NodeAuthorityPatchV2 = {
       id: sourceNodeId,
       slots: seededSlots,
       textSummary: seededNode.text_summary,
       salience: seededNode.salience,
       importance: seededNode.importance,
       confidence: seededNode.confidence,
-      commitId: seededNode.commit_id,
+    };
+    const fixtureUpdate = await runAppliedAuthorityMutationV2({
+      store: liteWriteStore,
+      scope: "default",
+      actor: "replay-anchor-test",
+      inputSha256: sha256Hex(`normalize-latest-stable:${sourceNodeId}`),
+      plan: async () => ({
+        status: "mutate" as const,
+        authorityKind: "replay_anchor_test_fixture",
+        mutations: [buildNodeAuthorityMutationV2({ before: beforeState, patch })],
+        async apply({ commitId }) {
+          await applyNodeAuthorityPatchesV2({
+            store: liteWriteStore,
+            scope: "default",
+            patches: [patch],
+            commitId,
+          });
+          return true;
+        },
+        async verify({ commitId }) {
+          return await verifyNodeAuthorityPatchesV2({
+            store: liteWriteStore,
+            scope: "default",
+            patches: [patch],
+            commitId,
+            errorLabel: "replay_anchor_test_fixture",
+          });
+        },
+      }),
     });
-    assert.ok(updatedSeed);
+    assert.equal(fixtureUpdate.status, "applied");
 
     const out = await replayPlaybookPromote({
       tenant_id: "default",

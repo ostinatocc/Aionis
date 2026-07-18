@@ -21,7 +21,7 @@ import {
 import {
   closeLiteRuntimeProtectedAuthorityDatabasePin,
   pinLiteRuntimeProtectedAuthorityDatabase,
-} from "../../../src/store/lite-runtime-protected-authority-database.js";
+} from "../../../packages/aionis-learning-authority/src/store/lite-runtime-protected-authority-database.js";
 
 const PHASES = [
   "intent_durable",

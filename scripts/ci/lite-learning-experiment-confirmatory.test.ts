@@ -94,7 +94,8 @@ function createConfirmatoryProvisionInputForTenant(tenantId: string) {
 }
 
 function assertConfirmatoryAuthorityCounts(runtime: ConfirmatoryFixtureRuntime): void {
-  assert.equal(count(runtime, "lite_memory_commits"), 768);
+  // 768 opaque prior-scope roots plus one direct-v2 provisioning receipt.
+  assert.equal(count(runtime, "lite_memory_commits"), 769);
   assert.equal(count(runtime, "lite_learning_policy_versions"), 3);
   assert.equal(count(runtime, "lite_learning_collection_principal_bindings"), 1);
   assert.equal(count(runtime, "lite_learning_experiment_revisions"), 1);

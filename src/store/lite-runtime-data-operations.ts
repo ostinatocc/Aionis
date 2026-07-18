@@ -31,7 +31,7 @@ import {
 } from "./lite-projection-outbox.js";
 import {
   assertLearningLookProposalAgainstDatabase,
-  assertLiteLearningEpisodeLedgerIntegrity,
+  inspectLiteLearningEpisodeLedgerAndCommitAuthority,
   assertLiteRuntimeAuthorityIdentity,
   type LiteLearningEpisodeLedgerReplay,
 } from "./lite-learning-episode-ledger.js";
@@ -54,8 +54,15 @@ import {
   createSqliteReadOnlyDatabase,
   createSqliteSnapshotSourceDatabase,
   hardenPrivateRuntimeSqliteArtifacts,
+  hardenPrivateRuntimeSqlitePathOffline,
+  requireSqliteStreamingStatement,
   type SqliteDatabase,
 } from "./sqlite.js";
+import {
+  inspectLiteMemoryCommitAuthority,
+  type LiteMemoryCommitAuthorityReport,
+} from "./lite-memory-commit-integrity.js";
+import { validNodeEmbeddingProjectionTuple } from "./write-commit-authority.js";
 
 export type LiteExecutionHistoryVerification = {
   ok: boolean;
@@ -64,16 +71,21 @@ export type LiteExecutionHistoryVerification = {
 };
 
 export type LiteRuntimeDataVerification = {
-  contract_version: "aionis_lite_runtime_data_verification_v1";
-  path: string;
+  contract_version: "aionis_lite_runtime_data_verification_v2";
+  live_path: string;
   ok: boolean;
   checked_at: string;
-  byte_size: number;
-  sha256: string;
+  snapshot_fingerprint: {
+    source: "transactionally_consistent_vacuum_snapshot";
+    byte_size: number;
+    sha256: string;
+    retained_path: null;
+  };
   database_instance_id: string | null;
   quick_check: string[];
   foreign_key_violation_count: number;
   schema: LiteRuntimeSchemaReport;
+  commit_authority: LiteMemoryCommitAuthorityReport;
   counts: {
     commits: number;
     nodes: number;
@@ -101,6 +113,7 @@ export type LiteRuntimeDataVerification = {
     execution_state_history_invalid: number;
     execution_tree_history_invalid: number;
     learning_episode_ledger_invalid: number;
+    commit_authority_invalid: number;
   };
   execution_history: {
     state: LiteExecutionHistoryVerification;
@@ -305,6 +318,23 @@ function projectionPayloadInvalidCount(db: SqliteDatabase): number {
   )).length;
 }
 
+function invalidNodeEmbeddingProjectionTupleCount(db: SqliteDatabase): number {
+  if (!tableExists(db, "lite_memory_nodes")) return 0;
+  const rows = requireSqliteStreamingStatement(
+    db.prepare(
+      `SELECT embedding_vector_json, embedding_model,
+              embedding_status, embedding_last_error
+       FROM lite_memory_nodes`,
+    ),
+    "lite_runtime_data_verification_node_embedding_scan",
+  );
+  let invalid = 0;
+  for (const row of rows.iterate<Record<string, unknown>>()) {
+    if (!validNodeEmbeddingProjectionTuple(row)) invalid += 1;
+  }
+  return invalid;
+}
+
 function historyAuditFailure(error: unknown): LiteExecutionHistoryVerification {
   if (error instanceof HttpError && error.code === "execution_history_corrupt") {
     const details = error.details && typeof error.details === "object"
@@ -361,6 +391,7 @@ async function auditExecutionHistoryWithRuntimeStores(
     // transactionally consistent snapshot so verification never installs
     // tables or indexes into the operator's source database.
     vacuumInto(source, snapshotPath);
+    hardenPrivateRuntimeSqliteArtifacts(snapshotPath);
 
     let state: LiteExecutionHistoryVerification = {
       ok: true,
@@ -391,13 +422,18 @@ async function auditExecutionHistoryWithRuntimeStores(
   }
 }
 
-export async function verifyLiteRuntimeDatabase(path: string): Promise<LiteRuntimeDataVerification> {
-  const absolute = assertReadableDatabasePath(path);
+async function verifyLiteRuntimeDatabaseSnapshot(
+  reportPath: string,
+  snapshotPath: string,
+): Promise<LiteRuntimeDataVerification> {
+  const absolute = resolve(reportPath);
+  const stableSnapshotPath = assertReadableDatabasePath(snapshotPath);
   const checkedAt = new Date().toISOString();
-  const db = createSqliteSnapshotSourceDatabase(absolute);
+  const db = createSqliteSnapshotSourceDatabase(stableSnapshotPath);
   let quickCheck: string[];
   let foreignKeyViolationCount: number;
   let schema: LiteRuntimeSchemaReport;
+  let commitAuthority: LiteMemoryCommitAuthorityReport;
   let counts: LiteRuntimeDataVerification["counts"];
   let readyEmbeddingInvalid = 0;
   let nodeCommitMissing = 0;
@@ -415,27 +451,30 @@ export async function verifyLiteRuntimeDatabase(path: string): Promise<LiteRunti
     schema = inspectLiteRuntimeSchema(db);
     if (schema.classification === "current"
       && schema.detected_version === LITE_RUNTIME_WRITE_SCHEMA_VERSION) {
+      const learningInspection = inspectLiteLearningEpisodeLedgerAndCommitAuthority(
+        db,
+        checkedAt,
+      );
+      commitAuthority = learningInspection.commit_authority;
+      learningReplay = learningInspection.replay;
       try {
         databaseInstanceId = assertLiteRuntimeAuthorityIdentity(db);
-        learningReplay = assertLiteLearningEpisodeLedgerIntegrity(db, checkedAt);
       } catch (error) {
         learningEpisodeLedgerInvalid = 1;
         learningIntegrityError = errorChainMessage(error);
       }
+      if (learningInspection.integrity_error !== null) {
+        learningEpisodeLedgerInvalid = 1;
+        learningIntegrityError = errorChainMessage(learningInspection.integrity_error);
+      }
+    } else {
+      commitAuthority = inspectLiteMemoryCommitAuthority(db);
     }
     counts = semanticCounts(db, learningReplay);
     if (tableExists(db, "lite_memory_nodes")) {
-      readyEmbeddingInvalid = scalarCount(
-        db,
-        `SELECT COUNT(*) AS count
-         FROM lite_memory_nodes
-         WHERE embedding_status = 'ready'
-           AND (
-             embedding_vector_json IS NULL
-             OR json_valid(embedding_vector_json) = 0
-             OR json_array_length(embedding_vector_json) <> 1536
-           )`,
-      );
+      // Keep the report field name for contract compatibility, but validate the
+      // complete persisted tuple for every status through the shared authority rule.
+      readyEmbeddingInvalid = invalidNodeEmbeddingProjectionTupleCount(db);
       if (tableExists(db, "lite_memory_commits")) {
         nodeCommitMissing = scalarCount(
           db,
@@ -474,6 +513,16 @@ export async function verifyLiteRuntimeDatabase(path: string): Promise<LiteRunti
   if (!executionHistory.state.ok) warnings.push("execution_state_history_corrupt");
   if (!executionHistory.tree.ok) warnings.push("execution_tree_history_corrupt");
   if (learningEpisodeLedgerInvalid > 0) warnings.push("learning_episode_ledger_corrupt");
+  if (!commitAuthority.ok) warnings.push("memory_commit_authority_corrupt");
+  if (commitAuthority.terminal_legacy_opaque_row_count > 0) {
+    warnings.push("memory_commit_authority_legacy_opaque_rows_present");
+  }
+  if (commitAuthority.terminal_delegated_operation_row_count > 0) {
+    warnings.push("runtime_operation_receipts_use_delegated_authority");
+  }
+  if (commitAuthority.adoption_binding_count > 0) {
+    warnings.push("memory_commit_authority_v5_adoption_present");
+  }
   const learningBlockers = counts.learning_control_dead_letters > 0
     ? ["learning_control_dead_letters_present"]
     : [];
@@ -489,21 +538,27 @@ export async function verifyLiteRuntimeDatabase(path: string): Promise<LiteRunti
     && nodeCommitMissing === 0
     && edgeEndpointMissing === 0
     && projectionPayloadInvalid === 0
+    && commitAuthority.ok
     && learningEpisodeLedgerInvalid === 0
     && executionHistory.state.ok
     && executionHistory.tree.ok;
 
   return {
-    contract_version: "aionis_lite_runtime_data_verification_v1",
-    path: absolute,
+    contract_version: "aionis_lite_runtime_data_verification_v2",
+    live_path: absolute,
     ok,
     checked_at: checkedAt,
-    byte_size: statSync(absolute).size,
-    sha256: await sha256File(absolute),
+    snapshot_fingerprint: {
+      source: "transactionally_consistent_vacuum_snapshot",
+      byte_size: statSync(stableSnapshotPath).size,
+      sha256: await sha256File(stableSnapshotPath),
+      retained_path: null,
+    },
     database_instance_id: databaseInstanceId,
     quick_check: quickCheck,
     foreign_key_violation_count: foreignKeyViolationCount,
     schema,
+    commit_authority: commitAuthority,
     counts,
     integrity_findings: {
       ready_embedding_invalid: readyEmbeddingInvalid,
@@ -513,6 +568,7 @@ export async function verifyLiteRuntimeDatabase(path: string): Promise<LiteRunti
       execution_state_history_invalid: executionHistory.state.ok ? 0 : 1,
       execution_tree_history_invalid: executionHistory.tree.ok ? 0 : 1,
       learning_episode_ledger_invalid: learningEpisodeLedgerInvalid,
+      commit_authority_invalid: commitAuthority.finding_count,
     },
     execution_history: executionHistory,
     learning: {
@@ -526,6 +582,31 @@ export async function verifyLiteRuntimeDatabase(path: string): Promise<LiteRunti
     },
     warnings,
   };
+}
+
+/**
+ * Verifies one transactionally fixed copy. The verifier never composes
+ * multiple autocommit reads against a live WAL-backed path.
+ */
+export async function verifyLiteRuntimeDatabase(path: string): Promise<LiteRuntimeDataVerification> {
+  const absolute = assertReadableDatabasePath(path);
+  const snapshotDirectory = createPrivateStagingDirectory(
+    tmpdir(),
+    "aionis-runtime-data-verify-",
+  );
+  const snapshotPath = join(snapshotDirectory, "runtime.sqlite");
+  try {
+    const source = createSqliteSnapshotSourceDatabase(absolute);
+    try {
+      vacuumInto(source, snapshotPath);
+    } finally {
+      source.close();
+    }
+    hardenPrivateRuntimeSqliteArtifacts(snapshotPath);
+    return await verifyLiteRuntimeDatabaseSnapshot(absolute, snapshotPath);
+  } finally {
+    rmSync(snapshotDirectory, { recursive: true, force: true });
+  }
 }
 
 export type LiteRuntimeLearningArtifactVerification = Readonly<{
@@ -565,10 +646,10 @@ export async function verifyLiteRuntimeLearningArtifact(args: {
     } finally {
       source.close();
     }
-    const snapshotVerification = await verifyLiteRuntimeDatabase(snapshotPath);
+    const snapshotVerification = await verifyLiteRuntimeDatabaseSnapshot(sourcePath, snapshotPath);
     const verification: LiteRuntimeDataVerification = {
       ...snapshotVerification,
-      path: sourcePath,
+      live_path: sourcePath,
     };
     let proposalIntegrityError: string | null = null;
     if (verification.schema.classification === "current"
@@ -597,8 +678,14 @@ export async function verifyLiteRuntimeLearningArtifact(args: {
         + verification.integrity_findings.node_commit_missing
         + verification.integrity_findings.edge_endpoint_missing
         + verification.integrity_findings.projection_payload_invalid
+        + verification.integrity_findings.commit_authority_invalid
         + verification.integrity_findings.execution_state_history_invalid
-        + verification.integrity_findings.execution_tree_history_invalid,
+        + verification.integrity_findings.execution_tree_history_invalid
+        + verification.commit_authority.terminal_legacy_opaque_row_count
+        + verification.commit_authority.terminal_delegated_operation_row_count
+        + verification.commit_authority.terminal_projection_tuple_exception_count
+        + verification.commit_authority.adoption_binding_count
+        + verification.commit_authority.adoption_baseline_projection_exception_count,
       ledger_chain_integrity: verification.integrity_findings.learning_episode_ledger_invalid,
       assignment_integrity: /assignment|pair|arm|wave/u.test(learningError) ? 1 : 0,
       policy_config_integrity: /policy|revision binding/u.test(`${learningError} ${proposalError}`) ? 1 : 0,
@@ -741,8 +828,10 @@ function assertRestoredSnapshotMatches(
   restored: LiteRuntimeDataVerification,
 ): void {
   const mismatches: string[] = [];
-  if (snapshot.byte_size !== restored.byte_size) mismatches.push("byte_size");
-  if (snapshot.sha256 !== restored.sha256) mismatches.push("sha256");
+  if (snapshot.snapshot_fingerprint.byte_size
+    !== restored.snapshot_fingerprint.byte_size) mismatches.push("byte_size");
+  if (snapshot.snapshot_fingerprint.sha256
+    !== restored.snapshot_fingerprint.sha256) mismatches.push("sha256");
   if (snapshot.schema.component !== restored.schema.component) mismatches.push("schema_component");
   if (snapshot.schema.detected_version !== restored.schema.detected_version) {
     mismatches.push("schema_version");
@@ -805,7 +894,7 @@ export async function backupLiteRuntimeDatabase(args: {
     }
     hardenPrivateRuntimeSqliteArtifacts(snapshotPath);
 
-    const verification = await verifyLiteRuntimeDatabase(snapshotPath);
+    const verification = await verifyLiteRuntimeDatabaseSnapshot(destinationPath, snapshotPath);
     if (!verification.ok) {
       throw new Error(`source_database_verification_failed:${JSON.stringify(verification)}`);
     }
@@ -813,8 +902,8 @@ export async function backupLiteRuntimeDatabase(args: {
       contract_version: "aionis_lite_runtime_backup_manifest_v2",
       created_at: new Date().toISOString(),
       database_file: destinationPath.split("/").at(-1) ?? destinationPath,
-      byte_size: verification.byte_size,
-      sha256: verification.sha256,
+      byte_size: verification.snapshot_fingerprint.byte_size,
+      sha256: verification.snapshot_fingerprint.sha256,
       database_instance_id: verification.database_instance_id,
       schema_component: verification.schema.component,
       schema_version: verification.schema.detected_version,
@@ -874,7 +963,7 @@ export async function restoreLiteRuntimeDatabase(args: {
       }
     }
     hardenPrivateRuntimeSqliteArtifacts(snapshotPath);
-    const backupVerification = await verifyLiteRuntimeDatabase(snapshotPath);
+    const backupVerification = await verifyLiteRuntimeDatabaseSnapshot(snapshotPath, snapshotPath);
     if (!backupVerification.ok) {
       throw new Error(`backup_database_verification_failed:${JSON.stringify(backupVerification)}`);
     }
@@ -889,7 +978,7 @@ export async function restoreLiteRuntimeDatabase(args: {
     fsyncPath(snapshotPath);
     linkSync(snapshotPath, destinationPath);
     fsyncPath(destinationDirectory);
-    const verification = await verifyLiteRuntimeDatabase(destinationPath);
+    const verification = await verifyLiteRuntimeDatabaseSnapshot(destinationPath, destinationPath);
     if (!verification.ok) {
       throw new Error(`restored_database_verification_failed:${JSON.stringify(verification)}`);
     }
@@ -920,6 +1009,10 @@ export async function upgradeLiteRuntimeDatabase(path: string): Promise<LiteRunt
   if (beforeVerification.schema.classification === "incompatible") {
     throw new Error(`schema_upgrade_preflight_failed:${JSON.stringify(beforeVerification.schema)}`);
   }
+  // Upgrade is an explicit offline operation. Normalize legacy artifact modes
+  // only after the read-only verifier accepts the source, and before Runtime
+  // opens any live write/read handles whose locks must never be disturbed.
+  hardenPrivateRuntimeSqlitePathOffline(absolute);
   const store = createLiteWriteStore(absolute, { annProjectionEnabled: false });
   await store.close();
   const afterVerification = await verifyLiteRuntimeDatabase(absolute);
@@ -939,8 +1032,13 @@ export async function upgradeLiteRuntimeDatabase(path: string): Promise<LiteRunt
     "skill_reviews",
   ] as const;
   for (const key of preservedCountKeys) {
-    if (beforeCounts[key] !== afterCounts[key]) {
-      throw new Error(`schema_upgrade_changed_semantic_row_count:${key}:${beforeCounts[key]}:${afterCounts[key]}`);
+    const expectedAfter = key === "commits"
+      ? beforeCounts.commits
+        + afterVerification.commit_authority.adoption_manifest_count
+        - beforeVerification.commit_authority.adoption_manifest_count
+      : beforeCounts[key];
+    if (expectedAfter !== afterCounts[key]) {
+      throw new Error(`schema_upgrade_changed_semantic_row_count:${key}:${expectedAfter}:${afterCounts[key]}`);
     }
   }
   return {

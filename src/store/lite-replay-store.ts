@@ -10,8 +10,8 @@ import type {
 import { REPLAY_STORE_ACCESS_CAPABILITY_VERSION } from "./replay-access.js";
 import type { ReplayMirrorNodeRecord, ReplayWriteMirror } from "../memory/replay-write.js";
 import {
+  assertPrivateRuntimeSqliteArtifactModes,
   createPrivateRuntimeSqliteDatabase,
-  hardenPrivateRuntimeSqliteArtifacts,
 } from "./sqlite.js";
 
 type LiteReplayRow = {
@@ -126,7 +126,7 @@ export function createLiteReplayStore(path: string): LiteReplayStore {
     CREATE INDEX IF NOT EXISTS idx_lite_replay_nodes_scope_playbook
       ON lite_replay_nodes(scope, playbook_id, version_num, created_at);
   `);
-  hardenPrivateRuntimeSqliteArtifacts(path);
+  assertPrivateRuntimeSqliteArtifactModes(path);
 
   const upsertStmt = db.prepare(`
     INSERT INTO lite_replay_nodes (

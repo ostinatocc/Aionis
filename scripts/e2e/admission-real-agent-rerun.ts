@@ -101,8 +101,8 @@ export async function runAdmissionRealAgentFreshRuntimePair<T>(args: {
     if (!databaseInstanceId
       || candidateManifest.sha256 !== sourceSha256
       || candidateManifest.database_instance_id !== databaseInstanceId
-      || restored.recorded.verification.sha256 !== sourceSha256
-      || restored.candidate.verification.sha256 !== sourceSha256) {
+      || restored.recorded.verification.snapshot_fingerprint.sha256 !== sourceSha256
+      || restored.candidate.verification.snapshot_fingerprint.sha256 !== sourceSha256) {
       throw new Error("finite_holdout_runtime_pair_snapshot_mismatch");
     }
     const armResults = {} as Record<AionisAdmissionRealAgentRuntimeArm,
@@ -137,7 +137,7 @@ export async function runAdmissionRealAgentFreshRuntimePair<T>(args: {
         result,
         runtime_copy_identity_sha256: runtimeCopyIdentity,
         starting_runtime_snapshot_sha256: sourceSha256,
-        ending_runtime_snapshot_sha256: ending.sha256,
+        ending_runtime_snapshot_sha256: ending.snapshot_fingerprint.sha256,
       };
     }
     completed = {

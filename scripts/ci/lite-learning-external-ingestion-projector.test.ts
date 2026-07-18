@@ -11,10 +11,10 @@ import {
 } from "../../src/memory/learning-external-ingestion-attestation.js";
 import {
   LiteLearningExternalEvidenceIngestOperationReceiptV1Schema,
-} from "../../src/store/lite-learning-external-evidence-ingestion.js";
+} from "../../packages/aionis-learning-authority/src/store/lite-learning-external-evidence-ingestion.js";
 import {
   ingestLiteLearningExternalEvidence,
-} from "../../src/store/lite-learning-external-evidence-service.js";
+} from "../../packages/aionis-learning-authority/src/store/lite-learning-external-evidence-service.js";
 import {
   LiteLearningExternalIngestionDatabaseProjectionDraftV1Schema,
   liteLearningExternalIngestionDatabaseProjectionDraftDigestV1,
@@ -173,7 +173,7 @@ function replaceProtectedDatabaseInstanceId(
   for (const trigger of triggers) database.db.exec(trigger.sql);
 }
 
-test("D2 external-ingestion projector reconstructs only a real same-snapshot v5 database draft", {
+test("D2 external-ingestion projector reconstructs only a real same-snapshot current database draft", {
   timeout: 900_000,
 }, async (t) => {
   const base = await createLearningExternalEvidenceIngestFixture();
@@ -463,8 +463,8 @@ test("D2 external-ingestion projector reconstructs only a real same-snapshot v5 
         assert.equal(draft.contract_version, "unsigned_d2_database_projection_draft_v1");
         assert.equal(draft.signing_eligible, false);
         assert.equal(draft.schema_component, "write_projection");
-        assert.equal(draft.schema_version, 5);
-        assert.equal(draft.ledger_verification.schema_version, 5);
+        assert.equal(draft.schema_version, 6);
+        assert.equal(draft.ledger_verification.schema_version, 6);
         assert.equal(draft.tenant_id, "tenant-confirmatory");
         assert.equal(draft.task_family, "repository_change");
         assert.equal(draft.confirmatory_attempt_id, CONFIRMATORY_ATTEMPT_ID);

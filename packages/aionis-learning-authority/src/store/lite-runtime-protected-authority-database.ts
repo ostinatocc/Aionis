@@ -14,8 +14,9 @@ import {
   createLiteRuntimeProtectedWriteDatabase,
   type LiteRuntimeDatabase,
   type LiteRuntimeDatabaseFaultInjector,
-} from "./lite-runtime-database.js";
-import type { SqliteTransactionRunOptions } from "./sqlite-transaction-runner.js";
+} from "../../../../src/store/lite-runtime-database.js";
+import type { SqliteTransactionRunOptions } from
+  "../../../../src/store/sqlite-transaction-runner.js";
 
 export type LiteRuntimeProtectedAuthorityDatabaseErrorCode =
   | "lite_runtime_protected_authority_database_absolute_path_required"

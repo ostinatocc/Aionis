@@ -31,6 +31,7 @@ import { createMemoryWriteRouteService } from "../../src/routes/memory-write.ts"
 import { createLiteClaimLedgerStoreFromDatabase } from "../../src/store/lite-claim-ledger-store.ts";
 import { createLiteLearningEpisodeLedgerAccess } from "../../src/store/lite-learning-episode-ledger.ts";
 import { assertToolFeedbackAuthorityMutationRoot } from "../../src/store/lite-learning-safety-stop-integrity.ts";
+import { inspectLiteMemoryCommitAuthority } from "../../src/store/lite-memory-commit-integrity.ts";
 import { createLiteRecallStore } from "../../src/store/lite-recall-store.ts";
 import {
   createLiteRuntimeDatabase,
@@ -871,6 +872,8 @@ test("protected manual measure replays exactly without creating effect authority
       tenant_id: string; scope: string; operation_kind: string; operation_id: string;
       request_sha256: string; receipt_json: string; commit_id: string | null; created_at: string;
     };
+    const initialAuthority = inspectLiteMemoryCommitAuthority(runtime.database.db);
+    assert.equal(initialAuthority.ok, true, JSON.stringify(initialAuthority.findings));
     const tamperedReceipt = JSON.parse(primary.receipt_json) as {
       body: { source_map: { internal_surfaces_used: string[] } };
     };
@@ -885,13 +888,19 @@ test("protected manual measure replays exactly without creating effect authority
     assert.equal((tamperedReplay.body as any).error, "protected_measure_receipt_invalid");
     await assert.rejects(
       runtime.learningEpisodeLedgerAccess.verifyIntegrity(),
-      /product_measure_receipt_authority/,
+      /lite_memory_commit_authority_terminal_row_mismatch/,
     );
     runtime.database.db.prepare(
       `UPDATE lite_runtime_write_operations SET receipt_json = ?
        WHERE operation_kind = 'product_measure_v1' AND operation_id = ?`,
     ).run(primary.receipt_json, operationId);
     await runtime.learningEpisodeLedgerAccess.verifyIntegrity();
+    const restoredPrimaryAuthority = inspectLiteMemoryCommitAuthority(runtime.database.db);
+    assert.equal(
+      restoredPrimaryAuthority.ok,
+      true,
+      JSON.stringify(restoredPrimaryAuthority.findings),
+    );
 
     const root = runtime.database.db.prepare(
       `SELECT tenant_id, scope, operation_kind, operation_id, request_sha256,
@@ -908,7 +917,7 @@ test("protected manual measure replays exactly without creating effect authority
     assert.equal(missingRootReplay.statusCode, 500);
     await assert.rejects(
       runtime.learningEpisodeLedgerAccess.verifyIntegrity(),
-      /product_measure_receipt_authority/,
+      /lite_memory_commit_authority_terminal_row_missing/,
     );
     runtime.database.db.prepare(
       `INSERT INTO lite_runtime_write_operations
@@ -926,6 +935,8 @@ test("protected manual measure replays exactly without creating effect authority
       root.created_at,
     );
     await runtime.learningEpisodeLedgerAccess.verifyIntegrity();
+    const restoredRootAuthority = inspectLiteMemoryCommitAuthority(runtime.database.db);
+    assert.equal(restoredRootAuthority.ok, true, JSON.stringify(restoredRootAuthority.findings));
 
     runtime.database.db.prepare(
       `DELETE FROM lite_runtime_write_operations
@@ -946,7 +957,7 @@ test("protected manual measure replays exactly without creating effect authority
     ).get() as { count: number }).count), 1);
     await assert.rejects(
       runtime.learningEpisodeLedgerAccess.verifyIntegrity(),
-      /product_measure_receipt_authority/,
+      /lite_memory_commit_authority_terminal_row_missing/,
     );
     const restoreOperation = runtime.database.db.prepare(
       `INSERT INTO lite_runtime_write_operations
@@ -967,6 +978,9 @@ test("protected manual measure replays exactly without creating effect authority
       );
     }
     await runtime.learningEpisodeLedgerAccess.verifyIntegrity();
+    await runtime.writeStore.withTx(async () => undefined);
+    const restoredPairAuthority = inspectLiteMemoryCommitAuthority(runtime.database.db);
+    assert.equal(restoredPairAuthority.ok, true, JSON.stringify(restoredPairAuthority.findings));
   } finally {
     await runtime.close();
   }
@@ -1666,7 +1680,7 @@ test("observe operation receipt is stable across close/reopen and conflicts on c
   assert.equal(retryPrepareCalled, false);
   await firstRuntime.close();
   const afterFirst = tableCounts(dbPath);
-  assert.equal(afterFirst.lite_memory_commits, 2);
+  assert.equal(afterFirst.lite_memory_commits, 3);
   assert.ok(afterFirst.lite_memory_nodes >= 2);
   assert.equal(afterFirst.handoff_nodes, 1);
   assert.equal(afterFirst.lite_claim_ledger_claims, 1);

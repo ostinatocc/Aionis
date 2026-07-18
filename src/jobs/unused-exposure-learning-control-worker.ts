@@ -3,7 +3,15 @@ import { randomUUID } from "node:crypto";
 import stableStringify from "fast-json-stable-stringify";
 
 import type { Env } from "../config.js";
+import { runAppliedAuthorityMutationV2 } from "../memory/applied-authority-mutation.js";
+import {
+  buildLearningControlOperationOutcomeEvidenceV2,
+  canonicalLearningControlMemoryIds,
+  LEARNING_CONTROL_OPERATION_KIND,
+  LEARNING_CONTROL_OPERATION_OUTCOME_AUTHORITY_KIND,
+} from "../memory/learning-episode-ledger.js";
 import { applyUnusedExposureLearningControlLite } from "../memory/lifecycle-lite.js";
+import { nodeAuthorityStateV2 } from "../memory/node-authority-mutation.js";
 import { parseGuideExposureLedger } from "../product/product-services.js";
 import type { LiteLearningEpisodeLedgerAccess } from "../store/lite-learning-episode-ledger.js";
 import {
@@ -17,9 +25,11 @@ import {
 } from "../store/lite-learning-control-jobs.js";
 import { appendControlJobLearningSafetyStop } from "../store/lite-learning-safety-stop.js";
 import type { LiteWriteStore } from "../store/lite-write-store.js";
+import {
+  materializeAppliedAuthorityRow,
+  normalizeAppliedAuthorityRow,
+} from "../store/write-commit-authority.js";
 import { sha256Hex } from "../util/crypto.js";
-
-const LEARNING_CONTROL_OPERATION_KIND = "unused_exposure_learning_control_v1";
 
 type LearningControlWorkerLogger = {
   info?(fields: Record<string, unknown>, message: string): void;
@@ -230,6 +240,191 @@ async function insertWorkerOperationReceipt(args: {
   });
 }
 
+async function appendLearningControlOperationOutcome(args: {
+  writeStore: LiteWriteStore;
+  job: LiteLearningControlJobRow;
+  actor: string;
+  consumerAgentId: string | null;
+  consumerTeamId: string | null;
+  requestedMemoryIds: readonly string[];
+  domainResultCommitId: string;
+  changedMemoryIds: readonly string[];
+  skippedPositiveMemoryIds: readonly string[];
+  missingNodeIds: readonly string[];
+  appliedAt: string;
+}): Promise<{
+  commitId: string;
+  completedAt: string;
+  receipt: ReturnType<typeof workerReceipt>;
+}> {
+  const requestSha256 = learningControlOperationRequestSha256(args.job);
+  const domainHead = await args.writeStore.readScopeHead(args.job.scope);
+  if (!domainHead || domainHead.commitId !== args.domainResultCommitId) {
+    throw new Error("learning control outcome domain head fence mismatch");
+  }
+  const result = await runAppliedAuthorityMutationV2({
+    store: args.writeStore,
+    scope: args.job.scope,
+    inputSha256: requestSha256,
+    actor: args.actor,
+    modelVersion: null,
+    promptVersion: null,
+    appliedAt: args.appliedAt,
+    expectedHeadRevision: domainHead.revision,
+    expectedHeadCommitId: domainHead.commitId,
+    plan: async ({ head, appliedAt }) => {
+      if (!head || head.commitId !== args.domainResultCommitId
+        || head.revision !== domainHead.revision) {
+        throw new Error("learning control outcome domain head changed");
+      }
+      const existing = await args.writeStore.getWriteOperation({
+        tenantId: args.job.tenant_id,
+        scope: args.job.scope,
+        operationKind: LEARNING_CONTROL_OPERATION_KIND,
+        operationId: args.job.operation_id,
+      });
+      if (existing) throw new Error("learning control outcome operation already exists");
+      const requestedMemoryIds = canonicalLearningControlMemoryIds(args.requestedMemoryIds);
+      const observedStates = await args.writeStore.nodeStatesByIds(
+        args.job.scope,
+        requestedMemoryIds,
+      );
+      const evidence = buildLearningControlOperationOutcomeEvidenceV2({
+        tenant_id: args.job.tenant_id,
+        scope: args.job.scope,
+        job_id: args.job.job_id,
+        operation_id: args.job.operation_id,
+        source_episode_id: args.job.source_episode_id,
+        source_feedback_event_id: args.job.source_feedback_event_id,
+        source_commit_id: args.job.source_commit_id,
+        payload_sha256: args.job.payload_sha256,
+        domain_result_commit_id: head.commitId,
+        domain_result_revision: head.revision,
+        request_sha256: requestSha256,
+        actor: args.actor,
+        consumer_agent_id: args.consumerAgentId,
+        consumer_team_id: args.consumerTeamId,
+        requested_node_ids: requestedMemoryIds,
+        applied_node_ids: args.changedMemoryIds,
+        skipped_positive_attribution_memory_ids: args.skippedPositiveMemoryIds,
+        missing_node_ids: args.missingNodeIds,
+        observations: requestedMemoryIds.map((memoryId) => ({
+          memory_id: memoryId,
+          state: observedStates.has(memoryId)
+            ? nodeAuthorityStateV2(observedStates.get(memoryId)!)
+            : null,
+        })),
+      });
+      const receipt = workerReceipt({
+        job: args.job,
+        status: "completed",
+        completedAt: appliedAt,
+        resultCommitId: "$self",
+        changedMemoryIds: evidence.applied_node_ids,
+        skippedPositiveMemoryIds: evidence.skipped_positive_attribution_memory_ids,
+        missingNodeIds: evidence.missing_node_ids,
+        lastErrorCode: null,
+      });
+      const identity = {
+        tenant_id: args.job.tenant_id,
+        scope: args.job.scope,
+        operation_kind: LEARNING_CONTROL_OPERATION_KIND,
+        operation_id: args.job.operation_id,
+      };
+      const after = {
+        ...identity,
+        request_sha256: requestSha256,
+        receipt_json: receipt,
+        commit_id: "$self",
+        created_at: appliedAt,
+      };
+      return {
+        status: "mutate" as const,
+        authorityKind: LEARNING_CONTROL_OPERATION_OUTCOME_AUTHORITY_KIND,
+        mutations: [{
+          table: "lite_runtime_write_operations",
+          identity,
+          operation: "insert" as const,
+          before: null,
+          requested: evidence,
+          after,
+        }],
+        apply: async ({ commitId }) => {
+          const materializedAfter = materializeAppliedAuthorityRow(
+            "lite_runtime_write_operations",
+            after,
+            commitId,
+          );
+          const materializedReceipt = materializedAfter.receipt_json as ReturnType<
+            typeof workerReceipt
+          >;
+          await args.writeStore.insertWriteOperationEnclosedByPendingCommit({
+            tenantId: args.job.tenant_id,
+            scope: args.job.scope,
+            operationKind: LEARNING_CONTROL_OPERATION_KIND,
+            operationId: args.job.operation_id,
+            requestSha256,
+            receiptJson: stableStringify(materializedReceipt),
+            commitId,
+            createdAt: appliedAt,
+            authorityCommitId: commitId,
+          });
+          return {
+            completedAt: appliedAt,
+            receipt: materializedReceipt,
+          };
+        },
+        verify: async ({ commitId }) => {
+          const operation = await args.writeStore.getWriteOperation({
+            tenantId: args.job.tenant_id,
+            scope: args.job.scope,
+            operationKind: LEARNING_CONTROL_OPERATION_KIND,
+            operationId: args.job.operation_id,
+          });
+          if (!operation) throw new Error("learning control outcome operation missing after insert");
+          let decodedReceipt: unknown;
+          try {
+            decodedReceipt = JSON.parse(operation.receipt_json);
+          } catch {
+            throw new Error("learning control outcome receipt invalid after insert");
+          }
+          if (stableStringify(decodedReceipt) !== operation.receipt_json) {
+            throw new Error("learning control outcome receipt noncanonical after insert");
+          }
+          if (!decodedReceipt || typeof decodedReceipt !== "object"
+            || Array.isArray(decodedReceipt)) {
+            throw new Error("learning control outcome receipt object missing after insert");
+          }
+          const normalizedAfter = normalizeAppliedAuthorityRow(
+            "lite_runtime_write_operations",
+            {
+              ...identity,
+              request_sha256: operation.request_sha256,
+              receipt_json: decodedReceipt,
+              commit_id: operation.commit_id,
+              created_at: operation.created_at,
+            },
+            commitId,
+          );
+          return [{
+            table: "lite_runtime_write_operations",
+            identity,
+            after: normalizedAfter,
+          }];
+        },
+      };
+    },
+  });
+  if (result.status !== "applied") {
+    throw new Error("learning control outcome did not append authority commit");
+  }
+  return {
+    commitId: result.commitId,
+    completedAt: result.value.completedAt,
+    receipt: result.value.receipt,
+  };
+}
+
 async function completeClaim(args: {
   access: LiteLearningControlJobAccess;
   ledger: LiteLearningEpisodeLedgerAccess;
@@ -286,27 +481,30 @@ async function completeClaim(args: {
     if (typeof persistence.commit_id !== "string" || persistence.commit_id.length === 0) {
       throw new Error("learning control persistence did not create its audit commit");
     }
-    const completedAt = args.now.toISOString();
-    const receipt = workerReceipt({
+    const requestedMemoryIds = canonicalLearningControlMemoryIds(
+      facts.memory_stats
+        .filter((entry) => entry.repeated_without_positive_attribution
+          && entry.exposure_count >= 2
+          && entry.positive_attributed_use_count === 0)
+        .map((entry) => entry.memory_id.toLowerCase()),
+    );
+    const outcome = await appendLearningControlOperationOutcome({
+      writeStore: args.writeStore,
       job: facts.job,
-      status: "completed",
-      completedAt,
-      resultCommitId: persistence.commit_id,
+      actor: facts.source_consumer_agent_id ?? args.env.LITE_LOCAL_ACTOR_ID,
+      consumerAgentId: facts.source_consumer_agent_id,
+      consumerTeamId: facts.source_consumer_team_id,
+      requestedMemoryIds,
+      domainResultCommitId: persistence.commit_id,
       changedMemoryIds: persistence.changed_memory_ids,
       skippedPositiveMemoryIds: persistence.skipped_positive_attribution_memory_ids,
       missingNodeIds: persistence.missing_node_ids,
-      lastErrorCode: null,
-    });
-    await insertWorkerOperationReceipt({
-      writeStore: args.writeStore,
-      job: facts.job,
-      receipt,
-      commitId: persistence.commit_id,
+      appliedAt: args.now.toISOString(),
     });
     const completed = await args.access.completeLearningControlJobInTx({
       claim: args.claim,
-      resultCommitId: persistence.commit_id,
-      completedAt,
+      resultCommitId: outcome.commitId,
+      completedAt: outcome.completedAt,
     });
     if (!completed) throw new Error("learning control completion lost its lease fence");
     return {

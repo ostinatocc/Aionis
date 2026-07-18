@@ -1,3 +1,4 @@
+// Durable receipt publication belongs to the external authority package.
 import { createHash, randomBytes } from "node:crypto";
 import {
   closeSync,

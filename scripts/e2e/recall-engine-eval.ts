@@ -4,6 +4,8 @@ import os from "node:os";
 import path from "node:path";
 import { performance } from "node:perf_hooks";
 import { fileURLToPath } from "node:url";
+import { applyMemoryWrite } from "../../src/memory/write.ts";
+import type { PreparedWrite } from "../../src/memory/write-contract.ts";
 import { createLocalAnnIndex } from "../../src/store/ann/local-ann-index.ts";
 import { createZvecAnnIndex } from "../../src/store/ann/zvec-ann-index.ts";
 import { createLiteRecallStore } from "../../src/store/lite-recall-store.ts";
@@ -20,6 +22,8 @@ import {
   type RecallSourceObservabilityMetrics,
   type RecallSourceObservabilitySummary,
 } from "../../src/app/recall-observability.ts";
+import { sha256Hex } from "../../src/util/crypto.ts";
+import { stableUuid } from "../../src/util/uuid.ts";
 
 type RecallEngineFixture = {
   version: number;
@@ -138,6 +142,7 @@ type RecallEngineSummary = {
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../..");
 const DEFAULT_FIXTURE_PATH = path.join(ROOT, "scripts/e2e/fixtures/recall-engine-cases.json");
 const DEFAULT_OUTPUT_PATH = path.join(ROOT, "docs/examples/recall-engine-baseline-summary.json");
+const AUTHORITY_EMBEDDING_DIMENSION = 1_536;
 
 function parseAnnProvider(raw: string | undefined): RecallEvalAnnProvider {
   if (raw === "local" || raw === "zvec" || raw === "off") return raw;
@@ -269,65 +274,83 @@ function slotsForMemory(memory: RecallEngineMemory): Record<string, unknown> {
   return base;
 }
 
+function authorityEmbedding(vector: readonly number[]): number[] {
+  if (vector.length === 0 || vector.length > AUTHORITY_EMBEDDING_DIMENSION
+    || vector.some((value) => !Number.isFinite(value))) {
+    throw new Error("recall_engine_fixture_embedding_invalid");
+  }
+  return [
+    ...vector,
+    ...Array.from({ length: AUTHORITY_EMBEDDING_DIMENSION - vector.length }, () => 0),
+  ];
+}
+
+function authorityMemoryId(scope: string, fixtureId: string): string {
+  return stableUuid(`recall-engine-eval:${scope}:memory:${fixtureId}`);
+}
+
+function authorityEdgeId(scope: string, fixtureId: string): string {
+  return stableUuid(`recall-engine-eval:${scope}:edge:${fixtureId}`);
+}
+
 async function insertFixtureCase(args: {
   writeStore: ReturnType<typeof createLiteWriteStore>;
   testCase: RecallEngineCase;
 }): Promise<void> {
   const scope = `recall-engine:${args.testCase.case_id}`;
-  const commitId = await args.writeStore.insertLegacyV1CommitForMigrationOrTestFixture({
+  const prepared: PreparedWrite = {
+    tenant_id: "default",
+    scope_public: scope,
     scope,
-    parentCommitId: null,
-    inputSha256: `recall-engine-${args.testCase.case_id}`,
-    diffJson: "{}",
     actor: "recall-engine-eval",
-    modelVersion: null,
-    promptVersion: null,
-    commitHash: `recall-engine-${args.testCase.case_id}`,
-  });
-  for (const memory of args.testCase.memories) {
-    await args.writeStore.insertNode({
-      id: memory.id,
+    memory_lane_default: "shared",
+    parent_commit_id: null,
+    input_sha256: sha256Hex(`recall-engine:${args.testCase.case_id}`),
+    model_version: null,
+    prompt_version: null,
+    redaction_meta: {},
+    auto_embed_effective: false,
+    embedding_provider_name: null,
+    embedding_provider_dim: null,
+    force_reembed: false,
+    nodes: args.testCase.memories.map((memory) => ({
+      id: authorityMemoryId(scope, memory.id),
       scope,
-      clientId: null,
       type: memory.type,
       tier: memory.tier,
       title: memory.title,
-      textSummary: memory.text_summary,
-      slotsJson: JSON.stringify(slotsForMemory(memory)),
-      rawRef: memory.requires_rehydrate ? `archive://recall-engine/${memory.id}/raw` : null,
-      evidenceRef: `fixture://recall-engine/${args.testCase.case_id}/${memory.id}`,
-      embeddingVector: JSON.stringify(memory.vector),
-      embeddingModel: "deterministic-recall-engine-fixture",
-      memoryLane: "shared",
-      producerAgentId: null,
-      ownerAgentId: null,
-      ownerTeamId: null,
-      embeddingStatus: "ready",
-      embeddingLastError: null,
+      text_summary: memory.text_summary,
+      slots: slotsForMemory(memory),
+      raw_ref: memory.requires_rehydrate ? `archive://recall-engine/${memory.id}/raw` : undefined,
+      evidence_ref: `fixture://recall-engine/${args.testCase.case_id}/${memory.id}`,
+      embedding: authorityEmbedding(memory.vector),
+      embedding_model: "deterministic-recall-engine-fixture",
+      memory_lane: "shared",
       salience: memory.tier === "cold" ? 0.2 : 0.9,
       importance: 0.5,
       confidence: memory.lifecycle === "contested" ? 0.55 : 0.9,
-      redactionVersion: 0,
-      commitId,
-    });
-  }
-  for (const edge of args.testCase.edges ?? []) {
-    await args.writeStore.upsertEdge({
-      id: edge.id,
+    })),
+    edges: (args.testCase.edges ?? []).map((edge) => ({
+      id: authorityEdgeId(scope, edge.id),
       scope,
       type: edge.type,
-      srcId: edge.src_id,
-      dstId: edge.dst_id,
+      src_id: authorityMemoryId(scope, edge.src_id),
+      dst_id: authorityMemoryId(scope, edge.dst_id),
       weight: edge.weight ?? 0.8,
       confidence: edge.confidence ?? 0.8,
-      decayRate: 0,
-      metadataJson: {
+      decay_rate: 0,
+      metadata: {
         source: "recall_engine_fixture",
         case_id: args.testCase.case_id,
       },
-      commitId,
-    });
-  }
+    })),
+  };
+  await applyMemoryWrite(prepared, {
+    maxTextLen: 20_000,
+    piiRedaction: false,
+    allowCrossScopeEdges: false,
+    write_access: args.writeStore,
+  });
 }
 
 function collectCoveredRequiredSources(sourceMap: Map<string, Set<CandidateSource>>, requiredSources: string[]): {
@@ -461,7 +484,7 @@ async function evaluateCase(args: {
   const semantic = await timedCandidates({
     deterministicLatency: args.deterministicLatency,
     run: () => args.access.stage1SemanticCandidates({
-      queryEmbedding: args.testCase.query_vector,
+      queryEmbedding: authorityEmbedding(args.testCase.query_vector),
       scope,
       oversample: 50,
       limit: 50,
@@ -515,7 +538,7 @@ async function evaluateCase(args: {
   const hybrid = await timedCandidates({
     deterministicLatency: args.deterministicLatency,
     run: () => args.access.stage1HybridCandidates({
-      queryEmbedding: args.testCase.query_vector,
+      queryEmbedding: authorityEmbedding(args.testCase.query_vector),
       queryText: args.testCase.query_text ?? args.testCase.description,
       structured: structuredHybridInputForCase(args.testCase),
       graphSeedIds,
@@ -528,7 +551,7 @@ async function evaluateCase(args: {
   const exact = await timedCandidates({
     deterministicLatency: args.deterministicLatency,
     run: () => args.access.stage1CandidatesExactRecovery({
-      queryEmbedding: args.testCase.query_vector,
+      queryEmbedding: authorityEmbedding(args.testCase.query_vector),
       scope,
       oversample: 50,
       limit: 50,
@@ -564,8 +587,13 @@ async function evaluateCase(args: {
 
   const candidateById = new Map<string, RecallCandidate>();
   const sourceMap = new Map<string, Set<CandidateSource>>();
+  const fixtureIdByAuthorityId = new Map(args.testCase.memories.map((memory) => [
+    authorityMemoryId(scope, memory.id),
+    memory.id,
+  ]));
   for (const candidate of hybrid.candidates.concat(exact.candidates)) {
-    const id = candidate.id;
+    const id = fixtureIdByAuthorityId.get(candidate.id);
+    if (!id) throw new Error(`recall_engine_candidate_outside_fixture:${candidate.id}`);
     if (!candidateById.has(id)) candidateById.set(id, candidate);
     sourceMap.set(id, sourceMap.get(id) ?? new Set<CandidateSource>());
     for (const source of candidate.sources ?? []) {

@@ -41,6 +41,7 @@ import { buildAionisUri } from "../../src/memory/uri.ts";
 import { createHandoffRouteService, registerHandoffRoutes } from "../../src/routes/handoff.ts";
 import {
   createMemoryPlanningContextService,
+  deferredPlanningToolDecision,
   type MemoryPlanningContextService,
 } from "../../src/routes/memory-context-runtime.ts";
 import { registerMemoryAccessRoutes } from "./support/register-memory-access-test-routes.ts";
@@ -58,7 +59,10 @@ import {
   createLiteWriteStore,
   createLiteWriteStoreFromDatabase,
 } from "../../src/store/lite-write-store.ts";
-import { createLiteRuntimeDatabase } from "../../src/store/lite-runtime-database.ts";
+import {
+  createLiteRuntimeDatabase,
+  type LiteRuntimeDatabase,
+} from "../../src/store/lite-runtime-database.ts";
 import {
   createLiteLearningEpisodeLedgerAccess,
   type LiteLearningEpisodeLedgerAccess,
@@ -81,19 +85,79 @@ import {
 import { InflightGate } from "../../src/util/inflight_gate.ts";
 import type { AuthPrincipal } from "../../src/util/auth.ts";
 import {
+  CONFIRMATORY_DEFAULT_TENANT_ID,
+  CONFIRMATORY_NOW,
   CONFIRMATORY_TASK_FAMILY,
   CONFIRMATORY_TENANT_ID,
   createConfirmatoryNamespaceManifest,
   createConfirmatoryPassedRegistry,
   createConfirmatoryProfile,
   createConfirmatoryProvisionInput,
-  provisionConfirmatoryFixture,
+  ensureConfirmatoryTenantScopeAnchor,
+  seedConfirmatoryPriorScopes,
   sha256,
 } from "./support/learning-experiment-confirmatory-fixture.ts";
 
 function tmpDbPath(name: string): string {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), "aionis-lite-product-facade-"));
   return path.join(dir, `${name}.sqlite`);
+}
+
+function scalarCount(
+  database: LiteRuntimeDatabase,
+  sql: string,
+  ...params: unknown[]
+): number {
+  const row = database.db.prepare(sql).get(...params) as { count: number };
+  return Number(row.count);
+}
+
+function downgradeOpenFixtureToV5(database: LiteRuntimeDatabase): void {
+  database.db.exec("DROP TABLE lite_runtime_authority_adoption_bindings");
+  database.db.exec("DROP TABLE lite_runtime_authority_adoption_manifests");
+  database.db.prepare(
+    `UPDATE lite_runtime_schema_metadata
+     SET version = 5, updated_at = ?
+     WHERE component = 'write_projection'`,
+  ).run("2026-07-18T00:00:00.000Z");
+}
+
+async function prepareConfirmatoryV5PriorScopes(
+  dbPath: string,
+  manifest: ReturnType<typeof createConfirmatoryNamespaceManifest>,
+): Promise<void> {
+  const database = createLiteRuntimeDatabase(dbPath);
+  const writeStore = createLiteWriteStoreFromDatabase(database, {
+    annProjectionEnabled: false,
+    allowLegacyV1Fixtures: true,
+  });
+  let storeClosed = false;
+  try {
+    database.db.exec("BEGIN IMMEDIATE");
+    try {
+      downgradeOpenFixtureToV5(database);
+      database.db.exec("COMMIT");
+    } catch (error) {
+      database.db.exec("ROLLBACK");
+      throw error;
+    }
+    const runtime = {
+      database,
+      writeStore,
+      close: async () => undefined,
+    };
+    await ensureConfirmatoryTenantScopeAnchor(runtime, CONFIRMATORY_DEFAULT_TENANT_ID);
+    await seedConfirmatoryPriorScopes(runtime, manifest, CONFIRMATORY_DEFAULT_TENANT_ID);
+    assert.equal(
+      scalarCount(database, "SELECT COUNT(*) AS count FROM lite_memory_commits"),
+      768,
+    );
+    await writeStore.close();
+    storeClosed = true;
+  } finally {
+    if (!storeClosed) await writeStore.close().catch(() => undefined);
+    await database.close();
+  }
 }
 
 const TASK7_AA_SCOPE_MANIFEST = Object.freeze([
@@ -673,6 +737,83 @@ function guideOperationMutationCounts(
   };
 }
 
+function assertGuideOperationAuthorityHead(args: {
+  runtimeDatabase: LiteRuntimeDatabase;
+  operationId: string;
+  expectedRevision: number;
+}): void {
+  const row = args.runtimeDatabase.readDb.prepare<{
+    authority_commit_id: string;
+    authority_revision: number;
+    parent_commit_id: string | null;
+    parent_revision: number | null;
+    parent_parent_commit_id: string | null;
+    parent_diff_json: string | null;
+    diff_json: string;
+    domain_commit_id: string | null;
+    domain_revision: number | null;
+  }>(
+    `SELECT authority.id AS authority_commit_id,
+            authority.revision AS authority_revision,
+            authority.parent_commit_id,
+            parent.revision AS parent_revision,
+            parent.parent_commit_id AS parent_parent_commit_id,
+            parent.diff_json AS parent_diff_json,
+            authority.diff_json,
+            operation.commit_id AS domain_commit_id,
+            domain_commit.revision AS domain_revision
+     FROM lite_runtime_write_operations AS operation
+     JOIN lite_memory_scope_heads AS head
+       ON head.scope = operation.scope
+     JOIN lite_memory_commits AS authority
+       ON authority.id = head.commit_id
+     LEFT JOIN lite_memory_commits AS parent
+       ON parent.id = authority.parent_commit_id
+     LEFT JOIN lite_memory_commits AS domain_commit
+       ON domain_commit.id = operation.commit_id
+     WHERE operation.tenant_id = ? AND operation.scope = ?
+       AND operation.operation_kind = ? AND operation.operation_id = ?`,
+  ).get("default", "default", PRODUCT_GUIDE_OPERATION_KIND, args.operationId);
+  assert.ok(row, "protected guide operation must leave its receipt authority at the scope head");
+  assert.equal(row.authority_revision, args.expectedRevision);
+  assert.equal(row.parent_revision, args.expectedRevision - 1);
+  assert.ok(row.domain_commit_id, "protected guide receipt must bind its domain commit");
+  assert.equal(row.domain_revision, 1);
+  if (args.expectedRevision === 2) {
+    assert.equal(row.parent_commit_id, row.domain_commit_id);
+  } else {
+    assert.equal(args.expectedRevision, 3);
+    assert.equal(row.parent_parent_commit_id, row.domain_commit_id);
+    assert.ok(row.parent_diff_json);
+    assert.equal(
+      (JSON.parse(row.parent_diff_json) as Record<string, unknown>).authority_kind,
+      "execution_decision_initial_receipt",
+    );
+  }
+  const diff = JSON.parse(row.diff_json) as Record<string, any>;
+  assert.equal(diff.authority_kind, "runtime_operation_receipt");
+  assert.equal(diff.mutations?.length, 1);
+  assert.equal(diff.mutations[0]?.table, "lite_runtime_write_operations");
+  assert.deepEqual(diff.mutations[0]?.identity, {
+    tenant_id: "default",
+    scope: "default",
+    operation_kind: PRODUCT_GUIDE_OPERATION_KIND,
+    operation_id: args.operationId,
+  });
+  assert.equal(diff.mutations[0]?.requested?.domain_commit_id, row.domain_commit_id);
+  assert.equal(diff.mutations[0]?.after?.commit_id, row.domain_commit_id);
+}
+
+function isOperationReceiptAuthorityTamper(error: unknown): boolean {
+  if (!error || typeof error !== "object" || Array.isArray(error)) return false;
+  const candidate = error as {
+    code?: unknown;
+    finding?: { cause_code?: unknown };
+  };
+  return candidate.code === "lite_memory_commit_authority_terminal_row_mismatch"
+    && candidate.finding?.cause_code === "lite_runtime_write_operations:receipt_json";
+}
+
 function createTwoPartyGuidePlanningBarrier(): () => Promise<void> {
   let arrivals = 0;
   let release!: () => void;
@@ -814,6 +955,7 @@ function openGuideOperationRouteFixture(args: {
     app,
     runtimeDatabase,
     liteWriteStore,
+    learningEpisodeLedgerAccess,
     dbPath,
     planningCalls: () => planningCalls,
     counts: () => guideOperationMutationCounts(runtimeDatabase),
@@ -1150,12 +1292,17 @@ test("guide operation replays the exact response and rejects changed content bef
     const firstBody = first.json();
     assert.equal(firstBody.operation_id, normalizedOperationId);
     const afterFirst = fixture.counts();
-    assert.equal(afterFirst.memory_commits, 1);
+    assert.equal(afterFirst.memory_commits, 2);
     assert.equal(afterFirst.memory_nodes, 1);
     assert.equal(afterFirst.guide_receipts, 1);
     assert.equal(afterFirst.learning_episode_events, 1);
     assert.equal(afterFirst.learning_exposure_items, 0);
     assert.equal(afterFirst.write_operations, 1);
+    assertGuideOperationAuthorityHead({
+      runtimeDatabase: fixture.runtimeDatabase,
+      operationId: normalizedOperationId,
+      expectedRevision: 2,
+    });
 
     const stored = fixture.runtimeDatabase.readDb.prepare<{
       request_sha256: string;
@@ -1242,27 +1389,55 @@ test("guide operation rejects a canonical replay receipt with a corrupted feedba
          AND operation_kind = ? AND operation_id = ?`,
     ).get("default", "default", PRODUCT_GUIDE_OPERATION_KIND, operationId);
     assert.ok(stored);
-    const corrupted = JSON.parse(stored.receipt_json) as {
+    const storedReceiptJson = stored.receipt_json;
+    const corrupted = JSON.parse(storedReceiptJson) as {
       body: { feedback_attribution_v1: { served_surface_sha256: string } };
     };
     corrupted.body.feedback_attribution_v1.served_surface_sha256 = "f".repeat(64);
-    fixture.runtimeDatabase.db.prepare(
-      `UPDATE lite_runtime_write_operations
-       SET receipt_json = ?
+    try {
+      fixture.runtimeDatabase.db.prepare(
+        `UPDATE lite_runtime_write_operations
+         SET receipt_json = ?
+         WHERE tenant_id = ? AND scope = ?
+           AND operation_kind = ? AND operation_id = ?`,
+      ).run(
+        stableStringify(corrupted),
+        "default",
+        "default",
+        PRODUCT_GUIDE_OPERATION_KIND,
+        operationId,
+      );
+
+      const replay = await fixture.app.inject({ method: "POST", url: "/v1/guide", payload });
+      assert.equal(replay.statusCode, 500, replay.body);
+      assert.equal(replay.json().error, "protected_guide_receipt_invalid");
+      assert.equal(fixture.planningCalls(), 1, "an invalid stored receipt must fail before planning");
+      await assert.rejects(
+        fixture.learningEpisodeLedgerAccess.verifyIntegrity(),
+        isOperationReceiptAuthorityTamper,
+      );
+    } finally {
+      fixture.runtimeDatabase.db.prepare(
+        `UPDATE lite_runtime_write_operations
+         SET receipt_json = ?
+         WHERE tenant_id = ? AND scope = ?
+           AND operation_kind = ? AND operation_id = ?`,
+      ).run(
+        storedReceiptJson,
+        "default",
+        "default",
+        PRODUCT_GUIDE_OPERATION_KIND,
+        operationId,
+      );
+    }
+    const restored = fixture.runtimeDatabase.readDb.prepare<{ receipt_json: string }>(
+      `SELECT receipt_json
+       FROM lite_runtime_write_operations
        WHERE tenant_id = ? AND scope = ?
          AND operation_kind = ? AND operation_id = ?`,
-    ).run(
-      stableStringify(corrupted),
-      "default",
-      "default",
-      PRODUCT_GUIDE_OPERATION_KIND,
-      operationId,
-    );
-
-    const replay = await fixture.app.inject({ method: "POST", url: "/v1/guide", payload });
-    assert.equal(replay.statusCode, 500, replay.body);
-    assert.equal(replay.json().error, "protected_guide_receipt_invalid");
-    assert.equal(fixture.planningCalls(), 1, "an invalid stored receipt must fail before planning");
+    ).get("default", "default", PRODUCT_GUIDE_OPERATION_KIND, operationId);
+    assert.equal(restored?.receipt_json, storedReceiptJson);
+    await fixture.learningEpisodeLedgerAccess.verifyIntegrity();
   } finally {
     await fixture.close();
   }
@@ -1299,12 +1474,17 @@ test("guide operation replays a commit whose first HTTP response was lost", asyn
     assert.equal(lost.statusCode, 500, lost.body);
     assert.equal(firstFixture.planningCalls(), 1);
     const afterLostResponse = firstFixture.counts();
-    assert.equal(afterLostResponse.memory_commits, 1);
+    assert.equal(afterLostResponse.memory_commits, 2);
     assert.equal(afterLostResponse.memory_nodes, 1);
     assert.equal(afterLostResponse.guide_receipts, 1);
     assert.equal(afterLostResponse.learning_episode_events, 1);
     assert.equal(afterLostResponse.learning_exposure_items, 0);
     assert.equal(afterLostResponse.write_operations, 1);
+    assertGuideOperationAuthorityHead({
+      runtimeDatabase: firstFixture.runtimeDatabase,
+      operationId,
+      expectedRevision: 2,
+    });
 
     const stored = firstFixture.runtimeDatabase.readDb.prepare<{ receipt_json: string }>(
       `SELECT receipt_json
@@ -1368,12 +1548,17 @@ test("concurrent guide operation requests use the transaction recheck to commit 
       "both concurrent requests intentionally pass the pre-planning read before either commits",
     );
     const counts = fixture.counts();
-    assert.equal(counts.memory_commits, 1);
+    assert.equal(counts.memory_commits, 2);
     assert.equal(counts.memory_nodes, 1);
     assert.equal(counts.guide_receipts, 1);
     assert.equal(counts.learning_episode_events, 1);
     assert.equal(counts.learning_exposure_items, 0);
     assert.equal(counts.write_operations, 1);
+    assertGuideOperationAuthorityHead({
+      runtimeDatabase: fixture.runtimeDatabase,
+      operationId: payload.operation_id,
+      expectedRevision: 2,
+    });
   } finally {
     await fixture.close();
   }
@@ -1451,11 +1636,16 @@ test("concurrent protected guide operations atomically persist one real planning
     assert.equal(left.body, right.body);
     const receipt = objectValue(left.json().tool_selection, "protected guide tool_selection");
     const counts = guideOperationMutationCounts(runtimeDatabase);
-    assert.equal(counts.memory_commits, 2);
+    assert.equal(counts.memory_commits, 3);
     assert.equal(counts.memory_nodes, 1);
     assert.equal(counts.execution_decisions, 1);
     assert.equal(counts.guide_receipts, 1);
     assert.equal(counts.write_operations, 1);
+    assertGuideOperationAuthorityHead({
+      runtimeDatabase,
+      operationId: payload.operation_id,
+      expectedRevision: 3,
+    });
     const persisted = await liteWriteStore.getExecutionDecision({
       scope: "default",
       id: receipt.decision_id,
@@ -2287,6 +2477,72 @@ test("product guide experiment profile fails control without immutable Runtime a
     await liteWriteStore.close();
     await runtimeDatabase.close();
     await app.close();
+  }
+});
+
+test("product guide keeps tool selection advisory without a caller run id", async () => {
+  const app = Fastify();
+  const env = liteEnv();
+  const guards = requestGuards(env, DeterministicEmbeddingProvider);
+  const dbPath = tmpDbPath("product-guide-advisory-tool-selection");
+  const runtimeDatabase = createLiteRuntimeDatabase(dbPath);
+  const liteWriteStore = createLiteWriteStoreFromDatabase(runtimeDatabase, { annProjectionEnabled: false });
+  const liteRecallStore = createLiteRecallStore(dbPath);
+  let advisorySelectionObserved = false;
+  try {
+    registerFullProductMemoryApp({
+      app,
+      env,
+      guards,
+      liteWriteStore,
+      liteRecallStore,
+      decoratePlanningContextService(service) {
+        return {
+          async assemble(...args) {
+            const result = await service.assemble(...args);
+            assert.ok(result && typeof result === "object" && !Array.isArray(result));
+            const tools = (result as { tools?: Record<string, unknown> }).tools;
+            const decision = tools?.decision as Record<string, unknown> | undefined;
+            assert.ok(decision, "planning must still compute an advisory tool selection");
+            assert.equal(decision.run_id, null);
+            assert.equal(decision.created_at, null);
+            assert.equal(deferredPlanningToolDecision(result), null);
+            advisorySelectionObserved = true;
+            return result;
+          },
+        };
+      },
+    });
+    const before = guideOperationMutationCounts(runtimeDatabase);
+
+    const guide = await app.inject({
+      method: "POST",
+      url: "/v1/guide",
+      payload: {
+        tenant_id: "default",
+        scope: "default",
+        consumer_agent_id: "local-user",
+        query_text: "Choose an advisory tool without claiming a durable run decision.",
+        tool_candidates: ["read", "bash"],
+        context: { task_signature: "advisory-tool-selection-without-run" },
+        include_packets: true,
+      },
+    });
+
+    assert.equal(guide.statusCode, 200, guide.body);
+    const body = guide.json();
+    assert.equal(advisorySelectionObserved, true);
+    assert.equal(Object.prototype.hasOwnProperty.call(body, "tool_selection"), false);
+    assert.equal(body.source_map.internal_surfaces_used.includes("tool_selection_receipt"), false);
+    const after = guideOperationMutationCounts(runtimeDatabase);
+    assert.equal(after.execution_decisions, before.execution_decisions);
+    assert.equal(after.memory_commits, before.memory_commits + 1);
+  } finally {
+    await app.close();
+    await liteRecallStore.close();
+    await liteWriteStore.close();
+    await runtimeDatabase.close();
+    fs.rmSync(path.dirname(dbPath), { recursive: true, force: true });
   }
 });
 
@@ -4646,41 +4902,53 @@ test("protected product measure uses exact episode feedback authority without re
          AND operation_id = ?`,
     ).get("default", "default", measureOperationId);
     assert.ok(storedMeasureOperation);
-    const tamperedMeasureReceipt = JSON.parse(storedMeasureOperation.receipt_json) as {
+    const storedMeasureReceiptJson = storedMeasureOperation.receipt_json;
+    const tamperedMeasureReceipt = JSON.parse(storedMeasureReceiptJson) as {
       body: { source_map: { internal_surfaces_used: string[] } };
     };
     tamperedMeasureReceipt.body.source_map.internal_surfaces_used.push("tampered_surface");
-    fixture.runtimeDatabase.db.prepare(
-      `UPDATE lite_runtime_write_operations SET receipt_json = ?
+    try {
+      fixture.runtimeDatabase.db.prepare(
+        `UPDATE lite_runtime_write_operations SET receipt_json = ?
+         WHERE tenant_id = ? AND scope = ? AND operation_kind = 'product_measure_v1'
+           AND operation_id = ?`,
+      ).run(
+        stableStringify(tamperedMeasureReceipt),
+        "default",
+        "default",
+        measureOperationId,
+      );
+      const tamperedReplay = await fixture.app.inject({
+        method: "POST",
+        url: "/v1/measure",
+        payload: measurePayload,
+      });
+      assert.equal(tamperedReplay.statusCode, 500, tamperedReplay.body);
+      assert.equal(tamperedReplay.json().error, "protected_measure_receipt_invalid");
+      await assert.rejects(
+        fixture.learningEpisodeLedgerAccess.verifyIntegrity(),
+        isOperationReceiptAuthorityTamper,
+      );
+    } finally {
+      fixture.runtimeDatabase.db.prepare(
+        `UPDATE lite_runtime_write_operations SET receipt_json = ?
+         WHERE tenant_id = ? AND scope = ? AND operation_kind = 'product_measure_v1'
+           AND operation_id = ?`,
+      ).run(
+        storedMeasureReceiptJson,
+        "default",
+        "default",
+        measureOperationId,
+      );
+    }
+    const restoredMeasureOperation = fixture.runtimeDatabase.readDb.prepare<{
+      receipt_json: string;
+    }>(
+      `SELECT receipt_json FROM lite_runtime_write_operations
        WHERE tenant_id = ? AND scope = ? AND operation_kind = 'product_measure_v1'
          AND operation_id = ?`,
-    ).run(
-      stableStringify(tamperedMeasureReceipt),
-      "default",
-      "default",
-      measureOperationId,
-    );
-    const tamperedReplay = await fixture.app.inject({
-      method: "POST",
-      url: "/v1/measure",
-      payload: measurePayload,
-    });
-    assert.equal(tamperedReplay.statusCode, 500, tamperedReplay.body);
-    assert.equal(tamperedReplay.json().error, "protected_measure_receipt_invalid");
-    await assert.rejects(
-      fixture.learningEpisodeLedgerAccess.verifyIntegrity(),
-      /lite_learning_integrity_failed:product_measure_receipt_authority/,
-    );
-    fixture.runtimeDatabase.db.prepare(
-      `UPDATE lite_runtime_write_operations SET receipt_json = ?
-       WHERE tenant_id = ? AND scope = ? AND operation_kind = 'product_measure_v1'
-         AND operation_id = ?`,
-    ).run(
-      storedMeasureOperation.receipt_json,
-      "default",
-      "default",
-      measureOperationId,
-    );
+    ).get("default", "default", measureOperationId);
+    assert.equal(restoredMeasureOperation?.receipt_json, storedMeasureReceiptJson);
     await fixture.learningEpisodeLedgerAccess.verifyIntegrity();
 
     const beforeConflict = fixture.measureMutationCounts(measureOperationId);
@@ -5210,16 +5478,49 @@ test("protected product measure uses exact episode feedback authority without re
 
 test("real confirmatory measurement stays fail-control until external prerequisite roots exist", async () => {
   const dbPath = tmpDbPath("measure-confirmatory-external-root-fail-control");
+  const manifest = activeConfirmatoryMeasurementManifest();
+  try {
+    await prepareConfirmatoryV5PriorScopes(dbPath, manifest);
+  } catch (error) {
+    fs.rmSync(path.dirname(dbPath), { recursive: true, force: true });
+    throw error;
+  }
   const runtimeDatabase = createLiteRuntimeDatabase(dbPath);
   const liteWriteStore = createLiteWriteStoreFromDatabase(runtimeDatabase, {
     annProjectionEnabled: false,
     closeDatabaseOnClose: false,
   });
+  const learningEpisodeLedgerAccess = createLiteLearningEpisodeLedgerAccess(runtimeDatabase);
   let liteRecallStore: ReturnType<typeof createLiteRecallStore> | null = null;
   let reviewStore: ReturnType<typeof createLiteSkillCandidateReviewStoreFromDatabase> | null = null;
   let app: ReturnType<typeof Fastify> | null = null;
   try {
-    const manifest = activeConfirmatoryMeasurementManifest();
+    const migratedSchema = runtimeDatabase.readDb.prepare<{ version: number }>(
+      `SELECT version FROM lite_runtime_schema_metadata
+       WHERE component = 'write_projection'`,
+    ).get();
+    assert.equal(migratedSchema?.version, 6);
+    assert.equal(
+      scalarCount(
+        runtimeDatabase,
+        "SELECT COUNT(*) AS count FROM lite_memory_commits WHERE digest_version = 1",
+      ),
+      768,
+    );
+    assert.equal(
+      scalarCount(
+        runtimeDatabase,
+        "SELECT COUNT(*) AS count FROM lite_runtime_authority_adoption_manifests",
+      ),
+      0,
+    );
+    assert.equal(
+      scalarCount(
+        runtimeDatabase,
+        "SELECT COUNT(*) AS count FROM lite_runtime_authority_adoption_bindings",
+      ),
+      0,
+    );
     const publicScope = manifest.pairs[0]!.members[0]!.public_scope;
     const workerPrincipal: AuthPrincipal = {
       tenant_id: CONFIRMATORY_TENANT_ID,
@@ -5231,24 +5532,30 @@ test("real confirmatory measurement stays fail-control until external prerequisi
       source: "api_key",
     };
     const profile = confirmatoryMeasurementProfile(workerPrincipal);
-    const provisioned = await provisionConfirmatoryFixture({
+    const provisioned = await createLiteLearningExperimentProvisioner({
       database: runtimeDatabase,
       writeStore: liteWriteStore,
-      close: async () => {},
-    }, {
-      input: createConfirmatoryProvisionInput({
-        profileRule: profile,
-        memoryNamespaceManifest: manifest,
-      }),
-    });
-    assert.equal(provisioned.provisionResult.replayed, false);
+      ledger: learningEpisodeLedgerAccess,
+      dependencies: {
+        registry: createConfirmatoryPassedRegistry(),
+        defaultTenantId: CONFIRMATORY_DEFAULT_TENANT_ID,
+        now: () => CONFIRMATORY_NOW,
+        randomBytes: (size) => Uint8Array.from(
+          { length: size },
+          (_, index) => (0x61 + index) & 0xff,
+        ),
+      },
+    }).provision(createConfirmatoryProvisionInput({
+      profileRule: profile,
+      memoryNamespaceManifest: manifest,
+    }));
+    assert.equal(provisioned.replayed, false);
 
     liteRecallStore = createLiteRecallStore(dbPath);
     reviewStore = createLiteSkillCandidateReviewStoreFromDatabase(runtimeDatabase, {
       closeDatabaseOnClose: false,
     });
     const reviewAccess = reviewStore.createSkillCandidateReviewAccess();
-    const learningEpisodeLedgerAccess = createLiteLearningEpisodeLedgerAccess(runtimeDatabase);
     const workerKey = "confirmatory-measure-worker-key";
     const developerKey = "confirmatory-measure-developer-key";
     const env = {

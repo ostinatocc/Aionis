@@ -14,6 +14,8 @@ import {
   type ExecutionTreeOperationV1,
 } from "../../src/execution/tree.ts";
 import { createLiteExecutionTreeStore } from "../../src/execution/tree-store.ts";
+import { persistInitialExecutionDecisionAuthority } from
+  "../../src/memory/execution-decision-authority.ts";
 import {
   inspectLiteProjectionRepairState,
   repairLiteProjectionState,
@@ -316,6 +318,8 @@ function downgradeCurrentFixtureToV2(dbPath: string): void {
   const db = createSqliteDatabase(dbPath);
   try {
     db.exec("BEGIN IMMEDIATE");
+    db.exec("DROP TABLE lite_runtime_authority_adoption_bindings");
+    db.exec("DROP TABLE lite_runtime_authority_adoption_manifests");
     for (const table of [...LITE_LEARNING_LEDGER_REQUIRED_TABLE_NAMES].reverse()) {
       db.exec(`DROP TABLE IF EXISTS ${table}`);
     }
@@ -343,6 +347,8 @@ test("v0.3.4 SQLite upgrades without changing semantic rows and legacy pending i
     createV034Schema(legacyDb);
     insertV034Fixture(legacyDb);
     legacyDb.close();
+    fs.chmodSync(temp.path, 0o644);
+    assert.equal(permissionMode(temp.path), 0o644);
 
     const before = await verifyLiteRuntimeDatabase(temp.path);
     assert.equal(before.schema.classification, "legacy_v0_3_4");
@@ -354,7 +360,11 @@ test("v0.3.4 SQLite upgrades without changing semantic rows and legacy pending i
     const upgraded = await upgradeLiteRuntimeDatabase(temp.path);
     assert.equal(upgraded.before.classification, "legacy_v0_3_4");
     assert.equal(upgraded.after.classification, "current");
-    assert.deepEqual(upgraded.preserved_counts.before, upgraded.preserved_counts.after);
+    const { commits: beforeCommits, ...beforeBusinessCounts } = upgraded.preserved_counts.before;
+    const { commits: afterCommits, ...afterBusinessCounts } = upgraded.preserved_counts.after;
+    assert.deepEqual(beforeBusinessCounts, afterBusinessCounts);
+    assert.equal(afterCommits, beforeCommits + 1);
+    assert.equal(permissionMode(temp.path), 0o600);
 
     const state = await inspectLiteProjectionRepairState({ path: temp.path });
     assert.equal(state.totals.legacy_pending, 2);
@@ -398,6 +408,71 @@ test("v0.3.4 SQLite upgrades without changing semantic rows and legacy pending i
     assert.equal(explicitlyFailed.after.totals.legacy_pending, 0);
   } finally {
     fs.rmSync(temp.directory, { recursive: true, force: true });
+  }
+});
+
+test("current schema verification rejects invalid embedding tuples on legacy-v1 nodes", async (t) => {
+  const numericVector = JSON.stringify(Array.from({ length: 1_536 }, () => 0.25));
+  const cases = [
+    {
+      name: "ready tuple without a model",
+      vector: numericVector,
+      model: null,
+    },
+    {
+      name: "ready tuple with string vector elements",
+      vector: JSON.stringify(Array.from({ length: 1_536 }, () => "0.25")),
+      model: "legacy-embedding-model",
+    },
+    {
+      name: "ready tuple with non-finite vector elements",
+      vector: `[${Array.from({ length: 1_536 }, () => "1e999").join(",")}]`,
+      model: "legacy-embedding-model",
+    },
+  ] as const;
+
+  for (const fixture of cases) {
+    await t.test(fixture.name, async () => {
+      const temp = tempDatabase("legacy-v1-invalid-embedding");
+      try {
+        const legacyDb = createSqliteDatabase(temp.path);
+        createV034Schema(legacyDb);
+        insertV034Fixture(legacyDb);
+        legacyDb.close();
+        await upgradeLiteRuntimeDatabase(temp.path);
+
+        const baseline = await verifyLiteRuntimeDatabase(temp.path);
+        assert.equal(baseline.schema.classification, "current");
+        assert.equal(baseline.integrity_findings.ready_embedding_invalid, 0);
+        assert.equal(baseline.ok, true);
+
+        const db = createSqliteDatabase(temp.path);
+        const legacyAuthority = db.prepare(
+          `SELECT commit_row.digest_version
+           FROM lite_memory_nodes AS node
+           INNER JOIN lite_memory_commits AS commit_row
+             ON commit_row.scope = node.scope AND commit_row.id = node.commit_id
+           WHERE node.id = 'node-recoverable'`,
+        ).get() as { digest_version: number };
+        assert.equal(legacyAuthority.digest_version, 1);
+        db.prepare(
+          `UPDATE lite_memory_nodes
+           SET embedding_status = 'ready',
+               embedding_vector_json = ?,
+               embedding_model = ?,
+               embedding_last_error = NULL
+           WHERE id = 'node-recoverable'`,
+        ).run(fixture.vector, fixture.model);
+        db.close();
+
+        const report = await verifyLiteRuntimeDatabase(temp.path);
+        assert.equal(report.schema.classification, "current");
+        assert.equal(report.integrity_findings.ready_embedding_invalid, 1);
+        assert.equal(report.ok, false);
+      } finally {
+        fs.rmSync(temp.directory, { recursive: true, force: true });
+      }
+    });
   }
 });
 
@@ -509,23 +584,51 @@ test("VACUUM INTO backup and restore-to-new-path preserve a verified SQLite snap
       providerDim: 1536,
     });
 
-    const walWriter = createSqliteDatabase(temp.path);
-    walWriter.exec("PRAGMA journal_mode = WAL; PRAGMA wal_autocheckpoint = 0; BEGIN IMMEDIATE");
-    insertCommittedNode(walWriter, {
-      commitId: "commit-in-active-wal",
-      commitHash: "commit-hash-in-active-wal",
-      nodeId: "node-in-active-wal",
-      createdAt: "2026-07-02T00:00:00.000Z",
+    const walWriter = createLiteWriteStore(temp.path, { annProjectionEnabled: false });
+    await persistInitialExecutionDecisionAuthority({
+      store: walWriter,
+      actor: "data-operations-wal-writer",
+      decision: {
+        id: "decision-in-active-wal",
+        scope: "default",
+        decisionKind: "tools_select",
+        runId: null,
+        selectedTool: "read",
+        candidatesJson: [{ tool: "read" }],
+        contextSha256: "c".repeat(64),
+        policySha256: "d".repeat(64),
+        sourceRuleIds: [],
+        metadataJson: {},
+        commitId: null,
+        createdAt: "2026-07-02T00:00:00.000Z",
+      },
     });
-    walWriter.exec("COMMIT");
     assert.equal(fs.existsSync(`${temp.path}-wal`), true);
     assert.ok(fs.statSync(`${temp.path}-wal`).size > 32);
 
     const backupPath = path.join(temp.directory, "backups", "runtime.backup.sqlite");
     const backup = await backupLiteRuntimeDatabase({ sourcePath: temp.path, destinationPath: backupPath });
-    walWriter.close();
+    await walWriter.close();
     assert.equal(backup.verification.ok, true);
-    assert.equal(backup.verification.counts.nodes, 3);
+    assert.equal(
+      backup.verification.contract_version,
+      "aionis_lite_runtime_data_verification_v2",
+    );
+    assert.equal(backup.verification.live_path, path.resolve(backupPath));
+    assert.deepEqual(
+      {
+        source: backup.verification.snapshot_fingerprint.source,
+        retained_path: backup.verification.snapshot_fingerprint.retained_path,
+      },
+      {
+        source: "transactionally_consistent_vacuum_snapshot",
+        retained_path: null,
+      },
+    );
+    assert.equal("path" in backup.verification, false);
+    assert.equal("byte_size" in backup.verification, false);
+    assert.equal("sha256" in backup.verification, false);
+    assert.equal(backup.verification.counts.nodes, 2);
     assert.equal(fs.existsSync(`${backupPath}.manifest.json`), true);
     assert.equal(permissionMode(backupPath), 0o600);
     assert.equal(permissionMode(`${backupPath}.manifest.json`), 0o600);
@@ -534,7 +637,7 @@ test("VACUUM INTO backup and restore-to-new-path preserve a verified SQLite snap
         .filter((entry) => entry.startsWith(".aionis-runtime-backup-")),
       [],
     );
-    assert.equal(backup.manifest.sha256, backup.verification.sha256);
+    assert.equal(backup.manifest.sha256, backup.verification.snapshot_fingerprint.sha256);
     assert.equal(backup.manifest.contract_version, "aionis_lite_runtime_backup_manifest_v2");
     assert.match(backup.manifest.database_instance_id ?? "", /^[0-9a-f]{64}$/);
 
@@ -544,8 +647,9 @@ test("VACUUM INTO backup and restore-to-new-path preserve a verified SQLite snap
       destinationPath: restoredPath,
     });
     assert.equal(restored.verification.ok, true);
-    assert.equal(restored.verification.byte_size, backup.manifest.byte_size);
-    assert.equal(restored.verification.sha256, backup.manifest.sha256);
+    assert.equal(restored.verification.live_path, path.resolve(restoredPath));
+    assert.equal(restored.verification.snapshot_fingerprint.byte_size, backup.manifest.byte_size);
+    assert.equal(restored.verification.snapshot_fingerprint.sha256, backup.manifest.sha256);
     assert.deepEqual(restored.verification.counts, backup.verification.counts);
     assert.deepEqual(
       restored.verification.learning.replay?.table_counts,
@@ -641,9 +745,11 @@ test("restore pins one manifest-bound file handle before the source path drifts"
       providerDim: 1536,
     });
     const padding = createSqliteDatabase(temp.path);
-    padding.prepare(
-      "UPDATE lite_memory_nodes SET text_summary = ? WHERE id = 'node-recoverable'",
-    ).run("x".repeat(16 * 1024 * 1024));
+    padding.exec(
+      "CREATE TABLE restore_test_padding (id INTEGER PRIMARY KEY, payload BLOB NOT NULL)",
+    );
+    padding.prepare("INSERT INTO restore_test_padding (id, payload) VALUES (1, zeroblob(?))")
+      .run(16 * 1024 * 1024);
     padding.close();
 
     const backupPath = path.join(temp.directory, "backups", "runtime.backup.sqlite");
@@ -651,12 +757,8 @@ test("restore pins one manifest-bound file handle before the source path drifts"
     const driftPath = path.join(temp.directory, "backups", "runtime.drift.sqlite");
     fs.copyFileSync(backupPath, driftPath);
     const drift = createSqliteDatabase(driftPath);
-    insertCommittedNode(drift, {
-      commitId: "commit-after-manifest",
-      commitHash: "commit-hash-after-manifest",
-      nodeId: "node-after-manifest",
-      createdAt: "2026-07-03T00:00:00.000Z",
-    });
+    drift.prepare("INSERT INTO restore_test_padding (id, payload) VALUES (2, zeroblob(?))")
+      .run(1024 * 1024);
     drift.close();
 
     const destinationDirectory = path.join(temp.directory, "restored-race");
@@ -686,14 +788,19 @@ test("restore pins one manifest-bound file handle before the source path drifts"
     fs.renameSync(driftPath, backupPath);
 
     const restored = await restore;
-    assert.equal(restored.verification.sha256, backup.manifest.sha256);
+    assert.equal(restored.verification.snapshot_fingerprint.sha256, backup.manifest.sha256);
     assert.deepEqual(restored.verification.counts, backup.manifest.counts);
     assert.deepEqual(
       restored.verification.learning.replay?.table_counts,
       backup.manifest.learning_table_counts,
     );
     const driftVerification = await verifyLiteRuntimeDatabase(backupPath);
-    assert.equal(driftVerification.counts.nodes, backup.manifest.counts.nodes + 1);
+    assert.equal(driftVerification.counts.nodes, backup.manifest.counts.nodes);
+    assert.notEqual(
+      driftVerification.snapshot_fingerprint.sha256,
+      backup.manifest.sha256,
+      "the path drift fixture must differ from the manifest-bound snapshot",
+    );
   } finally {
     fs.rmSync(temp.directory, { recursive: true, force: true });
   }
@@ -841,6 +948,52 @@ test("verify and backup fail closed on execution projection and event-history co
   });
 });
 
+test("commit corruption is reported once as commit authority, not duplicated as ledger corruption", async () => {
+  const temp = tempDatabase("commit-authority-reporting");
+  try {
+    const store = createLiteWriteStore(temp.path);
+    const decision = await persistInitialExecutionDecisionAuthority({
+      store,
+      actor: "data-operations-test",
+      decision: {
+        id: "data-operations-commit-authority-reporting",
+        scope: "default",
+        decisionKind: "tools_select",
+        runId: null,
+        selectedTool: "read",
+        candidatesJson: [{ tool: "read" }],
+        contextSha256: "a".repeat(64),
+        policySha256: "b".repeat(64),
+        sourceRuleIds: [],
+        metadataJson: {},
+        commitId: null,
+        createdAt: "2026-07-19T00:00:00.000Z",
+      },
+    });
+    await store.close();
+
+    const db = createSqliteDatabase(temp.path);
+    try {
+      db.prepare(
+        "UPDATE lite_memory_commits SET mutation_digest = ? WHERE id = ?",
+      ).run("0".repeat(64), decision.authority_commit.commit_id);
+    } finally {
+      db.close();
+    }
+
+    const verification = await verifyLiteRuntimeDatabase(temp.path);
+    assert.equal(verification.ok, false);
+    assert.ok(verification.integrity_findings.commit_authority_invalid > 0);
+    assert.equal(verification.integrity_findings.learning_episode_ledger_invalid, 0);
+    assert.ok(verification.warnings.includes("memory_commit_authority_corrupt"));
+    assert.equal(verification.warnings.includes("learning_episode_ledger_corrupt"), false);
+    assert.equal(verification.learning.integrity_error, null);
+    assert.equal(verification.learning.replay, null);
+  } finally {
+    fs.rmSync(temp.directory, { recursive: true, force: true });
+  }
+});
+
 test("an unversioned database with v3-only authority tables fails closed as a hybrid", async () => {
   const temp = tempDatabase("unversioned-current");
   try {
@@ -977,7 +1130,7 @@ test("projection repair waits for an active SQLite writer and then commits one n
   }
 });
 
-test("complete v5 is current after commit-authority migration", async () => {
+test("complete v6 is current after authority-adoption migration", async () => {
   const temp = tempDatabase("complete-v5-current");
   try {
     const store = createLiteWriteStore(temp.path, { annProjectionEnabled: false });
@@ -986,8 +1139,8 @@ test("complete v5 is current after commit-authority migration", async () => {
     const db = createSqliteDatabase(temp.path);
     try {
       const report = inspectLiteRuntimeSchema(db);
-      assert.equal(report.detected_version, 5);
-      assert.equal(report.current_version, 5);
+      assert.equal(report.detected_version, 6);
+      assert.equal(report.current_version, 6);
       assert.equal(report.classification, "current");
       assert.equal(report.upgrade_required, false);
     } finally {
@@ -1044,7 +1197,7 @@ test("damaged v2 authority table is incompatible before migration", async () => 
       const beforeInspection = schemaSnapshot(temp.path);
       const report = inspectLiteRuntimeSchema(db);
       assert.equal(report.detected_version, 2);
-      assert.equal(report.current_version, 5);
+      assert.equal(report.current_version, 6);
       assert.equal(report.classification, "incompatible");
       assert.match(
         report.index_problems.join("\n"),
@@ -1078,9 +1231,9 @@ test("future schema remains incompatible", () => {
 
       const report = inspectLiteRuntimeSchema(db);
       assert.equal(report.detected_version, 99);
-      assert.equal(report.current_version, 5);
+      assert.equal(report.current_version, 6);
       assert.equal(report.classification, "incompatible");
-      assert.match(report.problems.join("\n"), /newer than supported version 5/);
+      assert.match(report.problems.join("\n"), /newer than supported version 6/);
     } finally {
       db.close();
     }
@@ -1089,7 +1242,7 @@ test("future schema remains incompatible", () => {
   }
 });
 
-test("complete v2 is supported_previous_v2 against the active v5 target", async () => {
+test("complete v2 is supported_previous_v2 against the active v6 target", async () => {
   const temp = tempDatabase("complete-v2-against-active-v5");
   try {
     const store = createLiteWriteStore(temp.path, { annProjectionEnabled: false });
@@ -1101,7 +1254,7 @@ test("complete v2 is supported_previous_v2 against the active v5 target", async 
       const beforeInspection = schemaSnapshot(temp.path);
       const report = inspectLiteRuntimeSchema(db);
       assert.equal(report.detected_version, 2);
-      assert.equal(report.current_version, 5);
+      assert.equal(report.current_version, 6);
       assert.equal(report.classification, "supported_previous_v2");
       assert.equal(report.upgrade_required, true);
       assert.deepEqual(report.missing_tables, []);
@@ -1133,6 +1286,7 @@ test("future schema version fails closed before current tables are created", asy
       "INSERT INTO lite_runtime_schema_metadata (component, version, updated_at) VALUES (?, ?, ?)",
     ).run("write_projection", 99, "2026-07-01T00:00:00.000Z");
     db.close();
+    fs.chmodSync(temp.path, 0o600);
     const before = tableNames(temp.path);
 
     assert.throws(

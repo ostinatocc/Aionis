@@ -1,6 +1,10 @@
 import stableStringify from "fast-json-stable-stringify";
 
 import { sha256Hex } from "../util/crypto.js";
+import {
+  LITE_RUNTIME_AUTHORITY_ADOPTION_MANIFEST_COLUMNS,
+  LITE_RUNTIME_AUTHORITY_ADOPTION_MANIFEST_TABLE,
+} from "./lite-runtime-authority-adoption-contract.js";
 
 export type CanonicalV2CommitHashArgs = {
   digestVersion: 2;
@@ -33,6 +37,44 @@ function isRecord(value: unknown): value is Record<string, unknown> {
   return !!value && typeof value === "object" && !Array.isArray(value);
 }
 
+/**
+ * The only valid persisted embedding tuples. Canonical commit evidence carries
+ * vectors as arrays while SQLite projections carry JSON text, so this accepts
+ * either representation and gives write-time and read-time authority one
+ * shared definition.
+ */
+export function validNodeEmbeddingProjectionTuple(value: Record<string, unknown>): boolean {
+  const status = value.embedding_status;
+  const vectorValue = value.embedding_vector_json;
+  const model = value.embedding_model;
+  const lastError = value.embedding_last_error;
+  if (status === "pending") {
+    return vectorValue === null
+      && model === null
+      && (lastError === null || typeof lastError === "string");
+  }
+  if (status === "failed") {
+    return vectorValue === null
+      && model === null
+      && typeof lastError === "string"
+      && lastError.length > 0;
+  }
+  if (status !== "ready"
+    || typeof model !== "string" || model.trim().length === 0 || lastError !== null) {
+    return false;
+  }
+  try {
+    const parsed = typeof vectorValue === "string"
+      ? JSON.parse(vectorValue) as unknown
+      : vectorValue;
+    return Array.isArray(parsed)
+      && parsed.length === 1_536
+      && parsed.every((entry) => typeof entry === "number" && Number.isFinite(entry));
+  } catch {
+    return false;
+  }
+}
+
 function assertExactKeys(
   value: Record<string, unknown>,
   required: readonly string[],
@@ -55,6 +97,7 @@ type AppliedAuthorityTableContract = Readonly<{
   identityKeys: readonly string[];
   rowKeys: readonly string[];
   operations: readonly ("insert" | "update")[];
+  afterCommitReference: "required_self" | "optional_self";
 }>;
 
 /**
@@ -63,6 +106,15 @@ type AppliedAuthorityTableContract = Readonly<{
  * persisted row column must be represented in the canonical evidence.
  */
 export const APPLIED_AUTHORITY_TABLE_CONTRACTS = {
+  lite_runtime_write_operations: {
+    identityKeys: ["tenant_id", "scope", "operation_kind", "operation_id"],
+    rowKeys: [
+      "tenant_id", "scope", "operation_kind", "operation_id", "request_sha256",
+      "receipt_json", "commit_id", "created_at",
+    ],
+    operations: ["insert"],
+    afterCommitReference: "optional_self",
+  },
   lite_memory_execution_decisions: {
     identityKeys: ["scope", "id"],
     rowKeys: [
@@ -71,6 +123,7 @@ export const APPLIED_AUTHORITY_TABLE_CONTRACTS = {
       "source_rule_ids_json", "metadata_json", "commit_id", "created_at",
     ],
     operations: ["insert", "update"],
+    afterCommitReference: "required_self",
   },
   lite_memory_nodes: {
     identityKeys: ["scope", "id"],
@@ -82,6 +135,7 @@ export const APPLIED_AUTHORITY_TABLE_CONTRACTS = {
       "importance", "confidence", "redaction_version", "commit_id", "created_at",
     ],
     operations: ["insert", "update"],
+    afterCommitReference: "required_self",
   },
   lite_memory_rule_defs: {
     identityKeys: ["scope", "rule_node_id"],
@@ -91,6 +145,7 @@ export const APPLIED_AUTHORITY_TABLE_CONTRACTS = {
       "positive_count", "negative_count", "commit_id", "created_at", "updated_at",
     ],
     operations: ["insert", "update"],
+    afterCommitReference: "required_self",
   },
   lite_memory_rule_feedback: {
     identityKeys: ["scope", "id"],
@@ -99,6 +154,13 @@ export const APPLIED_AUTHORITY_TABLE_CONTRACTS = {
       "decision_id", "commit_id", "created_at",
     ],
     operations: ["insert"],
+    afterCommitReference: "required_self",
+  },
+  [LITE_RUNTIME_AUTHORITY_ADOPTION_MANIFEST_TABLE]: {
+    identityKeys: ["scope", "manifest_id"],
+    rowKeys: LITE_RUNTIME_AUTHORITY_ADOPTION_MANIFEST_COLUMNS,
+    operations: ["insert"],
+    afterCommitReference: "required_self",
   },
 } as const satisfies Record<string, AppliedAuthorityTableContract>;
 
@@ -120,10 +182,30 @@ function assertAuthorityIdentityAndRow(args: {
   const contract = authorityTableContract(args.table);
   assertExactKeys(args.identity, contract.identityKeys, [], `${args.label}_identity`);
   assertExactKeys(args.row, contract.rowKeys, [], `${args.label}_row`);
+  if (args.table === "lite_memory_nodes" && !validNodeEmbeddingProjectionTuple(args.row)) {
+    throw new Error(`lite_memory_commit_v2_${args.label}_embedding_projection_tuple_invalid`);
+  }
   for (const key of contract.identityKeys) {
     if (stableStringify(args.identity[key]) !== stableStringify(args.row[key])) {
       throw new Error(`lite_memory_commit_v2_${args.label}_identity_row_mismatch`);
     }
+  }
+}
+
+function assertAuthorityAfterCommitReference(args: {
+  table: string;
+  row: Record<string, unknown>;
+  index: number;
+}): void {
+  const contract = authorityTableContract(args.table);
+  if (contract.afterCommitReference === "required_self") {
+    if (args.row.commit_id !== "$self") {
+      throw new Error(`lite_memory_commit_v2_authority_after_invalid:${args.index}`);
+    }
+    return;
+  }
+  if (!(args.row.commit_id === null || typeof args.row.commit_id === "string")) {
+    throw new Error(`lite_memory_commit_v2_authority_after_invalid:${args.index}`);
   }
 }
 
@@ -154,32 +236,57 @@ export type CanonicalAuthorityMutationVerificationV2 = Pick<
   "table" | "identity" | "after"
 >;
 
-export function materializeSelfCommitReferences<T>(value: T, commitId: string): T {
-  if (value === "$self") return commitId as T;
-  if (Array.isArray(value)) {
-    return value.map((entry) => materializeSelfCommitReferences(entry, commitId)) as T;
+/**
+ * Resolves the deliberately tiny self-reference vocabulary of an applied
+ * authority row. `$self` is protocol syntax, not a general value token: user
+ * data such as node slots, decision candidates, and metadata may legitimately
+ * contain that literal string and must survive unchanged.
+ *
+ * Every registered row may reference its authority commit through `commit_id`.
+ * The operation-receipt table has one additional, explicitly documented
+ * reference at `receipt_json.result_commit_id`. No other path is materialized.
+ */
+export function materializeAppliedAuthorityRow<T extends Record<string, unknown>>(
+  table: string,
+  row: T,
+  commitId: string,
+): T {
+  authorityTableContract(table);
+  const materialized: Record<string, unknown> = {
+    ...row,
+    commit_id: row.commit_id === "$self" ? commitId : row.commit_id,
+  };
+  if (table === "lite_runtime_write_operations" && isRecord(row.receipt_json)) {
+    materialized.receipt_json = {
+      ...row.receipt_json,
+      result_commit_id: row.receipt_json.result_commit_id === "$self"
+        ? commitId
+        : row.receipt_json.result_commit_id,
+    };
   }
-  if (isRecord(value)) {
-    return Object.fromEntries(Object.entries(value).map(([key, entry]) => [
-      key,
-      materializeSelfCommitReferences(entry, commitId),
-    ])) as T;
-  }
-  return value;
+  return materialized as T;
 }
 
-export function normalizeSelfCommitReferences<T>(value: T, commitId: string): T {
-  if (value === commitId) return "$self" as T;
-  if (Array.isArray(value)) {
-    return value.map((entry) => normalizeSelfCommitReferences(entry, commitId)) as T;
+/** The inverse of `materializeAppliedAuthorityRow`, with the same path limits. */
+export function normalizeAppliedAuthorityRow<T extends Record<string, unknown>>(
+  table: string,
+  row: T,
+  commitId: string,
+): T {
+  authorityTableContract(table);
+  const normalized: Record<string, unknown> = {
+    ...row,
+    commit_id: row.commit_id === commitId ? "$self" : row.commit_id,
+  };
+  if (table === "lite_runtime_write_operations" && isRecord(row.receipt_json)) {
+    normalized.receipt_json = {
+      ...row.receipt_json,
+      result_commit_id: row.receipt_json.result_commit_id === commitId
+        ? "$self"
+        : row.receipt_json.result_commit_id,
+    };
   }
-  if (isRecord(value)) {
-    return Object.fromEntries(Object.entries(value).map(([key, entry]) => [
-      key,
-      normalizeSelfCommitReferences(entry, commitId),
-    ])) as T;
-  }
-  return value;
+  return normalized as T;
 }
 
 export function canonicalAuthorityMutationIdentityKey(
@@ -209,9 +316,11 @@ function sortedUniqueAuthorityMutations(
       row: mutation.after,
       label: "authority_after",
     });
-    if (mutation.after.commit_id !== "$self") {
-      throw new Error(`lite_memory_commit_v2_authority_after_invalid:${index}`);
-    }
+    assertAuthorityAfterCommitReference({
+      table: mutation.table,
+      row: mutation.after,
+      index,
+    });
     if (mutation.before) {
       assertAuthorityIdentityAndRow({
         table: mutation.table,
@@ -279,10 +388,10 @@ export function canonicalizeAuthorityMutationVerificationV2(
   for (const [index, value] of sorted.entries()) {
     if (typeof value.table !== "string"
       || !isRecord(value.identity)
-      || !isRecord(value.after)
-      || value.after.commit_id !== "$self") {
+      || !isRecord(value.after)) {
       throw new Error(`lite_memory_commit_v2_authority_verification_invalid:${index}`);
     }
+    assertAuthorityAfterCommitReference({ table: value.table, row: value.after, index });
     assertAuthorityIdentityAndRow({
       table: value.table,
       identity: value.identity,
@@ -297,7 +406,10 @@ export function canonicalizeAuthorityMutationVerificationV2(
   return sorted;
 }
 
-function assertAuthorityMutationContract(parsed: Record<string, unknown>): void {
+function assertAuthorityMutationContract(
+  parsed: Record<string, unknown>,
+  expectedScope: string,
+): void {
   assertExactKeys(
     parsed,
     ["contract", "digest_version", "applied_at", "authority_kind", "policy", "mutations"],
@@ -343,6 +455,12 @@ function assertAuthorityMutationContract(parsed: Record<string, unknown>): void 
     if (!isRecord(value.identity)) {
       throw new Error(`lite_memory_commit_v2_authority_identity_invalid:${index}`);
     }
+    if (value.identity.scope !== expectedScope
+      || (isRecord(value.requested)
+        && Object.prototype.hasOwnProperty.call(value.requested, "scope")
+        && value.requested.scope !== expectedScope)) {
+      throw new Error(`lite_memory_commit_v2_authority_mutation_scope_mismatch:${index}`);
+    }
     if ((value.operation !== "insert" && value.operation !== "update")
       || !tableContract.operations.includes(value.operation)) {
       throw new Error(`lite_memory_commit_v2_authority_operation_invalid:${index}`);
@@ -354,9 +472,10 @@ function assertAuthorityMutationContract(parsed: Record<string, unknown>): void 
     if (Object.prototype.hasOwnProperty.call(value, "requested") && !isRecord(value.requested)) {
       throw new Error(`lite_memory_commit_v2_authority_requested_invalid:${index}`);
     }
-    if (!isRecord(value.after) || value.after.commit_id !== "$self") {
+    if (!isRecord(value.after)) {
       throw new Error(`lite_memory_commit_v2_authority_after_invalid:${index}`);
     }
+    assertAuthorityAfterCommitReference({ table: value.table, row: value.after, index });
     assertAuthorityIdentityAndRow({
       table: value.table,
       identity: value.identity,
@@ -500,6 +619,7 @@ function assertMemoryWriteMutationContract(parsed: Record<string, unknown>, expe
       || !nullableString(after.owner_team_id)
       || !["pending", "ready", "failed"].includes(String(after.embedding_status))
       || !nullableString(after.embedding_last_error)
+      || !validNodeEmbeddingProjectionTuple(after)
       || !finiteNumber(after.salience)
       || !finiteNumber(after.importance)
       || !finiteNumber(after.confidence)
@@ -659,7 +779,7 @@ export function assertCanonicalV2MutationJson(args: {
   if (parsed.contract === "aionis_applied_write_mutation_v2") {
     assertMemoryWriteMutationContract(parsed, args.scope);
   } else {
-    assertAuthorityMutationContract(parsed);
+    assertAuthorityMutationContract(parsed, args.scope);
   }
   if (parsed.applied_at !== args.createdAt) {
     throw new Error("lite_memory_commit_v2_diff_created_at_mismatch");

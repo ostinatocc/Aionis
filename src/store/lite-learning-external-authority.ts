@@ -2,6 +2,9 @@ import { createHash } from "node:crypto";
 
 import stableStringify from "fast-json-stable-stringify";
 import { z } from "zod";
+import {
+  appendLiteRuntimeWriteOperationAuthorityInCurrentTransaction,
+} from "./lite-runtime-applied-authority.js";
 
 import {
   ExternalExecutionPolicyV1Schema,
@@ -444,22 +447,25 @@ function parseOperationReceipt(raw: unknown): LiteLearningExternalAuthorityOpera
   return receipt;
 }
 
-function insertOperationReceipt(db: SqliteDatabase, receipt: LiteLearningExternalAuthorityOperationReceiptV1): void {
+function insertOperationReceipt(
+  db: SqliteDatabase,
+  transaction: SqliteTransactionRunner,
+  receipt: LiteLearningExternalAuthorityOperationReceiptV1,
+): void {
   const receiptJson = stableStringify(ExternalAuthorityOperationReceiptV1Schema.parse(receipt));
-  db.prepare(
-    `INSERT INTO lite_runtime_write_operations
-       (tenant_id, scope, operation_kind, operation_id, request_sha256,
-        receipt_json, commit_id, created_at)
-     VALUES (?, ?, ?, ?, ?, ?, NULL, ?)`,
-  ).run(
-    receipt.tenant_id,
-    receipt.scope,
-    receipt.operation_kind,
-    receipt.operation_id,
-    receipt.request_sha256,
+  appendLiteRuntimeWriteOperationAuthorityInCurrentTransaction({
+    db,
+    transaction,
+    tenantId: receipt.tenant_id,
+    scope: receipt.scope,
+    operationKind: receipt.operation_kind,
+    operationId: receipt.operation_id,
+    requestSha256: receipt.request_sha256,
     receiptJson,
-    receipt.recorded_at,
-  );
+    commitId: null,
+    createdAt: receipt.recorded_at,
+    actor: receipt.actor_id,
+  });
 }
 
 function resolveRevisionAuthority(
@@ -1049,6 +1055,7 @@ function signedRequestDigest(
 
 function protectedRowResult(args: {
   db: SqliteDatabase;
+  transaction: SqliteTransactionRunner;
   table: string;
   columns: readonly string[];
   replayKeys: readonly string[];
@@ -1083,7 +1090,7 @@ function protectedRowResult(args: {
     if (inserted.replayed) {
       throw new Error(`${args.table} exists without its protected operation receipt`);
     }
-    insertOperationReceipt(args.db, args.receipt);
+    insertOperationReceipt(args.db, args.transaction, args.receipt);
     return inserted;
   });
 }
@@ -1407,6 +1414,7 @@ type ExternalTicketConsumptionMutationInput = Readonly<{
 
 function consumeExternalTicketMutation(args: {
   db: SqliteDatabase;
+  transaction: SqliteTransactionRunner;
   input: ExternalTicketConsumptionMutationInput;
   allowClosedRevision: boolean;
 }): { consumption: Record<string, unknown>; replayed: false } {
@@ -1494,13 +1502,18 @@ function consumeExternalTicketMutation(args: {
     if (inserted.replayed) {
       throw new Error("external ticket consumption exists without its protected operation receipt");
     }
-    insertOperationReceipt(db, { ...expectedReceipt, request_sha256: requestSha256 });
+    insertOperationReceipt(
+      db,
+      args.transaction,
+      { ...expectedReceipt, request_sha256: requestSha256 },
+    );
     return { consumption: inserted.row, replayed: false as const };
   });
 }
 
 function recordExternalPreclaimHoldMutation(args: {
   db: SqliteDatabase;
+  transaction: SqliteTransactionRunner;
   receipt: LearningExternalPreclaimHoldReceiptEnvelopeV1;
   requiredTriggeringTerminalFactSha256: string | null;
 }): { hold: Record<string, unknown>; replayed: boolean } {
@@ -1521,6 +1534,7 @@ function recordExternalPreclaimHoldMutation(args: {
   );
   const result = protectedRowResult({
     db: args.db,
+    transaction: args.transaction,
     table: "lite_learning_external_preclaim_holds",
     columns: EXTERNAL_PRECLAIM_HOLD_COLUMNS,
     replayKeys: ["tenant_id", "hold_id"],
@@ -1689,14 +1703,23 @@ export function createLiteLearningExternalAuthorityAccess(args: {
             member,
           );
         }
-        insertOperationReceipt(db, { ...expectedReceipt, request_sha256: requestSha256 });
+        insertOperationReceipt(
+          db,
+          transaction,
+          { ...expectedReceipt, request_sha256: requestSha256 },
+        );
         return { reservation: inserted.row, replayed: false };
       });
     },
 
     async consumeExternalTicket(input) {
       assertStoreTransaction(transaction);
-      return consumeExternalTicketMutation({ db, input, allowClosedRevision: false });
+      return consumeExternalTicketMutation({
+        db,
+        transaction,
+        input,
+        allowClosedRevision: false,
+      });
     },
 
     async closeReservedExternalRun(input) {
@@ -1723,6 +1746,7 @@ export function createLiteLearningExternalAuthorityAccess(args: {
       return withSavepoint(db, () => {
         const consumption = consumeExternalTicketMutation({
           db,
+          transaction,
           input: {
             consumption: input.consumption,
             runnerTicket: input.runnerTicket,
@@ -1732,6 +1756,7 @@ export function createLiteLearningExternalAuthorityAccess(args: {
         });
         const hold = recordExternalPreclaimHoldMutation({
           db,
+          transaction,
           receipt: input.holdReceipt,
           requiredTriggeringTerminalFactSha256: input.triggeringTerminalFactSha256,
         });
@@ -1750,6 +1775,7 @@ export function createLiteLearningExternalAuthorityAccess(args: {
       assertStoreTransaction(transaction);
       return recordExternalPreclaimHoldMutation({
         db,
+        transaction,
         receipt: input.receipt,
         requiredTriggeringTerminalFactSha256: null,
       });
@@ -1782,6 +1808,7 @@ export function createLiteLearningExternalAuthorityAccess(args: {
       }
       const result = protectedRowResult({
         db,
+        transaction,
         table: "lite_learning_external_run_claims",
         columns: EXTERNAL_CLAIM_COLUMNS,
         replayKeys: ["tenant_id", "claim_id"],
@@ -1847,6 +1874,7 @@ export function createLiteLearningExternalAuthorityAccess(args: {
       }
       const result = protectedRowResult({
         db,
+        transaction,
         table: "lite_learning_external_supervisor_bindings",
         columns: EXTERNAL_BINDING_COLUMNS,
         replayKeys: ["tenant_id", "binding_id"],
@@ -1880,6 +1908,7 @@ export function createLiteLearningExternalAuthorityAccess(args: {
       );
       const result = protectedRowResult({
         db,
+        transaction,
         table: "lite_learning_external_session_terminations",
         columns: EXTERNAL_TERMINATION_COLUMNS,
         replayKeys: ["tenant_id", "termination_id"],

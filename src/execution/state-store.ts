@@ -10,8 +10,8 @@ import {
   type ExecutionTransitionType,
 } from "./transitions.js";
 import {
+  assertPrivateRuntimeSqliteArtifactModes,
   createPrivateRuntimeSqliteDatabase,
-  hardenPrivateRuntimeSqliteArtifacts,
   type SqliteDatabase,
 } from "../store/sqlite.js";
 import { createLiteRuntimeReadDatabase } from "../store/lite-runtime-database.js";
@@ -174,7 +174,7 @@ export class LiteExecutionStateStore implements ExecutionStateStore {
         eventAfterJsonColumn: "state_after_json",
         uniqueRevisionIndex: "idx_lite_execution_state_transitions_unique_revision",
       });
-      if (this.ownsDatabase) hardenPrivateRuntimeSqliteArtifacts(path);
+      if (this.ownsDatabase) assertPrivateRuntimeSqliteArtifactModes(path);
     } catch (error) {
       if (this.ownsReadDatabase) {
         try {

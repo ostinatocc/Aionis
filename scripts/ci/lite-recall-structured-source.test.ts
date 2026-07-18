@@ -3,13 +3,37 @@ import assert from "node:assert/strict";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
+import { runAppliedAuthorityMutationV2 } from
+  "../../src/memory/applied-authority-mutation.ts";
+import {
+  applyNodeAuthorityPatchesV2,
+  buildNodeAuthorityMutationV2,
+  verifyNodeAuthorityPatchesV2,
+  type NodeAuthorityPatchV2,
+} from "../../src/memory/node-authority-mutation.ts";
+import { inspectLiteMemoryCommitAuthority } from
+  "../../src/store/lite-memory-commit-integrity.ts";
 import { createLiteRecallStore } from "../../src/store/lite-recall-store.ts";
-import { createLiteWriteStore } from "../../src/store/lite-write-store.ts";
+import { createLiteRuntimeDatabase } from "../../src/store/lite-runtime-database.ts";
+import {
+  createLiteWriteStore,
+  createLiteWriteStoreFromDatabase,
+} from "../../src/store/lite-write-store.ts";
 import { createSqliteDatabase } from "../../src/store/sqlite.ts";
+import { sha256Hex } from "../../src/util/crypto.ts";
 
 function tmpDbPath(name: string): string {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), "aionis-lite-recall-structured-"));
   return path.join(dir, `${name}.sqlite`);
+}
+
+const EMBEDDING_DIMENSIONS = 1_536;
+
+function embedding(values: number[]): number[] {
+  assert.ok(values.length > 0 && values.length <= EMBEDDING_DIMENSIONS);
+  return values.length === EMBEDDING_DIMENSIONS
+    ? [...values]
+    : [...values, ...Array.from({ length: EMBEDDING_DIMENSIONS - values.length }, () => 0)];
 }
 
 async function insertCommit(store: ReturnType<typeof createLiteWriteStore>, scope: string, suffix: string): Promise<string> {
@@ -23,6 +47,65 @@ async function insertCommit(store: ReturnType<typeof createLiteWriteStore>, scop
     promptVersion: null,
     commitHash: `commit-hash-${suffix}`,
   });
+}
+
+async function prepareMigratedStructuredFixture(
+  dbPath: string,
+  seed: (store: ReturnType<typeof createLiteWriteStore>) => Promise<void>,
+): Promise<void> {
+  const legacyDatabase = createLiteRuntimeDatabase(dbPath);
+  const legacyStore = createLiteWriteStoreFromDatabase(legacyDatabase, {
+    annProjectionEnabled: false,
+    allowLegacyV1Fixtures: true,
+    closeDatabaseOnClose: false,
+  });
+  let legacyStoreClosed = false;
+  try {
+    legacyDatabase.db.exec("BEGIN IMMEDIATE");
+    try {
+      legacyDatabase.db.exec("DROP TABLE lite_runtime_authority_adoption_bindings");
+      legacyDatabase.db.exec("DROP TABLE lite_runtime_authority_adoption_manifests");
+      const metadataUpdate = legacyDatabase.db.prepare(
+        `UPDATE lite_runtime_schema_metadata
+         SET version = 5, updated_at = ?
+         WHERE component = 'write_projection'`,
+      ).run("2026-07-19T00:00:00.000Z");
+      assert.equal(Number(metadataUpdate.changes ?? 0), 1);
+      legacyDatabase.db.exec("COMMIT");
+    } catch (error) {
+      legacyDatabase.db.exec("ROLLBACK");
+      throw error;
+    }
+
+    await seed(legacyStore);
+    const legacyAuthority = inspectLiteMemoryCommitAuthority(legacyDatabase.db);
+    assert.equal(legacyAuthority.ok, true, JSON.stringify(legacyAuthority.findings));
+    assert.ok(legacyAuthority.legacy_commit_count > 0);
+    assert.equal(legacyAuthority.v2_commit_count, 0);
+    await legacyStore.close();
+    legacyStoreClosed = true;
+  } finally {
+    if (!legacyStoreClosed) await legacyStore.close();
+    await legacyDatabase.close();
+  }
+
+  const migratedStore = createLiteWriteStore(dbPath, { annProjectionEnabled: false });
+  await migratedStore.close();
+  const migrated = createSqliteDatabase(dbPath);
+  try {
+    const metadata = migrated.prepare(
+      `SELECT version FROM lite_runtime_schema_metadata
+       WHERE component = 'write_projection'`,
+    ).get() as { version: number } | undefined;
+    assert.equal(metadata?.version, 6);
+    const authority = inspectLiteMemoryCommitAuthority(migrated);
+    assert.equal(authority.ok, true, JSON.stringify(authority.findings));
+    assert.ok(authority.adoption_manifest_count > 0);
+    assert.ok(authority.adoption_binding_count > 0);
+    assert.equal(authority.adoption_binding_verified_count, authority.adoption_binding_count);
+  } finally {
+    migrated.close();
+  }
 }
 
 function workflowSlots(args: {
@@ -115,9 +198,7 @@ async function insertProcedure(
 
 test("structured recall finds execution-native signatures without ready embeddings", async () => {
   const dbPath = tmpDbPath("signature");
-  const writeStore = createLiteWriteStore(dbPath);
-  const recallStore = createLiteRecallStore(dbPath);
-  try {
+  await prepareMigratedStructuredFixture(dbPath, async (writeStore) => {
     await writeStore.withTx(async () => {
       const commitId = await insertCommit(writeStore, "structured/default", "signature");
       await insertProcedure(writeStore, {
@@ -146,7 +227,10 @@ test("structured recall finds execution-native signatures without ready embeddin
         commitId,
       });
     });
+  });
 
+  const recallStore = createLiteRecallStore(dbPath);
+  try {
     const db = createSqliteDatabase(dbPath);
     try {
       const indexRow = db.prepare(`
@@ -197,17 +281,14 @@ test("structured recall finds execution-native signatures without ready embeddin
     assert.ok(executionNative[0]?.sources?.[0]?.matched_fields?.includes("verification_signature"));
   } finally {
     await recallStore.close();
-    await writeStore.close();
   }
 });
 
 test("execution-native workflow recall keeps accepted route evidence under noisy workflow history", async () => {
   const dbPath = tmpDbPath("workflow-noise");
-  const writeStore = createLiteWriteStore(dbPath);
-  const recallStore = createLiteRecallStore(dbPath);
   const scope = "structured/workflow-noise";
   const workflowSignature = "workflow:buried-route";
-  try {
+  await prepareMigratedStructuredFixture(dbPath, async (writeStore) => {
     await writeStore.withTx(async () => {
       const commitId = await insertCommit(writeStore, scope, "workflow-noise");
       await insertProcedure(writeStore, {
@@ -270,7 +351,10 @@ test("execution-native workflow recall keeps accepted route evidence under noisy
         confidence: 0.95,
       });
     });
+  });
 
+  const recallStore = createLiteRecallStore(dbPath);
+  try {
     const candidates = await recallStore.createRecallAccess().stage1ExecutionNativeCandidates({
       scope,
       limit: 10,
@@ -288,15 +372,12 @@ test("execution-native workflow recall keeps accepted route evidence under noisy
     assert.equal(candidates[0]?.id, "accepted-route-evidence");
   } finally {
     await recallStore.close();
-    await writeStore.close();
   }
 });
 
 test("hybrid recall merges semantic lexical structured and execution-native source traces", async () => {
   const dbPath = tmpDbPath("hybrid");
-  const writeStore = createLiteWriteStore(dbPath);
-  const recallStore = createLiteRecallStore(dbPath);
-  try {
+  await prepareMigratedStructuredFixture(dbPath, async (writeStore) => {
     await writeStore.withTx(async () => {
       const commitId = await insertCommit(writeStore, "structured/hybrid", "hybrid");
       await insertProcedure(writeStore, {
@@ -312,7 +393,7 @@ test("hybrid recall merges semantic lexical structured and execution-native sour
           verificationSignature: "unit:beacon-route",
           acceptanceCheckSignature: "accept:beacon-route",
         }),
-        embeddingVector: [1, 0, 0],
+        embeddingVector: embedding([1, 0, 0]),
         commitId,
       });
       await insertProcedure(writeStore, {
@@ -325,15 +406,18 @@ test("hybrid recall merges semantic lexical structured and execution-native sour
           workflowSignature: "workflow:semantic-only",
           targetFiles: ["src/runtime/semantic-only.ts"],
         }),
-        embeddingVector: [0.99, 0.01, 0],
+        embeddingVector: embedding([0.99, 0.01, 0]),
         commitId,
       });
     });
+  });
 
+  const recallStore = createLiteRecallStore(dbPath);
+  try {
     const hybrid = await recallStore.createRecallAccess().stage1HybridCandidates({
       scope: "structured/hybrid",
       limit: 5,
-      queryEmbedding: [1, 0, 0],
+      queryEmbedding: embedding([1, 0, 0]),
       queryText: "BeaconRoute accepted adapter",
       structured: {
         taskSignature: "task:hybrid-beacon",
@@ -355,20 +439,19 @@ test("hybrid recall merges semantic lexical structured and execution-native sour
     assert.ok((hybrid[0]?.similarity ?? 0) > (hybrid[1]?.similarity ?? 0));
   } finally {
     await recallStore.close();
-    await writeStore.close();
   }
 });
 
 test("structured recall index follows anchor state updates", async () => {
   const dbPath = tmpDbPath("update");
-  const writeStore = createLiteWriteStore(dbPath);
-  const recallStore = createLiteRecallStore(dbPath);
-  try {
+  const scope = "structured/update";
+  const nodeId = "updatable-structured-node";
+  await prepareMigratedStructuredFixture(dbPath, async (writeStore) => {
     await writeStore.withTx(async () => {
-      const commitId = await insertCommit(writeStore, "structured/update", "update");
+      const commitId = await insertCommit(writeStore, scope, "update");
       await insertProcedure(writeStore, {
-        id: "updatable-structured-node",
-        scope: "structured/update",
+        id: nodeId,
+        scope,
         title: "Old workflow route",
         textSummary: "Old route before structured update.",
         slots: workflowSlots({
@@ -378,26 +461,62 @@ test("structured recall index follows anchor state updates", async () => {
         }),
         commitId,
       });
-      await writeStore.updateNodeAnchorState({
-        scope: "structured/update",
-        id: "updatable-structured-node",
-        slots: workflowSlots({
-          taskSignature: "task:new",
-          workflowSignature: "workflow:new",
-          targetFiles: ["src/runtime/new.ts"],
-          failureMode: "new-failure-mode",
-        }),
-        textSummary: "New structured workflow route.",
-        salience: 0.9,
-        importance: 0.5,
-        confidence: 0.9,
-        commitId,
-      });
     });
+  });
+
+  const writeStore = createLiteWriteStore(dbPath, { annProjectionEnabled: false });
+  const recallStore = createLiteRecallStore(dbPath);
+  try {
+    const beforeStates = await writeStore.nodeStatesByIds(scope, [nodeId]);
+    const before = beforeStates.get(nodeId);
+    assert.ok(before);
+    const patch: NodeAuthorityPatchV2 = {
+      id: nodeId,
+      slots: workflowSlots({
+        taskSignature: "task:new",
+        workflowSignature: "workflow:new",
+        targetFiles: ["src/runtime/new.ts"],
+        failureMode: "new-failure-mode",
+      }),
+      textSummary: "New structured workflow route.",
+      salience: 0.9,
+      importance: 0.5,
+      confidence: 0.9,
+    };
+    const updated = await runAppliedAuthorityMutationV2({
+      store: writeStore,
+      scope,
+      actor: "structured-recall-test",
+      inputSha256: sha256Hex(`structured-recall-anchor-update:${nodeId}`),
+      plan: async () => ({
+        status: "mutate" as const,
+        authorityKind: "structured_recall_anchor_update_test",
+        mutations: [buildNodeAuthorityMutationV2({ before, patch })],
+        async apply({ commitId }) {
+          await applyNodeAuthorityPatchesV2({
+            store: writeStore,
+            scope,
+            patches: [patch],
+            commitId,
+          });
+          return true;
+        },
+        async verify({ commitId }) {
+          return await verifyNodeAuthorityPatchesV2({
+            store: writeStore,
+            scope,
+            patches: [patch],
+            commitId,
+            errorLabel: "structured_recall_anchor_update_test",
+          });
+        },
+      }),
+    });
+    assert.equal(updated.status, "applied");
 
     const access = recallStore.createRecallAccess();
     const oldWorkflow = await access.stage1StructuredCandidates({
-      scope: "structured/update",
+      scope,
       limit: 5,
       workflowSignature: "workflow:old",
       consumerAgentId: null,
@@ -406,7 +525,7 @@ test("structured recall index follows anchor state updates", async () => {
     assert.ok(!oldWorkflow.some((candidate) => candidate.id === "updatable-structured-node"));
 
     const newWorkflow = await access.stage1StructuredCandidates({
-      scope: "structured/update",
+      scope,
       limit: 5,
       workflowSignature: "workflow:new",
       targetFiles: ["src/runtime/new.ts"],

@@ -64,7 +64,7 @@ import {
   closeLiteRuntimeProtectedAuthorityDatabasePin,
   pinLiteRuntimeProtectedAuthorityDatabase,
   type LiteRuntimeProtectedAuthorityDatabasePin,
-} from "../../src/store/lite-runtime-protected-authority-database.js";
+} from "../../packages/aionis-learning-authority/src/store/lite-runtime-protected-authority-database.js";
 
 const ROOT = resolve(fileURLToPath(new URL("../..", import.meta.url)));
 const RECOVERY_CHILD = fileURLToPath(new URL(

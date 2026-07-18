@@ -53,7 +53,7 @@ import {
   closeLiteRuntimeProtectedAuthorityDatabasePin,
   pinLiteRuntimeProtectedAuthorityDatabase,
   type LiteRuntimeProtectedAuthorityDatabasePin,
-} from "../../src/store/lite-runtime-protected-authority-database.js";
+} from "../../packages/aionis-learning-authority/src/store/lite-runtime-protected-authority-database.js";
 import {
   acquireLiteRuntimeDeploymentSlotExclusiveLease as acquireLiteRuntimeDeploymentSlotExclusiveLeaseRaw,
   assertLiteRuntimeDeploymentSlotExclusiveLease,

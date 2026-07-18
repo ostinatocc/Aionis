@@ -11,10 +11,19 @@ import {
   LITE_MEMORY_COMMIT_SCOPE_REVISION_INDEX_SQL,
   LITE_MEMORY_SCOPE_HEAD_TABLE_SQL,
 } from "./lite-memory-commit-authority.js";
+import {
+  LITE_RUNTIME_AUTHORITY_ADOPTION_BINDING_COLUMNS,
+  LITE_RUNTIME_AUTHORITY_ADOPTION_BINDING_TABLE,
+  LITE_RUNTIME_AUTHORITY_ADOPTION_BINDING_TABLE_SQL,
+  LITE_RUNTIME_AUTHORITY_ADOPTION_MANIFEST_COLUMNS,
+  LITE_RUNTIME_AUTHORITY_ADOPTION_MANIFEST_TABLE,
+  LITE_RUNTIME_AUTHORITY_ADOPTION_MANIFEST_TABLE_SQL,
+  LITE_RUNTIME_AUTHORITY_ADOPTION_TRIGGERS,
+} from "./lite-runtime-authority-adoption-contract.js";
 import { normalizeSqliteSchemaSql } from "./sqlite-schema-sql.js";
 
 export const LITE_RUNTIME_WRITE_SCHEMA_COMPONENT = "write_projection";
-export const LITE_RUNTIME_WRITE_SCHEMA_VERSION = 5;
+export const LITE_RUNTIME_WRITE_SCHEMA_VERSION = 6;
 
 export type LiteRuntimeSchemaClassification =
   | "uninitialized"
@@ -22,6 +31,7 @@ export type LiteRuntimeSchemaClassification =
   | "supported_previous_v2"
   | "supported_previous_v3"
   | "supported_previous_v4"
+  | "supported_previous_v5"
   | "current"
   | "incompatible";
 
@@ -541,10 +551,82 @@ export const WRITE_SCHEMA_V5: LiteRuntimeWriteSchemaContract = {
   triggers: WRITE_SCHEMA_V4.triggers,
 };
 
+// Schema v6 removes the open-ended v1/delegated terminal-row exceptions.
+// A v5 upgrade may preserve those rows only through one immutable, per-scope
+// adoption manifest whose exact row bindings are authenticated by a normal v2
+// authority commit. Fresh v6 writes must be claimed directly.
+export const WRITE_SCHEMA_V6: LiteRuntimeWriteSchemaContract = {
+  columns: {
+    ...WRITE_SCHEMA_V5.columns,
+    [LITE_RUNTIME_AUTHORITY_ADOPTION_MANIFEST_TABLE]:
+      LITE_RUNTIME_AUTHORITY_ADOPTION_MANIFEST_COLUMNS,
+    [LITE_RUNTIME_AUTHORITY_ADOPTION_BINDING_TABLE]:
+      LITE_RUNTIME_AUTHORITY_ADOPTION_BINDING_COLUMNS,
+  },
+  constraints: {
+    ...WRITE_SCHEMA_V5.constraints,
+    [LITE_RUNTIME_AUTHORITY_ADOPTION_MANIFEST_TABLE]: {
+      primaryKey: ["scope"],
+      uniqueKeys: [["manifest_id"], ["scope", "manifest_id"]],
+      sql: LITE_RUNTIME_AUTHORITY_ADOPTION_MANIFEST_TABLE_SQL,
+    },
+    [LITE_RUNTIME_AUTHORITY_ADOPTION_BINDING_TABLE]: {
+      primaryKey: ["scope", "authority_table", "identity_sha256"],
+      uniqueKeys: [["scope", "authority_table", "identity_json"]],
+      sql: LITE_RUNTIME_AUTHORITY_ADOPTION_BINDING_TABLE_SQL,
+    },
+  },
+  indexes: WRITE_SCHEMA_V5.indexes,
+  triggers: {
+    ...WRITE_SCHEMA_V5.triggers,
+    trg_lite_runtime_authority_adoption_manifest_sealed_after_v6: {
+      table: LITE_RUNTIME_AUTHORITY_ADOPTION_MANIFEST_TABLE,
+      sql: LITE_RUNTIME_AUTHORITY_ADOPTION_TRIGGERS
+        .trg_lite_runtime_authority_adoption_manifest_sealed_after_v6,
+    },
+    trg_lite_runtime_authority_adoption_binding_sealed_after_v6: {
+      table: LITE_RUNTIME_AUTHORITY_ADOPTION_BINDING_TABLE,
+      sql: LITE_RUNTIME_AUTHORITY_ADOPTION_TRIGGERS
+        .trg_lite_runtime_authority_adoption_binding_sealed_after_v6,
+    },
+    trg_lite_runtime_authority_adoption_manifest_no_update: {
+      table: LITE_RUNTIME_AUTHORITY_ADOPTION_MANIFEST_TABLE,
+      sql: LITE_RUNTIME_AUTHORITY_ADOPTION_TRIGGERS
+        .trg_lite_runtime_authority_adoption_manifest_no_update,
+    },
+    trg_lite_runtime_authority_adoption_manifest_no_delete: {
+      table: LITE_RUNTIME_AUTHORITY_ADOPTION_MANIFEST_TABLE,
+      sql: LITE_RUNTIME_AUTHORITY_ADOPTION_TRIGGERS
+        .trg_lite_runtime_authority_adoption_manifest_no_delete,
+    },
+    trg_lite_runtime_authority_adoption_binding_no_update: {
+      table: LITE_RUNTIME_AUTHORITY_ADOPTION_BINDING_TABLE,
+      sql: LITE_RUNTIME_AUTHORITY_ADOPTION_TRIGGERS
+        .trg_lite_runtime_authority_adoption_binding_no_update,
+    },
+    trg_lite_runtime_authority_adoption_binding_no_delete: {
+      table: LITE_RUNTIME_AUTHORITY_ADOPTION_BINDING_TABLE,
+      sql: LITE_RUNTIME_AUTHORITY_ADOPTION_TRIGGERS
+        .trg_lite_runtime_authority_adoption_binding_no_delete,
+    },
+    trg_lite_runtime_authority_adoption_binding_frozen_after_manifest: {
+      table: LITE_RUNTIME_AUTHORITY_ADOPTION_BINDING_TABLE,
+      sql: LITE_RUNTIME_AUTHORITY_ADOPTION_TRIGGERS
+        .trg_lite_runtime_authority_adoption_binding_frozen_after_manifest,
+    },
+  },
+};
+
 const ACTIVE_WRITE_SCHEMA_TARGET: LiteRuntimeSchemaInspectionTarget = {
   currentVersion: LITE_RUNTIME_WRITE_SCHEMA_VERSION,
-  contracts: { 2: WRITE_SCHEMA_V2, 3: WRITE_SCHEMA_V3, 4: WRITE_SCHEMA_V4, 5: WRITE_SCHEMA_V5 },
-  supportedPreviousVersions: [2, 3, 4],
+  contracts: {
+    2: WRITE_SCHEMA_V2,
+    3: WRITE_SCHEMA_V3,
+    4: WRITE_SCHEMA_V4,
+    5: WRITE_SCHEMA_V5,
+    6: WRITE_SCHEMA_V6,
+  },
+  supportedPreviousVersions: [2, 3, 4, 5],
 };
 
 function userTables(db: SqliteDatabase): Set<string> {
@@ -907,6 +989,16 @@ export function inspectLiteRuntimeSchemaAgainstTarget(
     );
   }
 
+  const v6OnlyObjectsPresent = (detectedVersion ?? 0) < 6
+    && target.currentVersion >= 6
+    && (tables.has(LITE_RUNTIME_AUTHORITY_ADOPTION_MANIFEST_TABLE)
+      || tables.has(LITE_RUNTIME_AUTHORITY_ADOPTION_BINDING_TABLE));
+  if (v6OnlyObjectsPresent) {
+    problems.push(
+      "schema metadata is older than v6 but v6 authority-adoption objects already exist",
+    );
+  }
+
   if (detectedVersion !== null && detectedVersion > target.currentVersion) {
     problems.push(
       `database write schema version ${detectedVersion} is newer than supported version ${target.currentVersion}`,
@@ -956,13 +1048,15 @@ export function inspectLiteRuntimeSchemaAgainstTarget(
       ? "uninitialized"
       : detectedVersion === target.currentVersion
         ? "current"
-        : detectedVersion === 4 && target.supportedPreviousVersions.includes(4)
-          ? "supported_previous_v4"
-          : detectedVersion === 3 && target.supportedPreviousVersions.includes(3)
-            ? "supported_previous_v3"
-            : detectedVersion === 2 && target.supportedPreviousVersions.includes(2)
-              ? "supported_previous_v2"
-              : "legacy_v0_3_4";
+        : detectedVersion === 5 && target.supportedPreviousVersions.includes(5)
+          ? "supported_previous_v5"
+          : detectedVersion === 4 && target.supportedPreviousVersions.includes(4)
+            ? "supported_previous_v4"
+            : detectedVersion === 3 && target.supportedPreviousVersions.includes(3)
+              ? "supported_previous_v3"
+              : detectedVersion === 2 && target.supportedPreviousVersions.includes(2)
+                ? "supported_previous_v2"
+                : "legacy_v0_3_4";
 
   return {
     contract_version: "aionis_lite_runtime_schema_report_v1",
@@ -974,6 +1068,7 @@ export function inspectLiteRuntimeSchemaAgainstTarget(
       || classification === "supported_previous_v2"
       || classification === "supported_previous_v3"
       || classification === "supported_previous_v4"
+      || classification === "supported_previous_v5"
       || classification === "uninitialized",
     user_table_count: tables.size,
     missing_tables: [...selectedMissing.missingTables].sort(),

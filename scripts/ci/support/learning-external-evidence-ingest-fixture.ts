@@ -33,10 +33,10 @@ import {
   learningExternalBrokerServiceInstanceDigest,
   learningExternalPublicRunAuthorityDigest,
   learningExternalPublicRunAuthorityPayloadDigest,
-} from "../../../src/memory/learning-external-public-authority.js";
+} from "../../../packages/aionis-learning-authority/src/memory/learning-external-public-authority.js";
 import {
   LEARNING_EXTERNAL_EVIDENCE_ARCHIVE_V1_MAGIC,
-} from "../../../src/memory/learning-external-evidence-archive.js";
+} from "../../../packages/aionis-learning-authority/src/memory/learning-external-evidence-archive.js";
 import {
   LearningExternalAttemptChainV1Schema,
   LearningExternalEvidenceBindingV1Schema,
@@ -77,7 +77,7 @@ import {
 import type { LiteRuntimeDatabase } from "../../../src/store/lite-runtime-database.js";
 import type {
   LiteLearningExternalEvidenceServiceInput,
-} from "../../../src/store/lite-learning-external-evidence-service.js";
+} from "../../../packages/aionis-learning-authority/src/store/lite-learning-external-evidence-service.js";
 import {
   inspectLiteRuntimeSchema,
   LITE_RUNTIME_WRITE_SCHEMA_VERSION,

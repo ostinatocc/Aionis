@@ -13,7 +13,7 @@ import {
   ruleDefBusinessState,
   type RuleDefAuthorityRow,
 } from "./rule-authority-mutation.js";
-import { normalizeSelfCommitReferences } from "../store/write-commit-authority.js";
+import { normalizeAppliedAuthorityRow } from "../store/write-commit-authority.js";
 import type { LiteWriteStore } from "../store/lite-write-store.js";
 
 function isPlainObject(v: any): v is Record<string, any> {
@@ -194,7 +194,11 @@ export async function updateRuleState(
           return actual ? [{
             table: "lite_memory_rule_defs",
             identity,
-            after: normalizeSelfCommitReferences(ruleDefAuthorityRow(actual), commitId),
+            after: normalizeAppliedAuthorityRow(
+              "lite_memory_rule_defs",
+              ruleDefAuthorityRow(actual),
+              commitId,
+            ),
           }] : [];
         },
       };

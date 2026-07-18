@@ -10,7 +10,7 @@ import {
 } from "node:fs";
 import stableStringify from "fast-json-stable-stringify";
 
-import type { LiteRuntimeDatabase } from "./lite-runtime-database.js";
+import type { LiteRuntimeDatabase } from "../../../../src/store/lite-runtime-database.js";
 import {
   assertLiteRuntimeProtectedAuthorityDatabasePinned,
   inspectLiteRuntimeProtectedAuthorityDatabase,

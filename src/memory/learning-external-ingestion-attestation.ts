@@ -52,14 +52,15 @@ const BoundedIdSchema = z.string().superRefine((value, context) => {
 const PositiveSafeIntegerSchema = z.number().int().positive().max(Number.MAX_SAFE_INTEGER);
 const NonNegativeSafeIntegerSchema = z.number().int().nonnegative().max(Number.MAX_SAFE_INTEGER);
 /**
- * V1 evidence remains readable for schema v4, while newly projected evidence
- * binds the current v5 Runtime schema. The concrete version remains inside
+ * V1 evidence remains readable for schema v4/v5, while newly projected evidence
+ * binds the current v6 Runtime schema. The concrete version remains inside
  * every signed digest, so accepting the historical value does not alias it to
  * a v5 snapshot.
  */
 export const LearningExternalRuntimeWriteSchemaVersionV1Schema = z.union([
   z.literal(4),
   z.literal(5),
+  z.literal(6),
 ]);
 const CanonicalUnsigned64DecimalSchema = z.string().regex(/^(?:0|[1-9][0-9]{0,19})$/u)
   .refine((value) => BigInt(value) <= 0xffff_ffff_ffff_ffffn, {

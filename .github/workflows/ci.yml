@@ -136,11 +136,92 @@ jobs:
       - name: Runtime complexity gate
         run: npm run -s complexity:check
 
-      - name: Lite test suite
-        run: npm run -s lite:test
+      - name: Static contract tests
+        run: npm run -s lite:test:static
+
+      - name: Manifest product integration
+        run: npm run -s lite:test:core:manifest
 
       - name: Lite public smoke
         run: npm run -s lite:smoke
+
+  runtime-core:
+    name: Core TypeScript (${{ matrix.shard }})
+    runs-on: ubuntu-latest
+    timeout-minutes: ${{ matrix.timeout_minutes }}
+    strategy:
+      fail-fast: false
+      max-parallel: 5
+      matrix:
+        include:
+          - shard: bucket-0
+            timeout_minutes: 40
+          - shard: bucket-1
+            timeout_minutes: 30
+          - shard: bucket-2
+            timeout_minutes: 40
+          - shard: external-evidence
+            timeout_minutes: 25
+          - shard: deployment-authority
+            timeout_minutes: 90
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "24"
+          cache: npm
+
+      - name: Install protected-close ACL verifier
+        run: |
+          sudo apt-get update
+          sudo apt-get install --yes --no-install-recommends acl
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Run core shard
+        run: npm run -s lite:test:core:${{ matrix.shard }}
+
+  runtime-recovery:
+    name: Provisioning recovery (${{ matrix.shard }})
+    runs-on: ubuntu-latest
+    timeout-minutes: ${{ matrix.timeout_minutes }}
+    strategy:
+      fail-fast: false
+      max-parallel: 4
+      matrix:
+        include:
+          - shard: bootstrap
+            timeout_minutes: 35
+          - shard: receipt
+            timeout_minutes: 25
+          - shard: durable
+            timeout_minutes: 30
+          - shard: terminal
+            timeout_minutes: 25
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "24"
+          cache: npm
+
+      - name: Install protected-close ACL verifier
+        run: |
+          sudo apt-get update
+          sudo apt-get install --yes --no-install-recommends acl
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Run recovery shard
+        run: npm run -s lite:test:recovery:${{ matrix.shard }}
 
   minimum-node:
     name: Node 22.15 minimum compatibility
@@ -167,3 +248,22 @@ jobs:
 
       - name: Lite public smoke
         run: npm run -s lite:smoke
+
+  required:
+    name: Required CI gates
+    if: always()
+    needs: [runtime, runtime-core, runtime-recovery, minimum-node]
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Require every Runtime gate
+        env:
+          RUNTIME_RESULT: ${{ needs.runtime.result }}
+          CORE_RESULT: ${{ needs['runtime-core'].result }}
+          RECOVERY_RESULT: ${{ needs['runtime-recovery'].result }}
+          MINIMUM_NODE_RESULT: ${{ needs.minimum-node.result }}
+        run: |
+          test "$RUNTIME_RESULT" = success
+          test "$CORE_RESULT" = success
+          test "$RECOVERY_RESULT" = success
+          test "$MINIMUM_NODE_RESULT" = success

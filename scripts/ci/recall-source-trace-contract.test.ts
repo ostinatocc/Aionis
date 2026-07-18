@@ -15,6 +15,10 @@ import {
   buildAionisMemoryUseReceiptFromDecisionTrace,
 } from "../../src/memory/product-output-assembler.ts";
 import { buildAionisAgentFlightRecorderReport } from "../../src/memory/product-output/operator-projections.ts";
+import { applyMemoryWrite, prepareMemoryWrite } from "../../src/memory/write.ts";
+
+const SEMANTIC_TARGET_ID = "11111111-1111-4111-8111-111111111111";
+const SOURCE_TRACE_EMBEDDING = Array.from({ length: 1_536 }, (_, index) => index === 0 ? 1 : 0);
 
 function tmpDbPath(name: string): string {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), "aionis-recall-source-trace-"));
@@ -28,40 +32,36 @@ async function insertReadyConcept(args: {
   vector: number[];
   tier?: "hot" | "warm" | "cold";
 }): Promise<void> {
-  const commitId = await args.writeStore.insertLegacyV1CommitForMigrationOrTestFixture({
+  const prepared = await prepareMemoryWrite({
+    tenant_id: "default",
     scope: args.scope,
-    parentCommitId: null,
-    inputSha256: `source-trace-${args.id}`,
-    diffJson: "{}",
     actor: "recall-source-trace-test",
-    modelVersion: null,
-    promptVersion: null,
-    commitHash: `source-trace-${args.id}`,
-  });
-  await args.writeStore.insertNode({
-    id: args.id,
-    scope: args.scope,
-    clientId: null,
-    type: "concept",
-    tier: args.tier ?? "hot",
-    title: `source trace ${args.id}`,
-    textSummary: `source trace memory ${args.id}`,
-    slotsJson: "{}",
-    rawRef: null,
-    evidenceRef: null,
-    embeddingVector: JSON.stringify(args.vector),
-    embeddingModel: "test",
-    memoryLane: "shared",
-    producerAgentId: null,
-    ownerAgentId: null,
-    ownerTeamId: null,
-    embeddingStatus: "ready",
-    embeddingLastError: null,
-    salience: 0.9,
-    importance: 0.5,
-    confidence: 0.9,
-    redactionVersion: 0,
-    commitId,
+    input_text: `source trace memory ${args.id}`,
+    nodes: [{
+      id: args.id,
+      type: "concept",
+      tier: args.tier ?? "hot",
+      title: `source trace ${args.id}`,
+      text_summary: `source trace memory ${args.id}`,
+      slots: {},
+      embedding: args.vector,
+      embedding_model: "test",
+      memory_lane: "shared",
+      salience: 0.9,
+      importance: 0.5,
+      confidence: 0.9,
+    }],
+    edges: [],
+  }, args.scope, "default", {
+    maxTextLen: 10_000,
+    piiRedaction: false,
+    allowCrossScopeEdges: false,
+  }, null);
+  await applyMemoryWrite(prepared, {
+    maxTextLen: 10_000,
+    piiRedaction: false,
+    allowCrossScopeEdges: false,
+    write_access: args.writeStore,
   });
 }
 
@@ -74,8 +74,8 @@ test("RecallStoreAccess v4 exposes candidate source traces without changing cand
       await insertReadyConcept({
         writeStore,
         scope: "source-trace/default",
-        id: "semantic-target",
-        vector: [1, 0, 0],
+        id: SEMANTIC_TARGET_ID,
+        vector: SOURCE_TRACE_EMBEDDING,
       });
     });
 
@@ -85,14 +85,14 @@ test("RecallStoreAccess v4 exposes candidate source traces without changing cand
     assert.equal(access.capability_version, 4);
 
     const semantic = await access.stage1SemanticCandidates({
-      queryEmbedding: [1, 0, 0],
+      queryEmbedding: SOURCE_TRACE_EMBEDDING,
       scope: "source-trace/default",
       oversample: 5,
       limit: 5,
       consumerAgentId: null,
       consumerTeamId: null,
     });
-    assert.equal(semantic[0]?.id, "semantic-target");
+    assert.equal(semantic[0]?.id, SEMANTIC_TARGET_ID);
     assert.equal(semantic[0]?.sources?.[0]?.kind, "semantic");
     assert.equal(semantic[0]?.sources?.[0]?.reason, "bounded_embedding_scan");
     assert.equal(semantic[0]?.sources?.[0]?.index_name, "lite_embedding_json_scan");
@@ -100,7 +100,7 @@ test("RecallStoreAccess v4 exposes candidate source traces without changing cand
     assert.deepEqual(semantic[0]?.sources?.[0]?.matched_fields, ["embedding_vector_json"]);
 
     const exact = await access.stage1CandidatesExactRecovery({
-      queryEmbedding: [1, 0, 0],
+      queryEmbedding: SOURCE_TRACE_EMBEDDING,
       scope: "source-trace/default",
       oversample: 5,
       limit: 5,
@@ -109,18 +109,18 @@ test("RecallStoreAccess v4 exposes candidate source traces without changing cand
       consumerAgentId: null,
       consumerTeamId: null,
     });
-    assert.equal(exact[0]?.id, "semantic-target");
+    assert.equal(exact[0]?.id, SEMANTIC_TARGET_ID);
     assert.equal(exact[0]?.sources?.[0]?.kind, "exact_recovery");
     assert.equal(exact[0]?.sources?.[0]?.reason, "unbounded_exact_embedding_recovery");
 
     const hybrid = await access.stage1HybridCandidates({
-      queryEmbedding: [1, 0, 0],
+      queryEmbedding: SOURCE_TRACE_EMBEDDING,
       scope: "source-trace/default",
       limit: 5,
       consumerAgentId: null,
       consumerTeamId: null,
     });
-    assert.equal(hybrid[0]?.id, "semantic-target");
+    assert.equal(hybrid[0]?.id, SEMANTIC_TARGET_ID);
     assert.equal(hybrid[0]?.sources?.[0]?.kind, "semantic");
 
     const recent = await access.stage1RecentCandidates({
@@ -129,25 +129,25 @@ test("RecallStoreAccess v4 exposes candidate source traces without changing cand
       consumerAgentId: null,
       consumerTeamId: null,
     });
-    assert.equal(recent[0]?.id, "semantic-target");
+    assert.equal(recent[0]?.id, SEMANTIC_TARGET_ID);
     assert.equal(recent[0]?.sources?.[0]?.kind, "recent");
 
     assert.deepEqual(await access.stage1GraphCandidates({
       scope: "source-trace/default",
-      seedIds: ["semantic-target"],
+      seedIds: [SEMANTIC_TARGET_ID],
       limit: 5,
       consumerAgentId: null,
       consumerTeamId: null,
     }), []);
 
     const lexical = await access.stage1LexicalCandidates({
-      queryText: "semantic-target",
+      queryText: SEMANTIC_TARGET_ID,
       scope: "source-trace/default",
       limit: 5,
       consumerAgentId: null,
       consumerTeamId: null,
     });
-    assert.equal(lexical[0]?.id, "semantic-target");
+    assert.equal(lexical[0]?.id, SEMANTIC_TARGET_ID);
     assert.equal(lexical[0]?.sources?.[0]?.kind, "lexical");
     assert.equal(lexical[0]?.sources?.[0]?.reason, "keyword_index_match");
     const semanticSources = [
@@ -163,7 +163,7 @@ test("RecallStoreAccess v4 exposes candidate source traces without changing cand
 
     const sourceRows = await access.stage2Nodes({
       scope: "source-trace/default",
-      nodeIds: ["semantic-target"],
+      nodeIds: [SEMANTIC_TARGET_ID],
       consumerAgentId: null,
       consumerTeamId: null,
       includeSlots: true,
@@ -173,13 +173,13 @@ test("RecallStoreAccess v4 exposes candidate source traces without changing cand
       scope: "source-trace/default",
       query: {
         source: "embedding",
-        embedding_dims: 3,
+        embedding_dims: SOURCE_TRACE_EMBEDDING.length,
       },
       nodes: sourceRows,
       context_items: [],
-      ranked: [{ id: "semantic-target", score: semantic[0]!.similarity }],
+      ranked: [{ id: SEMANTIC_TARGET_ID, score: semantic[0]!.similarity }],
       recall_sources_by_memory_id: {
-        "semantic-target": semanticSources,
+        [SEMANTIC_TARGET_ID]: semanticSources,
       },
       source_map: {
         routes_used: ["/v1/memory/recall"],

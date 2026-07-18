@@ -17,13 +17,13 @@ import {
   releaseLiteRuntimeAttestationWriterFence,
   type LiteRuntimeAttestationWriterFenceCapability,
   type LiteRuntimeAttestationWriterFenceErrorCode,
-} from "../../src/store/lite-runtime-attestation-writer-fence.ts";
+} from "../../packages/aionis-learning-authority/src/store/lite-runtime-attestation-writer-fence.ts";
 import {
   closeLiteRuntimeProtectedAuthorityDatabasePin,
   LiteRuntimeProtectedAuthorityDatabaseError,
   pinLiteRuntimeProtectedAuthorityDatabase,
   type LiteRuntimeProtectedAuthorityDatabasePin,
-} from "../../src/store/lite-runtime-protected-authority-database.ts";
+} from "../../packages/aionis-learning-authority/src/store/lite-runtime-protected-authority-database.ts";
 import {
   createSqliteDatabase,
   createSqliteReadOnlyDatabase,

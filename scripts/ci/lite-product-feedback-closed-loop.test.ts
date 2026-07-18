@@ -53,6 +53,7 @@ import {
   type LiteLearningEpisodeLedgerAccess,
 } from "../../src/store/lite-learning-episode-ledger.ts";
 import {
+  assertLiteLearningControlJobOperationIntegrity,
   createLiteLearningControlJobAccess,
   type LiteLearningControlJobAccess,
 } from "../../src/store/lite-learning-control-jobs.ts";
@@ -63,6 +64,8 @@ import {
   type LiteRuntimeDatabase,
 } from "../../src/store/lite-runtime-database.ts";
 import { verifyLiteRuntimeDatabase } from "../../src/store/lite-runtime-data-operations.ts";
+import { assertProtectedMemoryFeedbackAuthorityMutationRoot } from
+  "../../src/store/lite-learning-safety-stop-integrity.ts";
 import {
   createLiteWriteStore,
   createLiteWriteStoreFromDatabase,
@@ -74,13 +77,16 @@ import {
 } from "../../src/jobs/unused-exposure-learning-control-worker.ts";
 import type { AuthPrincipal } from "../../src/util/auth.ts";
 import {
+  CONFIRMATORY_DEFAULT_TENANT_ID,
+  CONFIRMATORY_NOW,
   CONFIRMATORY_TENANT_ID,
   CONFIRMATORY_TASK_FAMILY,
   createConfirmatoryNamespaceManifest,
   createConfirmatoryPassedRegistry,
   createConfirmatoryProfile,
   createConfirmatoryProvisionInput,
-  provisionConfirmatoryFixture,
+  ensureConfirmatoryTenantScopeAnchor,
+  seedConfirmatoryPriorScopes,
   sha256,
 } from "./support/learning-experiment-confirmatory-fixture.ts";
 
@@ -395,6 +401,54 @@ function scalarCount(
   return Number(row.count);
 }
 
+function downgradeOpenFixtureToV5(database: LiteRuntimeDatabase): void {
+  database.db.exec("DROP TABLE lite_runtime_authority_adoption_bindings");
+  database.db.exec("DROP TABLE lite_runtime_authority_adoption_manifests");
+  database.db.prepare(
+    `UPDATE lite_runtime_schema_metadata
+     SET version = 5, updated_at = ?
+     WHERE component = 'write_projection'`,
+  ).run("2026-07-18T00:00:00.000Z");
+}
+
+async function prepareConfirmatoryV5PriorScopes(
+  dbPath: string,
+  manifest: ReturnType<typeof createConfirmatoryNamespaceManifest>,
+): Promise<void> {
+  const database = createLiteRuntimeDatabase(dbPath);
+  const writeStore = createLiteWriteStoreFromDatabase(database, {
+    annProjectionEnabled: false,
+    allowLegacyV1Fixtures: true,
+  });
+  let storeClosed = false;
+  try {
+    database.db.exec("BEGIN IMMEDIATE");
+    try {
+      downgradeOpenFixtureToV5(database);
+      database.db.exec("COMMIT");
+    } catch (error) {
+      database.db.exec("ROLLBACK");
+      throw error;
+    }
+    const runtime = {
+      database,
+      writeStore,
+      close: async () => undefined,
+    };
+    await ensureConfirmatoryTenantScopeAnchor(runtime, CONFIRMATORY_DEFAULT_TENANT_ID);
+    await seedConfirmatoryPriorScopes(runtime, manifest, CONFIRMATORY_DEFAULT_TENANT_ID);
+    assert.equal(
+      scalarCount(database, "SELECT COUNT(*) AS count FROM lite_memory_commits"),
+      768,
+    );
+    await writeStore.close();
+    storeClosed = true;
+  } finally {
+    if (!storeClosed) await writeStore.close().catch(() => undefined);
+    await database.close();
+  }
+}
+
 function mutateFeedbackAppendOnlyTables(
   database: LiteRuntimeDatabase,
   mutate: () => void,
@@ -538,8 +592,14 @@ async function prepareEligibleHostFeedbackScenario(args: {
   const intruderApiKey = `eligible-host-${args.name}-intruder-key`;
   const headers = { "x-api-key": apiKey };
   const intruderHeaders = { "x-api-key": intruderApiKey };
+  const dbPath = args.enrolled ? tmpDbPath(`${args.name}-v5-priors`) : undefined;
+  if (args.enrolled) {
+    assert.ok(namespaceManifest);
+    await prepareConfirmatoryV5PriorScopes(dbPath!, namespaceManifest);
+  }
   const fixture = setupLearningProductApp({
     name: args.name,
+    dbPath,
     overrides: {
       AIONIS_EDITION: "server",
       AIONIS_MODE: "service",
@@ -569,23 +629,55 @@ async function prepareEligibleHostFeedbackScenario(args: {
   try {
     if (args.enrolled) {
       assert.ok(namespaceManifest);
-      const provisioned = await provisionConfirmatoryFixture({
+      assert.equal(
+        scalarCount(
+          fixture.runtimeDatabase,
+          "SELECT COUNT(*) AS count FROM lite_runtime_authority_adoption_bindings",
+        ),
+        0,
+      );
+      assert.equal(
+        scalarCount(
+          fixture.runtimeDatabase,
+          "SELECT COUNT(*) AS count FROM lite_runtime_authority_adoption_manifests",
+        ),
+        0,
+      );
+      assert.equal(
+        scalarCount(
+          fixture.runtimeDatabase,
+          "SELECT COUNT(*) AS count FROM lite_memory_commits WHERE digest_version = 1",
+        ),
+        768,
+      );
+      const migratedPriors = await verifyLiteRuntimeDatabase(fixture.dbPath);
+      assert.equal(migratedPriors.ok, true);
+      assert.equal(migratedPriors.schema.detected_version, 6);
+      assert.equal(migratedPriors.commit_authority.adoption_assurance, "not_applicable");
+      const provisioned = await createLiteLearningExperimentProvisioner({
         database: fixture.runtimeDatabase,
         writeStore: fixture.liteWriteStore,
-        close: fixture.close,
-      }, {
-        input: createConfirmatoryProvisionInput({
-          tenantId: principal.tenant_id,
-          actor: `${args.name}-provisioner`,
-          operationId: `${args.name}-provision-operation`,
-          profileRule: profile,
-          taskFamily: CONFIRMATORY_TASK_FAMILY,
-          experimentId: profile.experiment.experiment_id,
-          experimentRevision: profile.experiment.revision,
-          memoryNamespaceManifest: namespaceManifest,
-        }),
-      });
-      assert.equal(provisioned.provisionResult.replayed, false);
+        ledger: fixture.learningEpisodeLedgerAccess,
+        dependencies: {
+          registry: createConfirmatoryPassedRegistry(),
+          defaultTenantId: CONFIRMATORY_DEFAULT_TENANT_ID,
+          now: () => CONFIRMATORY_NOW,
+          randomBytes: (size) => Uint8Array.from(
+            { length: size },
+            (_, index) => (0x61 + index) & 0xff,
+          ),
+        },
+      }).provision(createConfirmatoryProvisionInput({
+        tenantId: principal.tenant_id,
+        actor: `${args.name}-provisioner`,
+        operationId: `${args.name}-provision-operation`,
+        profileRule: profile,
+        taskFamily: CONFIRMATORY_TASK_FAMILY,
+        experimentId: profile.experiment.experiment_id,
+        experimentRevision: profile.experiment.revision,
+        memoryNamespaceManifest: namespaceManifest,
+      }));
+      assert.equal(provisioned.replayed, false);
     } else {
       const provisioned = await createLiteLearningExperimentProvisioner({
         database: fixture.runtimeDatabase,
@@ -867,6 +959,7 @@ async function guideForMarker(args: {
   app: ReturnType<typeof Fastify>;
   marker: string;
   operationId?: string;
+  omitConsumerAgent?: boolean;
 }) {
   const response = await args.app.inject({
     method: "POST",
@@ -876,7 +969,7 @@ async function guideForMarker(args: {
       tenant_id: "default",
       scope: "default",
       query_text: `${args.marker} status update memory`,
-      consumer_agent_id: "local-user",
+      ...(args.omitConsumerAgent ? {} : { consumer_agent_id: "local-user" }),
       limit: 8,
       include_packets: true,
     },
@@ -1326,13 +1419,72 @@ test("formal feedback atomically enqueues one deterministic unused-exposure cont
       retryAt: new Date(staleMutationAt.getTime() + 1_000),
     }), "retried");
 
-    const drained = await drainUnusedExposureLearningControlJobs({
+    const beforeCompletionFault = {
+      commits: scalarCount(
+        fixture.runtimeDatabase,
+        "SELECT COUNT(*) AS count FROM lite_memory_commits",
+      ),
+      operations: scalarCount(
+        fixture.runtimeDatabase,
+        `SELECT COUNT(*) AS count FROM lite_runtime_write_operations
+         WHERE operation_kind = 'unused_exposure_learning_control_v1'`,
+      ),
+      head: (fixture.runtimeDatabase.db.prepare(
+        "SELECT commit_id FROM lite_memory_scope_heads WHERE scope = 'default'",
+      ).get() as { commit_id: string }).commit_id,
+    };
+    fixture.runtimeDatabase.db.exec(
+      `CREATE TEMP TRIGGER reject_learning_control_complete
+       BEFORE UPDATE ON lite_learning_control_jobs
+       WHEN NEW.status = 'completed'
+       BEGIN
+         SELECT RAISE(ABORT, 'injected_learning_control_completion_failure');
+       END`,
+    );
+    const faultedDrain = await drainUnusedExposureLearningControlJobs({
       access: fixture.learningControlJobAccess,
       ledger: fixture.learningEpisodeLedgerAccess,
       writeStore: fixture.liteWriteStore,
       env: fixture.env,
       limit: 8,
       now: () => new Date(staleMutationAt.getTime() + 2_000),
+    });
+    assert.equal(faultedDrain.claimed, 1);
+    assert.equal(faultedDrain.completed, 0);
+    assert.equal(faultedDrain.retried, 1);
+    fixture.runtimeDatabase.db.exec("DROP TRIGGER reject_learning_control_complete");
+    assert.equal(
+      scalarCount(fixture.runtimeDatabase, "SELECT COUNT(*) AS count FROM lite_memory_commits"),
+      beforeCompletionFault.commits,
+    );
+    assert.equal(
+      scalarCount(
+        fixture.runtimeDatabase,
+        `SELECT COUNT(*) AS count FROM lite_runtime_write_operations
+         WHERE operation_kind = 'unused_exposure_learning_control_v1'`,
+      ),
+      beforeCompletionFault.operations,
+    );
+    assert.equal(
+      (fixture.runtimeDatabase.db.prepare(
+        "SELECT commit_id FROM lite_memory_scope_heads WHERE scope = 'default'",
+      ).get() as { commit_id: string }).commit_id,
+      beforeCompletionFault.head,
+    );
+    assert.equal(
+      (await slotsForMemory({ liteWriteStore: fixture.liteWriteStore, memoryId: unusedMemoryId }))
+        .feedback_learning_control_posture,
+      undefined,
+    );
+    const [retriedJob] = await fixture.learningControlJobAccess.listLearningControlJobs();
+    assert.ok(retriedJob);
+    const drained = await drainUnusedExposureLearningControlJobs({
+      access: fixture.learningControlJobAccess,
+      ledger: fixture.learningEpisodeLedgerAccess,
+      writeStore: fixture.liteWriteStore,
+      env: fixture.env,
+      limit: 8,
+      now: () => new Date(new Date(retriedJob.available_at).getTime() + 1),
     });
     assert.deepEqual(drained, {
       claimed: 1,
@@ -1381,6 +1533,319 @@ test("formal feedback atomically enqueues one deterministic unused-exposure cont
   } finally {
     fixture.runtimeDatabase.db.exec("DROP TRIGGER IF EXISTS reject_learning_control_enqueue");
     await fixture.close();
+  }
+});
+
+test("learning-control replays private local nodes when guide omits consumer_agent_id", async () => {
+  const fixture = setupLearningProductApp({ name: "unused-exposure-local-actor-fallback" });
+  let fixtureClosed = false;
+  let reopened: ReturnType<typeof setupLearningProductApp> | null = null;
+  try {
+    const marker = "AIONIS_UNUSED_CONTROL_LOCAL_ACTOR_FALLBACK";
+    const usedMemoryId = await observeMemory({
+      app: fixture.app,
+      clientId: "memory:unused-control:local-actor:used",
+      title: "Local actor used memory",
+      text: `${marker} This private memory is positively attributed.`,
+    });
+    const unusedMemoryId = await observeMemory({
+      app: fixture.app,
+      clientId: "memory:unused-control:local-actor:unused",
+      title: "Local actor unused memory",
+      text: `${marker} This private memory remains unused across guides.`,
+    });
+    await guideForMarker({
+      app: fixture.app,
+      marker,
+      operationId: "guide:unused-control:local-actor:first",
+      omitConsumerAgent: true,
+    });
+    const sourceGuide = await guideForMarker({
+      app: fixture.app,
+      marker,
+      operationId: "guide:unused-control:local-actor:second",
+      omitConsumerAgent: true,
+    });
+    const sourceReceipt = fixture.runtimeDatabase.db.prepare(
+      `SELECT consumer_agent_id FROM lite_product_guide_receipts
+       WHERE tenant_id = 'default' AND scope = 'default' AND guide_trace_id = ?`,
+    ).get(sourceGuide.guide_trace_id) as { consumer_agent_id: string | null } | undefined;
+    assert.ok(sourceReceipt);
+    assert.equal(sourceReceipt.consumer_agent_id, null);
+
+    const feedback = await fixture.app.inject({
+      method: "POST",
+      url: "/v1/feedback",
+      payload: {
+        operation_id: "feedback:unused-control:local-actor",
+        tenant_id: "default",
+        scope: "default",
+        guide_trace_id: sourceGuide.guide_trace_id,
+        used_memory_ids: [usedMemoryId],
+        run_id: "run:unused-control:local-actor",
+        outcome: "positive",
+        used_surface: "use_now",
+        verifier_status: "unknown",
+        tool_status: "unknown",
+        reason: "Exercise the default local actor visibility contract.",
+      },
+    });
+    assert.equal(feedback.statusCode, 200, feedback.body);
+    const drained = await drainUnusedExposureLearningControlJobs({
+      access: fixture.learningControlJobAccess,
+      ledger: fixture.learningEpisodeLedgerAccess,
+      writeStore: fixture.liteWriteStore,
+      env: fixture.env,
+      limit: 8,
+      now: () => new Date(Date.now() + 1_000),
+    });
+    assert.equal(drained.completed, 1);
+    assert.equal(
+      (await slotsForMemory({
+        liteWriteStore: fixture.liteWriteStore,
+        memoryId: unusedMemoryId,
+      })).feedback_learning_control_posture,
+      "inspect_before_use",
+    );
+    const outcome = fixture.runtimeDatabase.db.prepare(
+      `SELECT authority_commit.actor, operation.receipt_json
+       FROM lite_learning_control_jobs AS job
+       JOIN lite_memory_commits AS authority_commit
+         ON authority_commit.id = job.result_commit_id
+       JOIN lite_runtime_write_operations AS operation
+         ON operation.tenant_id = job.tenant_id
+        AND operation.scope = job.scope
+        AND operation.operation_kind = 'unused_exposure_learning_control_v1'
+        AND operation.operation_id = job.operation_id
+       WHERE job.status = 'completed'`,
+    ).get() as { actor: string; receipt_json: string } | undefined;
+    assert.ok(outcome);
+    assert.equal(outcome.actor, fixture.env.LITE_LOCAL_ACTOR_ID);
+    assert.equal((await verifyLiteRuntimeDatabase(fixture.dbPath)).ok, true);
+
+    await fixture.close();
+    fixtureClosed = true;
+    reopened = setupLearningProductApp({
+      name: "unused-exposure-local-actor-fallback-reopen",
+      dbPath: fixture.dbPath,
+    });
+    assert.equal((await verifyLiteRuntimeDatabase(fixture.dbPath)).ok, true);
+  } finally {
+    if (reopened) await reopened.close();
+    if (!fixtureClosed) await fixture.close();
+  }
+});
+
+test("learning-control legal no-op binds the durable partition to an authentic intermediate head", async () => {
+  const fixture = setupLearningProductApp({ name: "unused-exposure-control-legal-no-op" });
+  let fixtureClosed = false;
+  try {
+    const marker = "AIONIS_UNUSED_CONTROL_LEGAL_NO_OP_MARKER";
+    const usedMemoryId = await observeMemory({
+      app: fixture.app,
+      clientId: "memory:unused-control:legal-no-op:used",
+      title: "Legal no-op used memory",
+      text: `${marker} The formal host uses this memory.`,
+    });
+    const unusedMemoryId = await observeMemory({
+      app: fixture.app,
+      clientId: "memory:unused-control:legal-no-op:unused",
+      title: "Legal no-op initially unused memory",
+      text: `${marker} This memory gains positive attribution before worker drain.`,
+    });
+    await guideForMarker({
+      app: fixture.app,
+      marker,
+      operationId: "guide:unused-control:legal-no-op:first",
+    });
+    const sourceGuide = await guideForMarker({
+      app: fixture.app,
+      marker,
+      operationId: "guide:unused-control:legal-no-op:second",
+    });
+    const formalFeedback = await fixture.app.inject({
+      method: "POST",
+      url: "/v1/feedback",
+      payload: {
+        operation_id: "feedback:unused-control:legal-no-op:formal",
+        tenant_id: "default",
+        scope: "default",
+        guide_trace_id: sourceGuide.guide_trace_id,
+        used_memory_ids: [usedMemoryId],
+        run_id: "run:unused-control:legal-no-op:formal",
+        outcome: "positive",
+        used_surface: "use_now",
+        verifier_status: "unknown",
+        tool_status: "unknown",
+        reason: "Queue the unused exposure before an independent positive use arrives.",
+      },
+    });
+    assert.equal(formalFeedback.statusCode, 200, formalFeedback.body);
+    const [queued] = await fixture.learningControlJobAccess.listLearningControlJobs();
+    assert.ok(queued);
+    assert.equal(queued.status, "pending");
+
+    const independentPositive = await fixture.app.inject({
+      method: "POST",
+      url: "/v1/feedback",
+      payload: {
+        tenant_id: "default",
+        scope: "default",
+        memory_ids: [unusedMemoryId],
+        run_id: "run:unused-control:legal-no-op:independent-positive",
+        outcome: "positive",
+        used_surface: "use_now",
+        verifier_status: "unknown",
+        tool_status: "unknown",
+        reason: "A separate direct use blocks the queued inspect-before-use mutation.",
+      },
+    });
+    assert.equal(independentPositive.statusCode, 200, independentPositive.body);
+    const intermediateHead = fixture.runtimeDatabase.db.prepare(
+      "SELECT commit_id FROM lite_memory_scope_heads WHERE scope = 'default'",
+    ).get() as { commit_id: string } | undefined;
+    assert.ok(intermediateHead);
+    assert.notEqual(intermediateHead.commit_id, queued.source_commit_id);
+
+    const drained = await drainUnusedExposureLearningControlJobs({
+      access: fixture.learningControlJobAccess,
+      ledger: fixture.learningEpisodeLedgerAccess,
+      writeStore: fixture.liteWriteStore,
+      env: fixture.env,
+      limit: 8,
+      now: () => new Date(Date.now() + 1_000),
+    });
+    assert.deepEqual(drained, {
+      claimed: 1,
+      completed: 1,
+      no_op: 1,
+      retried: 0,
+      terminalization_deferred: 0,
+      last_terminalization_error_code: null,
+      dead_lettered: 0,
+      safety_paused: 0,
+      stale_claims: 0,
+    });
+    const [completed] = await fixture.learningControlJobAccess.listLearningControlJobs();
+    assert.ok(completed);
+    assert.equal(completed.status, "completed");
+    assert.notEqual(completed.result_commit_id, intermediateHead.commit_id);
+    const outcomeCommit = fixture.runtimeDatabase.db.prepare(
+      `SELECT parent_commit_id, digest_version, revision, diff_json
+       FROM lite_memory_commits WHERE id = ?`,
+    ).get(completed.result_commit_id) as {
+      parent_commit_id: string | null;
+      digest_version: number;
+      revision: number;
+      diff_json: string;
+    } | undefined;
+    assert.ok(outcomeCommit);
+    assert.equal(outcomeCommit.parent_commit_id, intermediateHead.commit_id);
+    assert.equal(outcomeCommit.digest_version, 2);
+    const outcomeDiff = JSON.parse(outcomeCommit.diff_json) as Record<string, any>;
+    assert.equal(outcomeDiff.authority_kind, "learning_control_operation_outcome");
+    assert.equal(
+      outcomeDiff.mutations[0].requested.domain_result_commit_id,
+      intermediateHead.commit_id,
+    );
+    assert.deepEqual(outcomeDiff.mutations[0].requested.applied_node_ids, []);
+    assert.deepEqual(
+      outcomeDiff.mutations[0].requested.skipped_positive_attribution_memory_ids,
+      [unusedMemoryId],
+    );
+    const operation = fixture.runtimeDatabase.db.prepare(
+      `SELECT receipt_json FROM lite_runtime_write_operations
+       WHERE operation_kind = 'unused_exposure_learning_control_v1'
+         AND operation_id = ?`,
+    ).get(completed.operation_id) as { receipt_json: string } | undefined;
+    assert.ok(operation);
+    assert.deepEqual(JSON.parse(operation.receipt_json), {
+      contract_version: "unused_exposure_learning_control_operation_receipt_v1",
+      status: "completed",
+      tenant_id: "default",
+      scope: "default",
+      job_id: completed.job_id,
+      operation_kind: "unused_exposure_learning_control_v1",
+      operation_id: completed.operation_id,
+      source_episode_id: completed.source_episode_id,
+      source_feedback_event_id: completed.source_feedback_event_id,
+      source_commit_id: completed.source_commit_id,
+      payload_sha256: completed.payload_sha256,
+      attempt_count: completed.attempt_count,
+      result_commit_id: completed.result_commit_id,
+      changed_memory_ids: [],
+      skipped_positive_attribution_memory_ids: [unusedMemoryId],
+      missing_node_ids: [],
+      last_error_code: null,
+      completed_at: completed.completed_at,
+    });
+    const forgedOldHeadReceipt = stableStringify({
+      ...JSON.parse(operation.receipt_json),
+      result_commit_id: intermediateHead.commit_id,
+    });
+    fixture.runtimeDatabase.db.exec("BEGIN IMMEDIATE");
+    try {
+      fixture.runtimeDatabase.db.exec("DROP TRIGGER trg_lite_learning_control_jobs_update");
+      fixture.runtimeDatabase.db.prepare(
+        "UPDATE lite_learning_control_jobs SET result_commit_id = ? WHERE job_id = ?",
+      ).run(intermediateHead.commit_id, completed.job_id);
+      fixture.runtimeDatabase.db.prepare(
+        `UPDATE lite_runtime_write_operations SET commit_id = ?, receipt_json = ?
+         WHERE operation_kind = 'unused_exposure_learning_control_v1' AND operation_id = ?`,
+      ).run(intermediateHead.commit_id, forgedOldHeadReceipt, completed.operation_id);
+      assert.throws(
+        () => assertLiteLearningControlJobOperationIntegrity(
+          fixture.runtimeDatabase.db,
+          { tenant_id: "default", scope: "default", job_id: completed.job_id },
+        ),
+        /learning_control_result_commit|learning_control_outcome/u,
+      );
+      fixture.runtimeDatabase.db.prepare(
+        "UPDATE lite_learning_control_jobs SET result_commit_id = ? WHERE job_id = ?",
+      ).run(completed.result_commit_id, completed.job_id);
+      fixture.runtimeDatabase.db.prepare(
+        `UPDATE lite_runtime_write_operations SET commit_id = ?, receipt_json = ?
+         WHERE operation_kind = 'unused_exposure_learning_control_v1' AND operation_id = ?`,
+      ).run(completed.result_commit_id, operation.receipt_json, completed.operation_id);
+      fixture.runtimeDatabase.db.exec(
+        LITE_LEARNING_LEDGER_REQUIRED_TRIGGERS.trg_lite_learning_control_jobs_update!.sql,
+      );
+      fixture.runtimeDatabase.db.exec("COMMIT");
+    } catch (error) {
+      fixture.runtimeDatabase.db.exec("ROLLBACK");
+      throw error;
+    }
+    await observeMemory({
+      app: fixture.app,
+      clientId: "memory:unused-control:legal-no-op:later-head",
+      title: "Later unrelated head",
+      text: "A later valid write must not make the historical no-op result cease to verify.",
+    });
+    assert.equal((await verifyLiteRuntimeDatabase(fixture.dbPath)).ok, true);
+
+    await fixture.close();
+    fixtureClosed = true;
+    const reopened = createLiteRuntimeDatabase(fixture.dbPath);
+    try {
+      await createLiteLearningEpisodeLedgerAccess(reopened).verifyIntegrity();
+      assert.equal((await verifyLiteRuntimeDatabase(fixture.dbPath)).ok, true);
+      const authentic = reopened.db.prepare(
+        "SELECT mutation_digest FROM lite_memory_commits WHERE id = ?",
+      ).get(intermediateHead.commit_id) as { mutation_digest: string } | undefined;
+      assert.ok(authentic);
+      reopened.db.prepare(
+        "UPDATE lite_memory_commits SET mutation_digest = ? WHERE id = ?",
+      ).run("0".repeat(64), intermediateHead.commit_id);
+      assert.equal((await verifyLiteRuntimeDatabase(fixture.dbPath)).ok, false);
+      reopened.db.prepare(
+        "UPDATE lite_memory_commits SET mutation_digest = ? WHERE id = ?",
+      ).run(authentic.mutation_digest, intermediateHead.commit_id);
+      assert.equal((await verifyLiteRuntimeDatabase(fixture.dbPath)).ok, true);
+    } finally {
+      await reopened.close();
+    }
+  } finally {
+    if (!fixtureClosed) await fixture.close();
   }
 });
 
@@ -1482,6 +1947,25 @@ test("pre-Step4 protected markerless feedback reopens without a synthetic contro
       collection_class: event.collection_class,
       recorded_at: event.recorded_at,
     });
+    const directReceiptCommit = fixture.runtimeDatabase.db.prepare(
+      `SELECT authority.id, authority.parent_commit_id,
+              parent.revision AS parent_revision, parent.created_at AS parent_created_at
+       FROM lite_memory_scope_heads AS head
+       JOIN lite_memory_commits AS authority ON authority.id = head.commit_id
+       JOIN lite_memory_commits AS parent ON parent.id = authority.parent_commit_id
+       WHERE head.scope = 'default'
+         AND json_extract(authority.diff_json, '$.authority_kind') = 'runtime_operation_receipt'
+         AND json_extract(
+           authority.diff_json,
+           '$.mutations[0].identity.operation_id'
+         ) = ?`,
+    ).get(operationId) as {
+      id: string;
+      parent_commit_id: string;
+      parent_revision: number;
+      parent_created_at: string;
+    } | undefined;
+    assert.ok(directReceiptCommit);
     fixture.runtimeDatabase.db.exec("BEGIN IMMEDIATE");
     try {
       fixture.runtimeDatabase.db.exec("DROP TRIGGER trg_lite_learning_episode_events_update");
@@ -1503,6 +1987,20 @@ test("pre-Step4 protected markerless feedback reopens without a synthetic contro
       fixture.runtimeDatabase.db.prepare(
         "DELETE FROM lite_learning_control_jobs WHERE source_feedback_event_id = ?",
       ).run(event.event_id);
+      fixture.runtimeDatabase.db.prepare(
+        `UPDATE lite_memory_scope_heads
+         SET commit_id = ?, revision = ?, updated_at = ?
+         WHERE scope = 'default' AND commit_id = ?`,
+      ).run(
+        directReceiptCommit.parent_commit_id,
+        directReceiptCommit.parent_revision,
+        directReceiptCommit.parent_created_at,
+        directReceiptCommit.id,
+      );
+      fixture.runtimeDatabase.db.prepare(
+        "DELETE FROM lite_memory_commits WHERE id = ?",
+      ).run(directReceiptCommit.id);
+      downgradeOpenFixtureToV5(fixture.runtimeDatabase);
       fixture.runtimeDatabase.db.exec(
         LITE_LEARNING_LEDGER_REQUIRED_TRIGGERS.trg_lite_learning_episode_events_update!.sql,
       );
@@ -1515,16 +2013,41 @@ test("pre-Step4 protected markerless feedback reopens without a synthetic contro
       throw error;
     }
     assert.equal((await fixture.learningControlJobAccess.listLearningControlJobs()).length, 0);
-    assert.equal((await verifyLiteRuntimeDatabase(fixture.dbPath)).ok, true);
+    const historical = await verifyLiteRuntimeDatabase(fixture.dbPath);
+    assert.equal(historical.ok, true);
+    assert.equal(historical.schema.detected_version, 5);
+    assert.equal(historical.commit_authority.terminal_delegated_operation_row_count, 1);
 
     await fixture.close();
     closed = true;
     const reopened = createLiteRuntimeDatabase(fixture.dbPath);
+    const reopenedWriteStore = createLiteWriteStoreFromDatabase(reopened, {
+      annProjectionEnabled: false,
+    });
     try {
       await createLiteLearningEpisodeLedgerAccess(reopened).verifyIntegrity();
       assert.equal((await createLiteLearningControlJobAccess(reopened).listLearningControlJobs()).length, 0);
+      assert.equal(
+        scalarCount(
+          reopened,
+          `SELECT COUNT(*) AS count
+           FROM lite_runtime_authority_adoption_bindings
+           WHERE authority_table = 'lite_runtime_write_operations'
+             AND json_extract(identity_json, '$.operation_id') = ?`,
+          operationId,
+        ),
+        1,
+      );
+      const migrated = await verifyLiteRuntimeDatabase(fixture.dbPath);
+      assert.equal(migrated.ok, true);
+      assert.equal(migrated.schema.detected_version, 6);
+      assert.equal(migrated.commit_authority.adoption_binding_count, 1);
     } finally {
-      await reopened.close();
+      try {
+        await reopenedWriteStore.close();
+      } finally {
+        await reopened.close();
+      }
     }
   } finally {
     if (!closed) await fixture.close();
@@ -1536,6 +2059,7 @@ test("learning-control resumes after enqueue restart and stays exact after post-
   let fixtureClosed = false;
   let reopenedDatabase: LiteRuntimeDatabase | null = null;
   let reopenedWriteStore: ReturnType<typeof createLiteWriteStoreFromDatabase> | null = null;
+  let bodyCompleted = false;
   try {
     const marker = "AIONIS_UNUSED_CONTROL_PROCESS_LOSS_MARKER";
     const usedMemoryId = await observeMemory({
@@ -1704,9 +2228,31 @@ test("learning-control resumes after enqueue restart and stays exact after post-
     );
     assert.equal((await verifyLiteRuntimeDatabase(fixture.dbPath)).ok, true);
 
+    const outcomeCommit = reopenedDatabase.db.prepare(
+      `SELECT parent_commit_id, diff_json FROM lite_memory_commits WHERE id = ?`,
+    ).get(completed.result_commit_id) as {
+      parent_commit_id: string | null;
+      diff_json: string;
+    } | undefined;
+    assert.ok(outcomeCommit?.parent_commit_id);
+    const outcomeDiff = JSON.parse(outcomeCommit.diff_json) as Record<string, any>;
+    assert.equal(outcomeDiff.authority_kind, "learning_control_operation_outcome");
+    assert.equal(
+      outcomeDiff.mutations[0].requested.domain_result_commit_id,
+      outcomeCommit.parent_commit_id,
+    );
+    assert.deepEqual(
+      outcomeDiff.mutations[0].requested.applied_node_ids,
+      [unusedMemoryId],
+    );
+    const domainCommitId = outcomeCommit.parent_commit_id;
     const auditCommit = reopenedDatabase.db.prepare(
-      "SELECT diff_json, commit_hash FROM lite_memory_commits WHERE id = ?",
-    ).get(completed.result_commit_id) as { diff_json: string; commit_hash: string } | undefined;
+      "SELECT diff_json, mutation_digest, commit_hash FROM lite_memory_commits WHERE id = ?",
+    ).get(domainCommitId) as {
+      diff_json: string;
+      mutation_digest: string;
+      commit_hash: string;
+    } | undefined;
     const auditOperation = reopenedDatabase.db.prepare(
       `SELECT receipt_json FROM lite_runtime_write_operations
        WHERE operation_kind = 'unused_exposure_learning_control_v1'
@@ -1716,25 +2262,93 @@ test("learning-control resumes after enqueue restart and stays exact after post-
     assert.ok(auditOperation);
     const originalDiff = JSON.parse(auditCommit.diff_json) as Record<string, any>;
     const originalReceipt = JSON.parse(auditOperation.receipt_json) as Record<string, any>;
+    const forgedNoOpReceipt = {
+      ...originalReceipt,
+      changed_memory_ids: [],
+      skipped_positive_attribution_memory_ids: [
+        ...originalReceipt.changed_memory_ids,
+        ...originalReceipt.skipped_positive_attribution_memory_ids,
+      ].sort(),
+    };
     reopenedDatabase.db.prepare(
-      "UPDATE lite_memory_commits SET diff_json = ? WHERE id = ?",
-    ).run(stableStringify({ ...originalDiff, reason: "forged learning-control reason" }), completed.result_commit_id);
+      `UPDATE lite_runtime_write_operations SET receipt_json = ?
+       WHERE operation_kind = 'unused_exposure_learning_control_v1'
+         AND operation_id = ?`,
+    ).run(stableStringify(forgedNoOpReceipt), completed.operation_id);
+    const forgedNoOp = await verifyLiteRuntimeDatabase(fixture.dbPath);
+    assert.equal(forgedNoOp.ok, false);
+    assert.ok(forgedNoOp.integrity_findings.commit_authority_invalid > 0);
+    assert.equal(forgedNoOp.learning.integrity_error, null);
+    const restoredNoOpReceipt = reopenedDatabase.db.prepare(
+      `UPDATE lite_runtime_write_operations SET receipt_json = ?
+       WHERE operation_kind = 'unused_exposure_learning_control_v1'
+         AND operation_id = ?`,
+    ).run(auditOperation.receipt_json, completed.operation_id);
+    assert.equal(restoredNoOpReceipt.changes, 1);
+    assert.equal(
+      (reopenedDatabase.db.prepare(
+        `SELECT receipt_json FROM lite_runtime_write_operations
+         WHERE operation_kind = 'unused_exposure_learning_control_v1'
+           AND operation_id = ?`,
+      ).get(completed.operation_id) as { receipt_json: string }).receipt_json,
+      auditOperation.receipt_json,
+    );
+
+    const forgedReasonDiff = structuredClone(originalDiff);
+    for (const mutation of forgedReasonDiff.mutations) {
+      mutation.requested.operation_context.reason = "forged learning-control reason";
+    }
+    const forgedReasonJson = stableStringify(forgedReasonDiff);
+    reopenedDatabase.db.prepare(
+      "UPDATE lite_memory_commits SET diff_json = ?, mutation_digest = ? WHERE id = ?",
+    ).run(forgedReasonJson, sha256(forgedReasonJson), domainCommitId);
     const forgedReason = await verifyLiteRuntimeDatabase(fixture.dbPath);
     assert.equal(forgedReason.ok, false);
-    assert.match(String(forgedReason.learning.integrity_error), /learning_control_result_commit_binding/u);
+    assert.ok(forgedReason.integrity_findings.commit_authority_invalid > 0);
+    assert.equal(forgedReason.learning.integrity_error, null);
     reopenedDatabase.db.prepare(
-      "UPDATE lite_memory_commits SET diff_json = ? WHERE id = ?",
-    ).run(auditCommit.diff_json, completed.result_commit_id);
+      "UPDATE lite_memory_commits SET diff_json = ?, mutation_digest = ? WHERE id = ?",
+    ).run(auditCommit.diff_json, auditCommit.mutation_digest, domainCommitId);
+
+    const forgedStateDiff = structuredClone(originalDiff);
+    const forgedStateMutation = forgedStateDiff.mutations[0];
+    assert.ok(forgedStateMutation);
+    forgedStateMutation.after.slots_json.feedback_learning_control_evidence_count =
+      Number(forgedStateMutation.after.slots_json.feedback_learning_control_evidence_count ?? 0) + 7;
+    forgedStateMutation.requested.slots_json = structuredClone(
+      forgedStateMutation.after.slots_json,
+    );
+    forgedStateMutation.after.salience = Number(forgedStateMutation.after.salience) + 0.123;
+    forgedStateMutation.requested.salience = forgedStateMutation.after.salience;
+    const forgedStateJson = stableStringify(forgedStateDiff);
+    reopenedDatabase.db.prepare(
+      "UPDATE lite_memory_commits SET diff_json = ?, mutation_digest = ? WHERE id = ?",
+    ).run(forgedStateJson, sha256(forgedStateJson), domainCommitId);
+    const forgedState = await verifyLiteRuntimeDatabase(fixture.dbPath);
+    assert.equal(forgedState.ok, false);
+    assert.ok(forgedState.integrity_findings.commit_authority_invalid > 0);
+    assert.equal(forgedState.learning.integrity_error, null);
+    reopenedDatabase.db.prepare(
+      "UPDATE lite_memory_commits SET diff_json = ?, mutation_digest = ? WHERE id = ?",
+    ).run(auditCommit.diff_json, auditCommit.mutation_digest, domainCommitId);
 
     const outsiderMemoryId = "memory-outside-source-exposure";
+    const forgedPartitionDiff = structuredClone(originalDiff);
+    for (const mutation of forgedPartitionDiff.mutations) {
+      const context = mutation.requested.operation_context;
+      context.requested_node_ids = [...context.requested_node_ids, outsiderMemoryId];
+      context.resolved_node_ids = [...context.resolved_node_ids, outsiderMemoryId];
+      context.applied_node_ids = [...context.applied_node_ids, outsiderMemoryId];
+    }
+    const outsiderMutation = structuredClone(forgedPartitionDiff.mutations[0]);
+    outsiderMutation.identity.id = outsiderMemoryId;
+    outsiderMutation.before.id = outsiderMemoryId;
+    outsiderMutation.after.id = outsiderMemoryId;
+    forgedPartitionDiff.mutations.push(outsiderMutation);
+    const forgedPartitionJson = stableStringify(forgedPartitionDiff);
     reopenedDatabase.db.prepare(
-      "UPDATE lite_memory_commits SET diff_json = ? WHERE id = ?",
-    ).run(stableStringify({
-      ...originalDiff,
-      requested_node_ids: [...originalDiff.requested_node_ids, outsiderMemoryId],
-      resolved_node_ids: [...originalDiff.resolved_node_ids, outsiderMemoryId],
-      applied_node_ids: [...originalDiff.applied_node_ids, outsiderMemoryId],
-    }), completed.result_commit_id);
+      "UPDATE lite_memory_commits SET diff_json = ?, mutation_digest = ? WHERE id = ?",
+    ).run(forgedPartitionJson, sha256(forgedPartitionJson), domainCommitId);
     reopenedDatabase.db.prepare(
       `UPDATE lite_runtime_write_operations SET receipt_json = ?
        WHERE operation_kind = 'unused_exposure_learning_control_v1'
@@ -1745,18 +2359,41 @@ test("learning-control resumes after enqueue restart and stays exact after post-
     }), completed.operation_id);
     const forgedPartition = await verifyLiteRuntimeDatabase(fixture.dbPath);
     assert.equal(forgedPartition.ok, false);
-    assert.match(String(forgedPartition.learning.integrity_error), /learning_control_result_commit_binding/u);
+    assert.ok(forgedPartition.integrity_findings.commit_authority_invalid > 0);
+    assert.equal(forgedPartition.learning.integrity_error, null);
     reopenedDatabase.db.prepare(
-      "UPDATE lite_memory_commits SET diff_json = ?, commit_hash = ? WHERE id = ?",
-    ).run(auditCommit.diff_json, auditCommit.commit_hash, completed.result_commit_id);
-    reopenedDatabase.db.prepare(
+      `UPDATE lite_memory_commits
+       SET diff_json = ?, mutation_digest = ?, commit_hash = ? WHERE id = ?`,
+    ).run(
+      auditCommit.diff_json,
+      auditCommit.mutation_digest,
+      auditCommit.commit_hash,
+      domainCommitId,
+    );
+    const restoredPartitionReceipt = reopenedDatabase.db.prepare(
       `UPDATE lite_runtime_write_operations SET receipt_json = ?
        WHERE operation_kind = 'unused_exposure_learning_control_v1'
          AND operation_id = ?`,
     ).run(auditOperation.receipt_json, completed.operation_id);
+    assert.equal(restoredPartitionReceipt.changes, 1);
+    assert.equal(
+      (reopenedDatabase.db.prepare(
+        `SELECT receipt_json FROM lite_runtime_write_operations
+         WHERE operation_kind = 'unused_exposure_learning_control_v1'
+           AND operation_id = ?`,
+      ).get(completed.operation_id) as { receipt_json: string }).receipt_json,
+      auditOperation.receipt_json,
+    );
     assert.equal((await verifyLiteRuntimeDatabase(fixture.dbPath)).ok, true);
+    bodyCompleted = true;
   } finally {
-    if (reopenedWriteStore) await reopenedWriteStore.close();
+    if (reopenedWriteStore) {
+      try {
+        await reopenedWriteStore.close();
+      } catch (error) {
+        if (bodyCompleted) throw error;
+      }
+    }
     if (reopenedDatabase) await reopenedDatabase.close();
     if (!fixtureClosed) await fixture.close();
   }
@@ -2246,8 +2883,18 @@ test("a post-attribution fault rolls back the boundary mutation, episode event, 
     );
     assert.equal(
       scalarCount(fixture.runtimeDatabase, "SELECT COUNT(*) AS count FROM lite_memory_commits"),
-      commitCountBefore + 1,
+      commitCountBefore + 2,
     );
+    const feedbackHead = fixture.runtimeDatabase.db.prepare(
+      `SELECT commit_row.diff_json
+       FROM lite_memory_scope_heads AS head
+       JOIN lite_memory_commits AS commit_row ON commit_row.id = head.commit_id
+       WHERE head.scope = 'default'`,
+    ).get() as { diff_json: string } | undefined;
+    assert.ok(feedbackHead);
+    const feedbackHeadDiff = JSON.parse(feedbackHead.diff_json) as Record<string, any>;
+    assert.equal(feedbackHeadDiff.authority_kind, "runtime_operation_receipt");
+    assert.equal(feedbackHeadDiff.mutations[0].identity.operation_id, operationId);
     const committed = await fixture.liteWriteStore.findNodes({
       scope: "default",
       id: memoryId,
@@ -2859,25 +3506,41 @@ test("strict host-use receipt persists verified evidence while receipt identity 
        WHERE operation_kind = 'product_feedback_v1' AND operation_id = ?`,
     ).get(operationId) as { receipt_json: string; commit_id: string } | undefined;
     assert.ok(protectedOperation);
-    const protectedReceipt = JSON.parse(protectedOperation.receipt_json) as Record<string, any>;
-    scenario.runtimeDatabase.db.prepare(
-      `UPDATE lite_runtime_write_operations SET receipt_json = ?
-       WHERE operation_kind = 'product_feedback_v1' AND operation_id = ?`,
-    ).run(stableStringify({
-      ...protectedReceipt,
-      body: {
-        ...protectedReceipt.body,
-        result: { ...protectedReceipt.body.result, commit_id: "forged-feedback-commit" },
-      },
-    }), operationId);
-    const forgedOperationReceipt = await verifyLiteRuntimeDatabase(scenario.dbPath);
-    assert.equal(forgedOperationReceipt.ok, false);
-    assert.equal(forgedOperationReceipt.integrity_findings.learning_episode_ledger_invalid, 1);
-    assert.match(String(forgedOperationReceipt.learning.integrity_error), /feedback_operation_receipt/u);
-    scenario.runtimeDatabase.db.prepare(
-      `UPDATE lite_runtime_write_operations SET receipt_json = ?
-       WHERE operation_kind = 'product_feedback_v1' AND operation_id = ?`,
-    ).run(protectedOperation.receipt_json, operationId);
+    const protectedOperationReceiptJson = String(protectedOperation.receipt_json);
+    const protectedReceipt = JSON.parse(protectedOperationReceiptJson) as Record<string, any>;
+    try {
+      scenario.runtimeDatabase.db.prepare(
+        `UPDATE lite_runtime_write_operations SET receipt_json = ?
+         WHERE operation_kind = 'product_feedback_v1' AND operation_id = ?`,
+      ).run(stableStringify({
+        ...protectedReceipt,
+        body: {
+          ...protectedReceipt.body,
+          result: { ...protectedReceipt.body.result, commit_id: "forged-feedback-commit" },
+        },
+      }), operationId);
+      const forgedOperationReceipt = await verifyLiteRuntimeDatabase(scenario.dbPath);
+      assert.equal(forgedOperationReceipt.ok, false);
+      assert.ok(forgedOperationReceipt.integrity_findings.commit_authority_invalid > 0);
+      assert.equal(forgedOperationReceipt.integrity_findings.learning_episode_ledger_invalid, 0);
+      assert.equal(forgedOperationReceipt.learning.integrity_error, null);
+      assert.ok(forgedOperationReceipt.commit_authority.findings.some((finding) =>
+        finding.code === "lite_memory_commit_authority_terminal_row_mismatch"
+        && finding.cause_code === "lite_runtime_write_operations:receipt_json"
+      ));
+    } finally {
+      scenario.runtimeDatabase.db.prepare(
+        `UPDATE lite_runtime_write_operations SET receipt_json = ?
+         WHERE operation_kind = 'product_feedback_v1' AND operation_id = ?`,
+      ).run(protectedOperationReceiptJson, operationId);
+    }
+    assert.equal(
+      (scenario.runtimeDatabase.db.prepare(
+        `SELECT receipt_json FROM lite_runtime_write_operations
+         WHERE operation_kind = 'product_feedback_v1' AND operation_id = ?`,
+      ).get(operationId) as { receipt_json: string }).receipt_json,
+      protectedOperationReceiptJson,
+    );
     assert.equal((await verifyLiteRuntimeDatabase(scenario.dbPath)).ok, true);
 
     const originalAttribution = scenario.runtimeDatabase.db.prepare(
@@ -2984,17 +3647,89 @@ test("strict host-use receipt persists verified evidence while receipt identity 
     assert.equal((await verifyLiteRuntimeDatabase(scenario.dbPath)).ok, true);
 
     const sourceCommit = scenario.runtimeDatabase.db.prepare(
-      "SELECT diff_json FROM lite_memory_commits WHERE id = ?",
-    ).get(protectedOperation.commit_id) as { diff_json: string } | undefined;
+      "SELECT diff_json, input_sha256 FROM lite_memory_commits WHERE id = ?",
+    ).get(protectedOperation.commit_id) as {
+      diff_json: string;
+      input_sha256: string;
+    } | undefined;
     assert.ok(sourceCommit);
-    const sourceDiff = JSON.parse(sourceCommit.diff_json) as Record<string, unknown>;
+    const sourceDiff = JSON.parse(sourceCommit.diff_json) as Record<string, any>;
+    const rootedSource = assertProtectedMemoryFeedbackAuthorityMutationRoot({
+      mutation: sourceDiff,
+      scope: scenario.principal.default_scope,
+      subjectIds: [scenario.memoryId],
+      inputSha256: sourceCommit.input_sha256,
+    });
+    assert.equal(rootedSource.operationContext.feedback_operation_id, operationId);
+
+    const foreignMemoryId = "ffffffff-ffff-4fff-8fff-ffffffffffff";
+    const extraSubject = structuredClone(sourceDiff);
+    const foreignMutation = structuredClone(extraSubject.mutations[0]);
+    foreignMutation.identity.id = foreignMemoryId;
+    foreignMutation.before.id = foreignMemoryId;
+    foreignMutation.after.id = foreignMemoryId;
+    extraSubject.mutations.push(foreignMutation);
+    assert.throws(
+      () => assertProtectedMemoryFeedbackAuthorityMutationRoot({
+        mutation: extraSubject,
+        scope: scenario.principal.default_scope,
+        subjectIds: [scenario.memoryId],
+        inputSha256: sourceCommit.input_sha256,
+      }),
+      /feedback_source_commit_node_subjects/u,
+    );
+
+    const inconsistentContexts = structuredClone(extraSubject);
+    inconsistentContexts.mutations[1].requested.operation_context.reason =
+      "A second node mutation cannot carry a different protected feedback context.";
+    assert.throws(
+      () => assertProtectedMemoryFeedbackAuthorityMutationRoot({
+        mutation: inconsistentContexts,
+        scope: scenario.principal.default_scope,
+        subjectIds: [scenario.memoryId, foreignMemoryId],
+        inputSha256: sourceCommit.input_sha256,
+      }),
+      /feedback_source_commit_operation_context_mismatch/u,
+    );
+
+    const forgedUnrelatedField = structuredClone(sourceDiff);
+    forgedUnrelatedField.mutations[0].after.title = "forged authority title";
+    assert.throws(
+      () => assertProtectedMemoryFeedbackAuthorityMutationRoot({
+        mutation: forgedUnrelatedField,
+        scope: scenario.principal.default_scope,
+        subjectIds: [scenario.memoryId],
+        inputSha256: sourceCommit.input_sha256,
+      }),
+      /feedback_source_commit_node_mutation/u,
+    );
+
+    const forgedAllowedState = structuredClone(sourceDiff);
+    const forgedAllowedMutation = forgedAllowedState.mutations[0];
+    forgedAllowedMutation.after.slots_json = {
+      ...forgedAllowedMutation.after.slots_json,
+      feedback_positive: 10_000,
+    };
+    forgedAllowedMutation.requested.slots_json = forgedAllowedMutation.after.slots_json;
+    forgedAllowedMutation.after.salience = 0.123456;
+    forgedAllowedMutation.requested.salience = forgedAllowedMutation.after.salience;
+    assert.throws(
+      () => assertProtectedMemoryFeedbackAuthorityMutationRoot({
+        mutation: forgedAllowedState,
+        scope: scenario.principal.default_scope,
+        subjectIds: [scenario.memoryId],
+        inputSha256: sourceCommit.input_sha256,
+      }),
+      /feedback_source_commit_node_state/u,
+    );
+
     scenario.runtimeDatabase.db.prepare(
       "UPDATE lite_memory_commits SET diff_json = ? WHERE id = ?",
     ).run(stableStringify({ ...sourceDiff, guide_trace_id: "forged-guide-trace" }), protectedOperation.commit_id);
     const forgedSourceCommit = await verifyLiteRuntimeDatabase(scenario.dbPath);
     assert.equal(forgedSourceCommit.ok, false);
-    assert.equal(forgedSourceCommit.integrity_findings.learning_episode_ledger_invalid, 1);
-    assert.match(String(forgedSourceCommit.learning.integrity_error), /feedback_source_commit/u);
+    assert.ok(forgedSourceCommit.integrity_findings.commit_authority_invalid > 0);
+    assert.equal(forgedSourceCommit.learning.integrity_error, null);
     scenario.runtimeDatabase.db.prepare(
       "UPDATE lite_memory_commits SET diff_json = ? WHERE id = ?",
     ).run(sourceCommit.diff_json, protectedOperation.commit_id);
@@ -3457,7 +4192,8 @@ test("eligible-host boundary feedback appends safety pause authority and restart
     assert.equal(authorityReceipt.scope, safety.authority_operation_scope);
     assert.equal(authorityReceipt.operation_id, safety.authority_operation_id);
     assert.equal(authorityReceipt.commit_id, safety.source_commit_id);
-    const authorityReceiptBody = JSON.parse(String(authorityReceipt.receipt_json));
+    const authorityReceiptJson = String(authorityReceipt.receipt_json);
+    const authorityReceiptBody = JSON.parse(authorityReceiptJson);
     assert.equal(authorityReceiptBody.contract_version, "learning_safety_stop_operation_receipt_v1");
     assert.equal(authorityReceiptBody.operation_kind, "learning_gate_authority_v1");
     assert.equal(authorityReceiptBody.operation_id, safety.authority_operation_id);
@@ -3498,38 +4234,54 @@ test("eligible-host boundary feedback appends safety pause authority and restart
     assert.ok(foldedAuthority.candidate_authority_actions.includes("pause"));
 
     assert.equal((await verifyLiteRuntimeDatabase(scenario.dbPath)).ok, true);
-    scenario.runtimeDatabase.db.prepare(
-      `UPDATE lite_runtime_write_operations
-       SET receipt_json = ?
-       WHERE operation_kind = 'learning_gate_authority_v1' AND operation_id = ?`,
-    ).run("{}", safety.authority_operation_id);
-    const tampered = await verifyLiteRuntimeDatabase(scenario.dbPath);
-    assert.equal(tampered.ok, false);
-    assert.equal(tampered.integrity_findings.learning_episode_ledger_invalid, 1);
-    assert.match(String(tampered.learning.integrity_error), /safety_stop|receipt/u);
-    scenario.runtimeDatabase.db.prepare(
-      `UPDATE lite_runtime_write_operations
-       SET receipt_json = ?
-       WHERE operation_kind = 'learning_gate_authority_v1' AND operation_id = ?`,
-    ).run(authorityReceipt.receipt_json, safety.authority_operation_id);
+    try {
+      scenario.runtimeDatabase.db.prepare(
+        `UPDATE lite_runtime_write_operations
+         SET receipt_json = ?
+         WHERE operation_kind = 'learning_gate_authority_v1' AND operation_id = ?`,
+      ).run("{}", safety.authority_operation_id);
+      const tampered = await verifyLiteRuntimeDatabase(scenario.dbPath);
+      assert.equal(tampered.ok, false);
+      assert.ok(tampered.integrity_findings.commit_authority_invalid > 0);
+      assert.equal(tampered.integrity_findings.learning_episode_ledger_invalid, 0);
+      assert.equal(tampered.learning.integrity_error, null);
+      assert.ok(tampered.commit_authority.findings.some((finding) =>
+        finding.code === "lite_memory_commit_authority_terminal_row_mismatch"
+        && finding.cause_code === "lite_runtime_write_operations:receipt_json"
+      ));
+    } finally {
+      scenario.runtimeDatabase.db.prepare(
+        `UPDATE lite_runtime_write_operations
+         SET receipt_json = ?
+         WHERE operation_kind = 'learning_gate_authority_v1' AND operation_id = ?`,
+      ).run(authorityReceiptJson, safety.authority_operation_id);
+    }
     assert.equal((await verifyLiteRuntimeDatabase(scenario.dbPath)).ok, true);
-    scenario.runtimeDatabase.db.prepare(
-      `UPDATE lite_runtime_write_operations
-       SET receipt_json = ?
-       WHERE operation_kind = 'learning_gate_authority_v1' AND operation_id = ?`,
-    ).run(
-      JSON.stringify({ ...authorityReceiptBody, trigger_ref_kind: "control_job" }),
-      safety.authority_operation_id,
-    );
-    const wrongTriggerKind = await verifyLiteRuntimeDatabase(scenario.dbPath);
-    assert.equal(wrongTriggerKind.ok, false);
-    assert.equal(wrongTriggerKind.integrity_findings.learning_episode_ledger_invalid, 1);
-    assert.match(String(wrongTriggerKind.learning.integrity_error), /safety_stop|receipt/u);
-    scenario.runtimeDatabase.db.prepare(
-      `UPDATE lite_runtime_write_operations
-       SET receipt_json = ?
-       WHERE operation_kind = 'learning_gate_authority_v1' AND operation_id = ?`,
-    ).run(authorityReceipt.receipt_json, safety.authority_operation_id);
+    try {
+      scenario.runtimeDatabase.db.prepare(
+        `UPDATE lite_runtime_write_operations
+         SET receipt_json = ?
+         WHERE operation_kind = 'learning_gate_authority_v1' AND operation_id = ?`,
+      ).run(
+        JSON.stringify({ ...authorityReceiptBody, trigger_ref_kind: "control_job" }),
+        safety.authority_operation_id,
+      );
+      const wrongTriggerKind = await verifyLiteRuntimeDatabase(scenario.dbPath);
+      assert.equal(wrongTriggerKind.ok, false);
+      assert.ok(wrongTriggerKind.integrity_findings.commit_authority_invalid > 0);
+      assert.equal(wrongTriggerKind.integrity_findings.learning_episode_ledger_invalid, 0);
+      assert.equal(wrongTriggerKind.learning.integrity_error, null);
+      assert.ok(wrongTriggerKind.commit_authority.findings.some((finding) =>
+        finding.code === "lite_memory_commit_authority_terminal_row_mismatch"
+        && finding.cause_code === "lite_runtime_write_operations:receipt_json"
+      ));
+    } finally {
+      scenario.runtimeDatabase.db.prepare(
+        `UPDATE lite_runtime_write_operations
+         SET receipt_json = ?
+         WHERE operation_kind = 'learning_gate_authority_v1' AND operation_id = ?`,
+      ).run(authorityReceiptJson, safety.authority_operation_id);
+    }
     assert.equal((await verifyLiteRuntimeDatabase(scenario.dbPath)).ok, true);
 
     const nextEnvelope = {
@@ -4262,11 +5014,8 @@ test("protected tool feedback preserves full guide provenance while attributing 
     ).run(stableStringify(invalidProvenanceMetadata), guide.tool_selection.decision_id);
     const invalidProvenance = await verifyLiteRuntimeDatabase(fixture.dbPath);
     assert.equal(invalidProvenance.ok, false);
-    assert.match(
-      String(invalidProvenance.learning.integrity_error),
-      /tool_feedback_decision_mutation_binding/u,
-      "v2 authority must reject any persisted decision metadata that diverges from the committed after-row",
-    );
+    assert.ok(invalidProvenance.integrity_findings.commit_authority_invalid > 0);
+    assert.equal(invalidProvenance.learning.integrity_error, null);
 
     const reboundProvenanceMetadata = structuredClone(originalMetadata);
     const reboundProvenance = reboundProvenanceMetadata.tool_rule_evaluation_provenance_v1;
@@ -4280,11 +5029,8 @@ test("protected tool feedback preserves full guide provenance while attributing 
     ).run(stableStringify(reboundProvenanceMetadata), guide.tool_selection.decision_id);
     const reboundProvenanceVerification = await verifyLiteRuntimeDatabase(fixture.dbPath);
     assert.equal(reboundProvenanceVerification.ok, false);
-    assert.match(
-      String(reboundProvenanceVerification.learning.integrity_error),
-      /tool_feedback_decision_mutation_binding/u,
-      "rehashing forged provenance cannot bypass the committed v2 decision row",
-    );
+    assert.ok(reboundProvenanceVerification.integrity_findings.commit_authority_invalid > 0);
+    assert.equal(reboundProvenanceVerification.learning.integrity_error, null);
 
     fixture.runtimeDatabase.db.prepare(
       "UPDATE lite_memory_execution_decisions SET metadata_json = ? WHERE id = ?",

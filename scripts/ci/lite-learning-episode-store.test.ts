@@ -84,10 +84,10 @@ import {
   learningExternalBrokerServiceInstanceDigest,
   learningExternalPublicRunAuthorityDigest,
   learningExternalPublicRunAuthorityPayloadDigest,
-} from "../../src/memory/learning-external-public-authority.ts";
+} from "../../packages/aionis-learning-authority/src/memory/learning-external-public-authority.ts";
 import {
   LEARNING_EXTERNAL_EVIDENCE_ARCHIVE_V1_MAGIC,
-} from "../../src/memory/learning-external-evidence-archive.ts";
+} from "../../packages/aionis-learning-authority/src/memory/learning-external-evidence-archive.ts";
 import {
   LearningExternalAttemptChainV1Schema,
   LearningExternalEvidenceBindingV1Schema,
@@ -112,21 +112,21 @@ import {
   createLiteLearningExternalEvidenceIngestionAccess,
   LiteLearningExternalEvidenceIngestOperationReceiptV1Schema,
 } from
-  "../../src/store/lite-learning-external-evidence-ingestion.ts";
+  "../../packages/aionis-learning-authority/src/store/lite-learning-external-evidence-ingestion.ts";
 import { ingestLiteLearningExternalEvidence } from
-  "../../src/store/lite-learning-external-evidence-service.ts";
+  "../../packages/aionis-learning-authority/src/store/lite-learning-external-evidence-service.ts";
 import {
   closePreparedLiteLearningExternalEvidenceArchive,
   inspectPreparedLiteLearningExternalEvidenceArchive,
   prepareLiteLearningExternalEvidenceArchive,
   type PreparedLiteLearningExternalEvidenceArchive,
-} from "../../src/store/lite-learning-external-evidence-archive-reader.ts";
+} from "../../packages/aionis-learning-authority/src/store/lite-learning-external-evidence-archive-reader.ts";
 import {
   closeLiteRuntimeProtectedAuthorityDatabasePin,
   pinLiteRuntimeProtectedAuthorityDatabase,
   runLiteRuntimeProtectedAuthorityTransaction,
   type LiteRuntimeProtectedAuthorityTransactionCapability,
-} from "../../src/store/lite-runtime-protected-authority-database.ts";
+} from "../../packages/aionis-learning-authority/src/store/lite-runtime-protected-authority-database.ts";
 import {
   LEARNING_COLLECTION_SOURCE_POLICY_STRICT_VALIDATION_CONTRACT,
   LearningExperimentProvisionReceiptV1Schema,
@@ -169,6 +169,10 @@ import {
   inspectLiteRuntimeSchema,
   LITE_RUNTIME_WRITE_SCHEMA_VERSION,
 } from "../../src/store/lite-runtime-schema.ts";
+import {
+  LITE_RUNTIME_AUTHORITY_ADOPTION_BINDING_TABLE,
+  LITE_RUNTIME_AUTHORITY_ADOPTION_MANIFEST_TABLE,
+} from "../../src/store/lite-runtime-authority-adoption-contract.ts";
 import { createSqliteDatabase, type SqliteDatabase } from "../../src/store/sqlite.ts";
 import {
   createLiteWriteStore,
@@ -255,6 +259,31 @@ function tableColumns(db: SqliteDatabase, table: string): string[] {
 
 const normalizeSchemaSql = normalizeSqliteSchemaSql;
 
+function dropAuthorityAdoptionV6Objects(db: SqliteDatabase): void {
+  // The binding table owns the deferred FK to the manifest. Historical
+  // fixtures must remove it first so they represent a real pre-v6 database,
+  // rather than old metadata with live v6 authority objects.
+  db.exec(`DROP TABLE IF EXISTS ${LITE_RUNTIME_AUTHORITY_ADOPTION_BINDING_TABLE}`);
+  db.exec(`DROP TABLE IF EXISTS ${LITE_RUNTIME_AUTHORITY_ADOPTION_MANIFEST_TABLE}`);
+}
+
+function downgradeCurrentFixtureToLegacyV5(db: SqliteDatabase): void {
+  db.exec("BEGIN IMMEDIATE");
+  try {
+    dropAuthorityAdoptionV6Objects(db);
+    const metadataUpdate = db.prepare(
+      `UPDATE lite_runtime_schema_metadata
+       SET version = 5, updated_at = ?
+       WHERE component = 'write_projection'`,
+    ).run("2026-07-19T00:00:00.000Z");
+    assert.equal(Number(metadataUpdate.changes ?? 0), 1);
+    db.exec("COMMIT");
+  } catch (error) {
+    db.exec("ROLLBACK");
+    throw error;
+  }
+}
+
 function downgradeCurrentFixtureToLegacyV3(
   dbPath: string,
   triggerSql = LITE_LEARNING_V3_ELIGIBLE_ACTIVE_LEASE_TRIGGER_SQL,
@@ -262,6 +291,7 @@ function downgradeCurrentFixtureToLegacyV3(
   const db = createSqliteDatabase(dbPath);
   db.exec("BEGIN IMMEDIATE");
   try {
+    dropAuthorityAdoptionV6Objects(db);
     db.exec("DROP TRIGGER trg_lite_learning_eligible_active_lease");
     db.exec(triggerSql);
     const metadataUpdate = db.prepare(
@@ -1549,6 +1579,7 @@ async function createV2Fixture(dbPath: string): Promise<void> {
   const db = createSqliteDatabase(dbPath);
   try {
     db.exec("BEGIN IMMEDIATE");
+    dropAuthorityAdoptionV6Objects(db);
     for (const trigger of LITE_LEARNING_LEDGER_REQUIRED_TRIGGER_NAMES) {
       db.exec(`DROP TRIGGER IF EXISTS ${trigger}`);
     }
@@ -1693,18 +1724,18 @@ test("randomization pair identity is server-derived from tenant, unordered membe
   }));
 });
 
-test("fresh Runtime initialization atomically installs the current v5 learning schema", async () => {
-  const temp = tempDatabase("fresh-v5");
+test("fresh Runtime initialization atomically installs the current v6 learning schema", async () => {
+  const temp = tempDatabase("fresh-v6");
   try {
     const store = createLiteWriteStore(temp.path, { annProjectionEnabled: false });
     await store.close();
 
     const db = createSqliteDatabase(temp.path);
     try {
-      assert.equal(LITE_RUNTIME_WRITE_SCHEMA_VERSION, 5);
+      assert.equal(LITE_RUNTIME_WRITE_SCHEMA_VERSION, 6);
       const report = inspectLiteRuntimeSchema(db);
       assert.equal(report.classification, "current");
-      assert.equal(report.detected_version, 5);
+      assert.equal(report.detected_version, 6);
       assert.deepEqual(report.missing_tables, []);
       assert.deepEqual(report.missing_columns, {});
       assert.deepEqual(report.constraint_problems, []);
@@ -1787,7 +1818,7 @@ test("historical fixed override keeps its none/unassigned cache valid after reop
         ["feedback_attributed", "unassigned"],
       ]);
       assert.equal(JSON.parse(String(rows[0]?.payload_json)).assignment_algorithm, "none");
-      assert.equal(inspectLiteRuntimeSchema(reopenedDatabase.db).detected_version, 5);
+      assert.equal(inspectLiteRuntimeSchema(reopenedDatabase.db).detected_version, 6);
     } finally {
       await reopenedStore.close();
       await reopenedDatabase.close();
@@ -2057,7 +2088,7 @@ test("schema preflight rejects a real partial-index predicate comment spoof", as
   }
 });
 
-test("exact legacy v3 active-lease trigger migrates atomically through v5 on reopen", async () => {
+test("exact legacy v3 active-lease trigger migrates atomically through v6 on reopen", async () => {
   const temp = tempDatabase("v3-active-lease-trigger-upgrade");
   try {
     const initialized = createLiteWriteStore(temp.path, { annProjectionEnabled: false });
@@ -2087,7 +2118,7 @@ test("exact legacy v3 active-lease trigger migrates atomically through v5 on reo
       const report = inspectLiteRuntimeSchema(before);
       assert.equal(report.classification, "supported_previous_v3");
       assert.equal(report.detected_version, 3);
-      assert.equal(report.current_version, 5);
+      assert.equal(report.current_version, 6);
       assert.equal(report.upgrade_required, true);
       const trigger = before.prepare(
         `SELECT sql FROM sqlite_schema
@@ -2107,7 +2138,7 @@ test("exact legacy v3 active-lease trigger migrates atomically through v5 on reo
     try {
       const report = inspectLiteRuntimeSchema(after);
       assert.equal(report.classification, "current");
-      assert.equal(report.detected_version, 5);
+      assert.equal(report.detected_version, 6);
       assert.equal(report.upgrade_required, false);
       const trigger = after.prepare(
         `SELECT sql FROM sqlite_schema
@@ -2207,7 +2238,7 @@ test("v3-to-v4 migration rejects missing or substituted active-lease triggers", 
   }
 });
 
-test("process death cannot expose a partial v3-to-v5 trigger migration", async () => {
+test("process death cannot expose a partial v3-to-v6 trigger migration", async () => {
   const temp = tempDatabase("v3-trigger-kill-rollback");
   try {
     const initialized = createLiteWriteStore(temp.path, { annProjectionEnabled: false });
@@ -2251,7 +2282,7 @@ test("process death cannot expose a partial v3-to-v5 trigger migration", async (
         (current.prepare(
           "SELECT version FROM lite_runtime_schema_metadata WHERE component = 'write_projection'",
         ).get() as { version: number }).version,
-        5,
+        6,
       );
     } finally {
       current.close();
@@ -2392,7 +2423,10 @@ test("structural ledger corruption fails closed on access, reopen, verify, backu
     } finally {
       await reopenedDatabase.close();
     }
-    await assert.rejects(writeStore.close(), /runtime_authority_identity/);
+    // The first failed close above is terminal and already closed this store;
+    // subsequent close calls are intentionally idempotent. Reopen, verify and
+    // backup have independently proved the later identity corruption.
+    await writeStore.close();
     writeStore = null;
   } finally {
     await database.close();
@@ -2400,7 +2434,7 @@ test("structural ledger corruption fails closed on access, reopen, verify, backu
   }
 });
 
-test("v2-to-v5 migration preserves all eight authority and semantic row families", async () => {
+test("v2-to-v6 migration preserves all eight authority and semantic row families", async () => {
   const temp = tempDatabase("preservation");
   try {
     await createV2Fixture(temp.path);
@@ -2413,7 +2447,6 @@ test("v2-to-v5 migration preserves all eight authority and semantic row families
     const db = createSqliteDatabase(temp.path);
     try {
       const tables = [
-        "lite_memory_commits",
         "lite_memory_nodes",
         "lite_memory_edges",
         "lite_product_guide_receipts",
@@ -2429,6 +2462,20 @@ test("v2-to-v5 migration preserves all eight authority and semantic row families
           `${table} row was not preserved`,
         );
       }
+      assert.equal(
+        (db.prepare(
+          "SELECT COUNT(*) AS count FROM lite_memory_commits",
+        ).get() as { count: number }).count,
+        2,
+        "the preserved legacy commit plus its v6 adoption manifest commit must remain",
+      );
+      assert.equal(
+        (db.prepare(
+          "SELECT COUNT(*) AS count FROM lite_memory_commits WHERE id = 'commit-preserved'",
+        ).get() as { count: number }).count,
+        1,
+        "the original legacy commit must remain byte-addressable after adoption",
+      );
       const measurement = db.prepare(
         `SELECT baseline_episode_id, after_episode_id, record_sha256
          FROM lite_product_measurements WHERE measurement_id = 'measurement-preserved'`,
@@ -2445,7 +2492,7 @@ test("v2-to-v5 migration preserves all eight authority and semantic row families
   }
 });
 
-test("v2-to-v5 migration fault rolls back every DDL group and metadata update", async () => {
+test("v2-to-v6 migration fault rolls back every DDL group and metadata update", async () => {
   const temp = tempDatabase("fault-rollback");
   try {
     await createV2Fixture(temp.path);
@@ -2465,11 +2512,11 @@ test("v2-to-v5 migration fault rolls back every DDL group and metadata update", 
           annProjectionEnabled: false,
           schemaMigrationFaultInjector(phase) {
             if (phase === "before_metadata_update") {
-              throw new Error("injected v5 migration failure before metadata");
+              throw new Error("injected v6 migration failure before metadata");
             }
           },
         }),
-        /injected v5 migration failure before metadata/,
+        /injected v6 migration failure before metadata/,
       );
     } finally {
       await database.close();
@@ -2589,6 +2636,10 @@ test("confirmatory provisioning freezes its cohort while protected close authori
       annProjectionEnabled: false,
       authorityReceiptKeyring: storeCloseKeyring(),
     });
+    // The guide/feedback roots below intentionally model pre-v6 persisted
+    // Runtime history. Build that history against the real v5 surface, then
+    // perform one owned v5->v6 adoption before exercising current verification.
+    downgradeCurrentFixtureToLegacyV5(database.db);
     const ledger = createLiteLearningEpisodeLedgerAccess(database, {
       authorityReceiptKeyring: storeCloseKeyring(),
     });
@@ -3067,6 +3118,16 @@ test("confirmatory provisioning freezes its cohort while protected close authori
         /learning_active_namespace_lease_isolation_violation/,
       );
     }
+    // The lease-isolation fixture is deliberately injected after this scope
+    // already has v2 authority. It exists only while the rejected probes run;
+    // retaining it would manufacture an impossible legacy-after-v2 history
+    // that the final close correctly refuses to treat as authoritative.
+    database.db.prepare(
+      "DELETE FROM lite_memory_nodes WHERE scope = ? AND id = ?",
+    ).run(activeStoreScope, "memory-active-lease-probe");
+    database.db.prepare(
+      "DELETE FROM lite_memory_commits WHERE scope = ? AND id = ?",
+    ).run(activeStoreScope, "commit-active-lease-probe");
     const windowBoundaryExposure = (
       suffix: string,
       boundaryRecordedAt: string,
@@ -3407,6 +3468,108 @@ test("confirmatory provisioning freezes its cohort while protected close authori
       });
     });
     assert.equal(insertedExposure.replayed, false);
+
+    const receiptItem = {
+      memory_id: exposureItem.memory_id,
+      used_surface: "inspect_before_use",
+      outcome: "positive",
+      action_outcome: "accepted_completed",
+      verifier_kind: "instrumented_agent_trace",
+      verifier_version: "verifier-v1",
+      verifier_config_sha256: sha256("verifier-config-v1"),
+      verifier_status: "passed",
+      content_evidence_sha256: sha256("content-evidence-confirmatory-a"),
+      evidence_ref_sha256: sha256("evidence-ref-confirmatory-a"),
+    } as const;
+    const receiptBody: HostUseReceiptV1Body = {
+      contract_version: "host_use_receipt_v1",
+      receipt_id: "host-receipt-confirmatory-a",
+      guide_trace_id: guideTraceId,
+      episode_id: episodeId,
+      operation_id: "operation-feedback-confirmatory-a",
+      run_id: "run-feedback-confirmatory-a",
+      host_task_id: hostEnvelope.host_task_id,
+      host_task_envelope_sha256: exposurePayload.host_task_envelope_sha256,
+      collector_id: hostEnvelope.collector_id,
+      collector_version: hostEnvelope.collector_version,
+      host_trace_sha256: sha256("host-trace-confirmatory-a"),
+      observed_at: recordedAt,
+      items: [receiptItem],
+    };
+    const receiptSha256 = hostUseReceiptDigest(receiptBody);
+    const closedAt = new Date(new Date(afterIndexWindow).getTime() + 30_000).toISOString();
+    const feedbackRecordedAt = new Date(new Date(closedAt).getTime() + 60_000).toISOString();
+    const feedbackRuntimeSignalRefs = ["runtime-signal-confirmatory-a"];
+    const feedbackCommitParent = database.db.prepare(
+      `SELECT id, commit_hash FROM lite_memory_commits
+       WHERE scope = ? ORDER BY created_at DESC, id DESC LIMIT 1`,
+    ).get(activeStoreScope) as { id: string; commit_hash: string } | undefined;
+    assert.ok(feedbackCommitParent);
+    const feedbackCommitInputSha256 = sha256("feedback-input-confirmatory-a");
+    const feedbackCommitDiff = {
+      job: "nodes_activate",
+      started_at: feedbackRecordedAt,
+      scope: activeStoreScope,
+      actor: "formal-guide-agent",
+      run_id: receiptBody.run_id,
+      guide_trace_id: guideTraceId,
+      learning_episode_id: episodeId,
+      feedback_operation_id: receiptBody.operation_id,
+      outcome: receiptItem.outcome,
+      activate: true,
+      feedback: {
+        used_surface: receiptItem.used_surface,
+        verifier_status: receiptItem.verifier_status,
+        tool_status: null,
+        runtime_signal_refs: feedbackRuntimeSignalRefs,
+        boundary_ignored_memory_ids: [],
+        verified_host_receipt: true,
+        subjects: [{ memory_id: exposureItem.memory_id, boundary_ignored: false }],
+      },
+      reason: "Confirmatory host receipt feedback.",
+      requested: { node_ids: [exposureItem.memory_id], client_ids: [] },
+      resolved_by_client: [],
+      found_node_ids: [exposureItem.memory_id],
+      missing_node_ids: [],
+      missing_client_ids: [],
+    };
+    const feedbackCommitDiffJson = stableStringify(feedbackCommitDiff);
+    const feedbackCommitHash = sha256(stableStringify({
+      parentHash: feedbackCommitParent.commit_hash,
+      inputSha: feedbackCommitInputSha256,
+      diffSha: sha256(feedbackCommitDiffJson),
+      scope: activeStoreScope,
+      actor: feedbackCommitDiff.actor,
+      kind: "nodes_activate",
+    }));
+    const feedbackCommitId = stableUuid(`lite:commit:${feedbackCommitHash}`);
+    const insertFeedbackCommit = () => {
+      database.db.prepare(
+        `INSERT INTO lite_memory_commits
+          (id, scope, parent_commit_id, input_sha256, diff_json, actor,
+           model_version, prompt_version, commit_hash, created_at)
+         VALUES (?, ?, ?, ?, ?, ?, NULL, NULL, ?, ?)`,
+      ).run(
+        feedbackCommitId,
+        activeStoreScope,
+        feedbackCommitParent.id,
+        feedbackCommitInputSha256,
+        feedbackCommitDiffJson,
+        feedbackCommitDiff.actor,
+        feedbackCommitHash,
+        feedbackRecordedAt,
+      );
+    };
+    await database.transaction.run(async () => insertFeedbackCommit());
+
+    const adoptedFixtureStore = createLiteWriteStore(temp.path, {
+      annProjectionEnabled: false,
+      authorityReceiptKeyring: storeCloseKeyring(),
+    });
+    await adoptedFixtureStore.close();
+    assert.equal(inspectLiteRuntimeSchema(database.db).classification, "current");
+    assert.equal(inspectLiteRuntimeSchema(database.db).detected_version, 6);
+
     await assert.rejects(
       ledger.resolveMeasurementEpisodePair({
         tenantId: exposureEvent.tenant_id,
@@ -3879,15 +4042,16 @@ test("confirmatory provisioning freezes its cohort while protected close authori
       ledger.verifyIntegrity(),
       (error: unknown) => {
         assert.match(
-          String((error as { cause?: unknown }).cause),
-          /learning_promotion_eligible_guide_root_mismatch:guide_served_surface_membership/,
+          String(error),
+          /lite_memory_commit_authority_terminal_row_unclaimed/,
         );
         return true;
       },
     );
     const substitutedSurfaceVerification = await verifyLiteRuntimeDatabase(temp.path);
     assert.equal(substitutedSurfaceVerification.ok, false);
-    assert.equal(substitutedSurfaceVerification.integrity_findings.learning_episode_ledger_invalid, 1);
+    assert.ok(substitutedSurfaceVerification.integrity_findings.commit_authority_invalid > 0);
+    assert.equal(substitutedSurfaceVerification.integrity_findings.learning_episode_ledger_invalid, 0);
     database.db.exec("DROP TRIGGER trg_lite_learning_episode_events_update");
     database.db.prepare(
       `UPDATE lite_product_guide_receipts SET ledger_sha256 = ?, ledger_json = ?
@@ -3947,7 +4111,8 @@ test("confirmatory provisioning freezes its cohort while protected close authori
     );
     const forgedRootVerification = await verifyLiteRuntimeDatabase(temp.path);
     assert.equal(forgedRootVerification.ok, false);
-    assert.equal(forgedRootVerification.integrity_findings.learning_episode_ledger_invalid, 1);
+    assert.ok(forgedRootVerification.integrity_findings.commit_authority_invalid > 0);
+    assert.equal(forgedRootVerification.integrity_findings.learning_episode_ledger_invalid, 0);
     database.db.prepare(
       `UPDATE lite_runtime_write_operations
        SET request_sha256 = ?
@@ -3970,98 +4135,6 @@ test("confirmatory provisioning freezes its cohort while protected close authori
       async () => await ledger.provisionConfirmatorySet(fixture),
     );
     assert.equal(replayAfterExposure.replayed, true);
-
-    const receiptItem = {
-      memory_id: exposureItem.memory_id,
-      used_surface: "inspect_before_use",
-      outcome: "positive",
-      action_outcome: "accepted_completed",
-      verifier_kind: "instrumented_agent_trace",
-      verifier_version: "verifier-v1",
-      verifier_config_sha256: sha256("verifier-config-v1"),
-      verifier_status: "passed",
-      content_evidence_sha256: sha256("content-evidence-confirmatory-a"),
-      evidence_ref_sha256: sha256("evidence-ref-confirmatory-a"),
-    } as const;
-    const receiptBody: HostUseReceiptV1Body = {
-      contract_version: "host_use_receipt_v1",
-      receipt_id: "host-receipt-confirmatory-a",
-      guide_trace_id: guideTraceId,
-      episode_id: episodeId,
-      operation_id: "operation-feedback-confirmatory-a",
-      run_id: "run-feedback-confirmatory-a",
-      host_task_id: hostEnvelope.host_task_id,
-      host_task_envelope_sha256: exposurePayload.host_task_envelope_sha256,
-      collector_id: hostEnvelope.collector_id,
-      collector_version: hostEnvelope.collector_version,
-      host_trace_sha256: sha256("host-trace-confirmatory-a"),
-      observed_at: recordedAt,
-      items: [receiptItem],
-    };
-    const receiptSha256 = hostUseReceiptDigest(receiptBody);
-    const closedAt = new Date(new Date(afterIndexWindow).getTime() + 30_000).toISOString();
-    const feedbackRecordedAt = new Date(new Date(closedAt).getTime() + 60_000).toISOString();
-    const feedbackRuntimeSignalRefs = ["runtime-signal-confirmatory-a"];
-    const feedbackCommitParent = database.db.prepare(
-      `SELECT id, commit_hash FROM lite_memory_commits
-       WHERE scope = ? ORDER BY created_at DESC, id DESC LIMIT 1`,
-    ).get(activeStoreScope) as { id: string; commit_hash: string } | undefined;
-    assert.ok(feedbackCommitParent);
-    const feedbackCommitInputSha256 = sha256("feedback-input-confirmatory-a");
-    const feedbackCommitDiff = {
-      job: "nodes_activate",
-      started_at: feedbackRecordedAt,
-      scope: activeStoreScope,
-      actor: "formal-guide-agent",
-      run_id: receiptBody.run_id,
-      guide_trace_id: guideTraceId,
-      learning_episode_id: episodeId,
-      feedback_operation_id: receiptBody.operation_id,
-      outcome: receiptItem.outcome,
-      activate: true,
-      feedback: {
-        used_surface: receiptItem.used_surface,
-        verifier_status: receiptItem.verifier_status,
-        tool_status: null,
-        runtime_signal_refs: feedbackRuntimeSignalRefs,
-        boundary_ignored_memory_ids: [],
-        verified_host_receipt: true,
-        subjects: [{ memory_id: exposureItem.memory_id, boundary_ignored: false }],
-      },
-      reason: "Confirmatory host receipt feedback.",
-      requested: { node_ids: [exposureItem.memory_id], client_ids: [] },
-      resolved_by_client: [],
-      found_node_ids: [exposureItem.memory_id],
-      missing_node_ids: [],
-      missing_client_ids: [],
-    };
-    const feedbackCommitDiffJson = stableStringify(feedbackCommitDiff);
-    const feedbackCommitHash = sha256(stableStringify({
-      parentHash: feedbackCommitParent.commit_hash,
-      inputSha: feedbackCommitInputSha256,
-      diffSha: sha256(feedbackCommitDiffJson),
-      scope: activeStoreScope,
-      actor: feedbackCommitDiff.actor,
-      kind: "nodes_activate",
-    }));
-    const feedbackCommitId = stableUuid(`lite:commit:${feedbackCommitHash}`);
-    const insertFeedbackCommit = () => {
-      database.db.prepare(
-        `INSERT INTO lite_memory_commits
-          (id, scope, parent_commit_id, input_sha256, diff_json, actor,
-           model_version, prompt_version, commit_hash, created_at)
-         VALUES (?, ?, ?, ?, ?, ?, NULL, NULL, ?, ?)`,
-      ).run(
-        feedbackCommitId,
-        activeStoreScope,
-        feedbackCommitParent.id,
-        feedbackCommitInputSha256,
-        feedbackCommitDiffJson,
-        feedbackCommitDiff.actor,
-        feedbackCommitHash,
-        feedbackRecordedAt,
-      );
-    };
     const feedbackOperationReceipt = stableStringify({
       body: {
         contract_version: "aionis_feedback_result_v1",
@@ -4278,7 +4351,6 @@ test("confirmatory provisioning freezes its cohort while protected close authori
     );
     await assert.rejects(
       database.transaction.run(async () => {
-        insertFeedbackCommit();
         return await ledger.appendEpisodeEvent({
           row: unapprovedFeedbackRow,
           event: unapprovedFeedbackEvent,
@@ -4426,7 +4498,6 @@ test("confirmatory provisioning freezes its cohort while protected close authori
       /learning_experiment_closed:promotion_eligible_exposure/,
     );
     const feedbackInserted = await database.transaction.run(async () => {
-      insertFeedbackCommit();
       const appended = await ledger.appendEpisodeEvent({
         row: feedbackRow,
         event: feedbackEvent,
@@ -4481,7 +4552,7 @@ test("confirmatory provisioning freezes its cohort while protected close authori
       `DELETE FROM lite_runtime_write_operations
        WHERE operation_kind = 'product_feedback_v1' AND operation_id = ?`,
     ).run(feedbackEvent.operation_id);
-    assert.throws(verifyClosedFeedback, /feedback_operation_receipt/u);
+    assert.throws(verifyClosedFeedback, /lite_memory_commit_authority_terminal_row_missing/u);
     database.db.prepare(
       `INSERT INTO lite_runtime_write_operations
         (tenant_id, scope, operation_kind, operation_id, request_sha256,
@@ -4688,6 +4759,9 @@ test("confirmatory pre-treatment lineage scan is transaction-only, canonical, bo
     assert.match(snapshot.prior_memory_node_head_sha256, /^[0-9a-f]{64}$/u);
     assert.match(snapshot.prior_memory_commit_head_sha256, /^[0-9a-f]{64}$/u);
     assert.equal("storeScopeKey" in snapshot.members[0]!, false);
+    database.db.prepare(
+      "DELETE FROM lite_memory_nodes WHERE scope = ? AND id = ?",
+    ).run(members[0]!.storeScopeKey, "memory-ordinary-prior");
 
     await database.transaction.run(async () => {
       await assert.rejects(
@@ -4837,6 +4911,9 @@ test("confirmatory pre-treatment lineage scan rejects every historical experimen
           })),
           new RegExp(`learning_confirmatory_pre_treatment_lineage_conflict:${conflictKind}`),
         );
+        // The node rows are transient lineage probes, not durable authority
+        // fixtures. Remove them before the v6 store performs its close audit.
+        database.db.prepare("DELETE FROM lite_memory_nodes WHERE scope = ?").run(scope);
       } finally {
         await writeStore?.close();
         await database.close();
@@ -5849,20 +5926,19 @@ test("feedback and effect rows stay atomic while legal control blockers fail lea
       last_error_code: deadLetterJob.last_error_code,
       completed_at: deadLetterJob.completed_at,
     };
-    database.db.prepare(
-      `INSERT INTO lite_runtime_write_operations
-        (tenant_id, scope, operation_kind, operation_id, request_sha256,
-         receipt_json, commit_id, created_at)
-       VALUES (?, ?, 'unused_exposure_learning_control_v1', ?, ?, ?, ?, ?)`,
-    ).run(
-      deadLetterJob.tenant_id,
-      deadLetterJob.scope,
-      deadLetterJob.operation_id,
-      learningControlOperationRequestSha256(deadLetterJob as any),
-      stableStringify(deadLetterReceipt),
-      deadLetterJob.source_commit_id,
-      deadLetterJob.completed_at,
-    );
+    await writeStore.withTx(async () => {
+      await writeStore!.insertWriteOperation({
+        tenantId: deadLetterJob.tenant_id,
+        scope: deadLetterJob.scope,
+        operationKind: "unused_exposure_learning_control_v1",
+        operationId: deadLetterJob.operation_id,
+        requestSha256: learningControlOperationRequestSha256(deadLetterJob as any),
+        receiptJson: stableStringify(deadLetterReceipt),
+        commitId: deadLetterJob.source_commit_id,
+        createdAt: deadLetterJob.completed_at,
+        authorityActor: "learning-episode-store-test",
+      });
+    });
     assert.throws(
       () => database.db.prepare(
         `UPDATE lite_learning_control_jobs
@@ -9357,13 +9433,14 @@ test("v3 preflight rejects missing or substituted immutable triggers before repa
   }
 });
 
-test("every v5 schema fault phase leaves a complete v2 database", async (t) => {
+test("every v6 schema fault phase leaves a complete v2 database", async (t) => {
   const phases = [
     "after_v2_structures",
     "after_shared_measurement_structures",
     "after_authority_identity",
     "after_learning_ledger_structures",
     "after_commit_authority_structures",
+    "after_authority_adoption_structures",
     "after_v3_shape_verification",
     "before_metadata_update",
     "after_metadata_update_before_commit",
@@ -9408,7 +9485,7 @@ test("every v5 schema fault phase leaves a complete v2 database", async (t) => {
   }
 });
 
-test("a real process kill cannot expose DDL or metadata from an uncommitted v5 migration", async (t) => {
+test("a real process kill cannot expose DDL or metadata from an uncommitted v6 migration", async (t) => {
   for (const phase of ["before_metadata_update", "after_metadata_update_before_commit"] as const) {
     await t.test(phase, async () => {
       const temp = tempDatabase(`kill-${phase}`);
@@ -9452,28 +9529,32 @@ test("a real process kill cannot expose DDL or metadata from an uncommitted v5 m
   }
 });
 
-test("concurrent v2-to-v5 openers converge on one committed lineage identity", async () => {
-  const temp = tempDatabase("concurrent-migration");
-  try {
-    await createV2Fixture(temp.path);
-    const [left, right] = await Promise.all([
-      runMigrationChild(temp.path),
-      runMigrationChild(temp.path),
-    ]);
-    assert.match(left, /^[0-9a-f]{64}$/);
-    assert.equal(right, left);
-
-    const db = createSqliteDatabase(temp.path);
+test("concurrent v2-to-v6 openers converge on one committed lineage identity", async () => {
+  const rounds = 12;
+  for (let round = 1; round <= rounds; round += 1) {
+    const temp = tempDatabase(`concurrent-migration-${round}`);
     try {
-      assert.equal(inspectLiteRuntimeSchema(db).classification, "current");
-      assert.equal(
-        (db.prepare("SELECT COUNT(*) AS count FROM lite_runtime_authority_identity").get() as { count: number }).count,
-        1,
-      );
+      await createV2Fixture(temp.path);
+      const [left, right] = await Promise.all([
+        runMigrationChild(temp.path),
+        runMigrationChild(temp.path),
+      ]);
+      assert.match(left, /^[0-9a-f]{64}$/, `round ${round} lineage identity`);
+      assert.equal(right, left, `round ${round} openers must converge`);
+
+      const db = createSqliteDatabase(temp.path);
+      try {
+        assert.equal(inspectLiteRuntimeSchema(db).classification, "current", `round ${round}`);
+        assert.equal(
+          (db.prepare("SELECT COUNT(*) AS count FROM lite_runtime_authority_identity").get() as { count: number }).count,
+          1,
+          `round ${round}`,
+        );
+      } finally {
+        db.close();
+      }
     } finally {
-      db.close();
+      fs.rmSync(temp.directory, { recursive: true, force: true });
     }
-  } finally {
-    fs.rmSync(temp.directory, { recursive: true, force: true });
   }
 });

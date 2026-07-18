@@ -743,21 +743,37 @@ test("strict profile matching and canonical receipt corruption fail closed", asy
       applicability_manifest_sha256: sha256(stableStringify(operationForgedManifest)),
       applicability_manifest: operationForgedManifest,
     };
-    runtime.database.db.prepare(
-      `UPDATE lite_runtime_write_operations SET operation_id = ?, receipt_json = ?
-       WHERE tenant_id = ? AND scope = ? AND operation_kind = ? AND operation_id = ?`,
-    ).run(
-      forgedOperationId,
-      stableStringify(operationForgedReceipt),
-      "tenant-provision",
-      LEARNING_EXPERIMENT_PROVISION_AUTHORITY_SCOPE,
-      LEARNING_EXPERIMENT_PROVISION_OPERATION_KIND,
-      "provision-operation-1",
-    );
-    await assert.rejects(provisioner.provision({
-      ...originalInput,
-      operationId: forgedOperationId,
-    }));
+    try {
+      runtime.database.db.prepare(
+        `UPDATE lite_runtime_write_operations SET operation_id = ?, receipt_json = ?
+         WHERE tenant_id = ? AND scope = ? AND operation_kind = ? AND operation_id = ?`,
+      ).run(
+        forgedOperationId,
+        stableStringify(operationForgedReceipt),
+        "tenant-provision",
+        LEARNING_EXPERIMENT_PROVISION_AUTHORITY_SCOPE,
+        LEARNING_EXPERIMENT_PROVISION_OPERATION_KIND,
+        "provision-operation-1",
+      );
+      await assert.rejects(provisioner.provision({
+        ...originalInput,
+        operationId: forgedOperationId,
+      }));
+    } finally {
+      runtime.database.db.prepare(
+        `UPDATE lite_runtime_write_operations
+         SET operation_id = ?, request_sha256 = ?, receipt_json = ?
+         WHERE tenant_id = ? AND scope = ? AND operation_kind = ? AND operation_id = ?`,
+      ).run(
+        "provision-operation-1",
+        provisioned.receipt.request_sha256,
+        provisioned.receiptJson,
+        "tenant-provision",
+        LEARNING_EXPERIMENT_PROVISION_AUTHORITY_SCOPE,
+        LEARNING_EXPERIMENT_PROVISION_OPERATION_KIND,
+        forgedOperationId,
+      );
+    }
     assert.equal(entropyCalls, 1);
     assert.equal(count(runtime.database.db, "lite_learning_experiment_revisions"), 1);
   } finally {

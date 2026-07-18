@@ -171,6 +171,9 @@ function openGuideRuntime(args: {
   const writeStore = createLiteWriteStoreFromDatabase(database, {
     annProjectionEnabled: false,
     authorityReceiptKeyring: CLOSE_KEYRING,
+    // The shared confirmatory migration fixture seeds commit-only v1 scope
+    // boundaries; every scenario still has to pass the strict v6 close audit.
+    allowLegacyV1Fixtures: true,
   });
   const learningEpisodeLedgerAccess = createLiteLearningEpisodeLedgerAccess(database, {
     authorityReceiptKeyring: CLOSE_KEYRING,

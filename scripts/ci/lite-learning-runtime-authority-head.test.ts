@@ -138,8 +138,8 @@ test("D2 authority head rejects reads outside an active Runtime transaction", as
   }
 });
 
-test("D2 authority head commits an empty 22-table v5 snapshot inside one transaction", async () => {
-  const fixture = createFileBackedRuntime("empty-v5");
+test("D2 authority head commits an empty 22-table current-schema snapshot inside one transaction", async () => {
+  const fixture = createFileBackedRuntime("empty-current");
   try {
     const head = await fixture.database.withTx(async () =>
       buildLiteLearningRuntimeAuthorityHeadV1({
@@ -148,7 +148,7 @@ test("D2 authority head commits an empty 22-table v5 snapshot inside one transac
       }));
 
     assert.equal(LEARNING_RUNTIME_AUTHORITY_HEAD_V1_TABLE_SPECS.length, 22);
-    assert.equal(head.body.schema_version, 5);
+    assert.equal(head.body.schema_version, 6);
     assert.equal(head.body.tables.length, 22);
     assert.deepEqual(
       head.body.tables.map((table) => [table.table, table.row_count]),

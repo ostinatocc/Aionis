@@ -1,10 +1,19 @@
 import type {
   CompareAndSwapWriteScopeHeadArgs,
   CompareAndSwapWriteScopeHeadResult,
+  WriteCommitInsertArgs,
   WriteScopeHead,
 } from "./write-access.js";
 import { ignoreSqliteDuplicateColumnError, type SqliteDatabase } from "./sqlite.js";
-import type { SqliteTransactionRunner } from "./sqlite-transaction-runner.js";
+import type { LiteRuntimeAuthorityTransactionFence } from
+  "./lite-runtime-authority-transaction-fence.js";
+import {
+  assertLiteMemoryCommitV2SelfIntegrity,
+  assertLiteMemoryPendingCommitAppliedAuthority,
+  assertLiteMemoryScopeHeadAuthority,
+  LiteMemoryCommitAuthorityError,
+} from "./lite-memory-commit-integrity.js";
+import { stableUuid } from "../util/uuid.js";
 
 export const LITE_MEMORY_SCOPE_HEAD_TABLE_SQL = `CREATE TABLE lite_memory_scope_heads (
   scope TEXT PRIMARY KEY,
@@ -50,25 +59,6 @@ export function migrateLiteMemoryCommitAuthorityV5(db: SqliteDatabase): void {
   }
 }
 
-type ScopeHeadDbRow = {
-  scope: string;
-  commit_id: string;
-  head_revision: number;
-  updated_at: string;
-  commit_scope: string | null;
-  commit_hash: string | null;
-  commit_revision: number | null;
-  digest_version: number | null;
-  legacy_anchor_commit_id: string | null;
-};
-
-type LegacyHeadDbRow = {
-  scope: string;
-  id: string;
-  commit_hash: string;
-  created_at: string;
-};
-
 function assertScope(scope: string): void {
   if (!scope.trim()) throw new Error("lite_memory_scope_head_scope_required");
 }
@@ -79,67 +69,113 @@ function sqliteChanges(result: unknown): number {
   return Number.isSafeInteger(changes) && changes >= 0 ? changes : 0;
 }
 
+export function insertLiteMemoryCommitV2InCurrentTransaction(args: {
+  db: SqliteDatabase;
+  authorityFence: LiteRuntimeAuthorityTransactionFence;
+  commit: WriteCommitInsertArgs;
+}): string {
+  const { db, authorityFence, commit } = args;
+  if (commit.digestVersion !== 2) throw new Error("lite_memory_commit_digest_v2_required");
+  authorityFence.assertCurrent();
+  let parentHash = "";
+  if (commit.parentCommitId !== null) {
+    const parent = db.prepare(
+      `SELECT commit_hash FROM lite_memory_commits
+       WHERE scope = ? AND id = ? LIMIT 1`,
+    ).get(commit.scope, commit.parentCommitId) as { commit_hash: string } | undefined;
+    if (!parent) throw new Error(`lite_memory_commit_v2_parent_missing:${commit.parentCommitId}`);
+    parentHash = parent.commit_hash;
+  }
+  const id = stableUuid(`lite:commit:${commit.commitHash}`);
+  assertLiteMemoryCommitV2SelfIntegrity({
+    row: {
+      id,
+      scope: commit.scope,
+      parent_commit_id: commit.parentCommitId,
+      input_sha256: commit.inputSha256,
+      diff_json: commit.diffJson,
+      actor: commit.actor,
+      model_version: commit.modelVersion,
+      prompt_version: commit.promptVersion,
+      commit_hash: commit.commitHash,
+      created_at: commit.createdAt,
+      digest_version: 2,
+      revision: commit.revision,
+      mutation_digest: commit.mutationDigest,
+      legacy_anchor_commit_id: commit.legacyAnchorCommitId,
+    },
+    parentHash,
+  });
+
+  const existing = db.prepare(
+    `SELECT id, scope, parent_commit_id, input_sha256, diff_json, actor,
+            model_version, prompt_version, commit_hash, created_at,
+            digest_version, revision, mutation_digest, legacy_anchor_commit_id
+     FROM lite_memory_commits WHERE commit_hash = ? LIMIT 1`,
+  ).get(commit.commitHash) as Record<string, unknown> | undefined;
+  if (typeof existing?.id === "string") {
+    const exactReplay = existing.digest_version === 2
+      && existing.scope === commit.scope
+      && existing.parent_commit_id === commit.parentCommitId
+      && existing.input_sha256 === commit.inputSha256
+      && existing.diff_json === commit.diffJson
+      && existing.actor === commit.actor
+      && existing.model_version === commit.modelVersion
+      && existing.prompt_version === commit.promptVersion
+      && existing.created_at === commit.createdAt
+      && existing.revision === commit.revision
+      && existing.mutation_digest === commit.mutationDigest
+      && existing.legacy_anchor_commit_id === commit.legacyAnchorCommitId;
+    if (!exactReplay) throw new Error(`lite_memory_commit_v2_hash_collision:${commit.commitHash}`);
+    return existing.id;
+  }
+
+  db.prepare(
+    `INSERT INTO lite_memory_commits
+      (id, scope, parent_commit_id, input_sha256, diff_json, actor,
+       model_version, prompt_version, commit_hash, created_at,
+       digest_version, revision, mutation_digest, legacy_anchor_commit_id)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 2, ?, ?, ?)`,
+  ).run(
+    id,
+    commit.scope,
+    commit.parentCommitId,
+    commit.inputSha256,
+    commit.diffJson,
+    commit.actor,
+    commit.modelVersion,
+    commit.promptVersion,
+    commit.commitHash,
+    commit.createdAt,
+    commit.revision,
+    commit.mutationDigest,
+    commit.legacyAnchorCommitId,
+  );
+  return id;
+}
+
 /**
  * Reads the authoritative head for one scope. Migrated v1 histories do not get
  * an invented durable head: the highest SQLite rowid is exposed as revision 0
  * until the first v2 mutation binds that unauthenticated boundary and advances
  * the explicit forward authority head.
  */
-export function readLiteMemoryScopeHead(db: SqliteDatabase, scope: string): WriteScopeHead | null {
+export function readLiteMemoryScopeHead(
+  db: SqliteDatabase,
+  scope: string,
+  options: { pendingSuccessorCommitId?: string } = {},
+): WriteScopeHead | null {
   assertScope(scope);
-  const persisted = db.prepare(
-    `SELECT h.scope,
-            h.commit_id,
-            h.revision AS head_revision,
-            h.updated_at,
-            c.scope AS commit_scope,
-            c.commit_hash,
-            c.revision AS commit_revision,
-            c.digest_version,
-            c.legacy_anchor_commit_id
-     FROM lite_memory_scope_heads h
-     LEFT JOIN lite_memory_commits c ON c.id = h.commit_id
-     WHERE h.scope = ?
-     LIMIT 1`,
-  ).get(scope) as ScopeHeadDbRow | undefined;
-  if (persisted) {
-    if (persisted.commit_scope !== persisted.scope
-      || persisted.digest_version !== 2
-      || persisted.commit_revision !== persisted.head_revision
-      || !persisted.commit_hash) {
-      throw new Error(`lite_memory_scope_head_corrupt:${scope}`);
+  try {
+    return assertLiteMemoryScopeHeadAuthority(db, scope, options);
+  } catch (error) {
+    if (error instanceof LiteMemoryCommitAuthorityError) {
+      throw new Error(`lite_memory_scope_head_corrupt:${scope}:${error.code}`, {
+        cause: error,
+      });
     }
-    return {
-      scope: persisted.scope,
-      commitId: persisted.commit_id,
-      commitHash: persisted.commit_hash,
-      revision: persisted.head_revision,
-      digestVersion: 2,
-      legacyAnchorCommitId: persisted.legacy_anchor_commit_id,
-      persisted: true,
-      updatedAt: persisted.updated_at,
-    };
+    throw error;
   }
-
-  const legacy = db.prepare(
-    `SELECT scope, id, commit_hash, created_at
-     FROM lite_memory_commits
-     WHERE scope = ?
-       AND digest_version = 1
-     ORDER BY rowid DESC
-     LIMIT 1`,
-  ).get(scope) as LegacyHeadDbRow | undefined;
-  if (!legacy) return null;
-  return {
-    scope: legacy.scope,
-    commitId: legacy.id,
-    commitHash: legacy.commit_hash,
-    revision: 0,
-    digestVersion: 1,
-    legacyAnchorCommitId: legacy.id,
-    persisted: false,
-    updatedAt: legacy.created_at,
-  };
 }
 
 type TargetCommitDbRow = {
@@ -157,22 +193,22 @@ function sameNullableString(left: string | null, right: string | null): boolean 
 
 export function compareAndSwapLiteMemoryScopeHead(args: {
   db: SqliteDatabase;
-  transaction: SqliteTransactionRunner;
+  authorityFence: LiteRuntimeAuthorityTransactionFence;
   request: CompareAndSwapWriteScopeHeadArgs;
   now?: Date;
 }): CompareAndSwapWriteScopeHeadResult {
-  const { db, transaction, request } = args;
+  const { db, authorityFence, request } = args;
   assertScope(request.scope);
   if (!request.commitId.trim()) throw new Error("lite_memory_scope_head_commit_id_required");
-  if (!transaction.inTransaction()) {
-    throw new Error("lite_memory_scope_head_cas_requires_shared_transaction");
-  }
+  authorityFence.assertCurrent();
   if (request.expectedRevision !== undefined
     && (!Number.isSafeInteger(request.expectedRevision) || request.expectedRevision < 0)) {
     throw new Error("lite_memory_scope_head_expected_revision_invalid");
   }
 
-  const current = readLiteMemoryScopeHead(db, request.scope);
+  const current = readLiteMemoryScopeHead(db, request.scope, {
+    pendingSuccessorCommitId: request.commitId,
+  });
   const currentRevision = current?.revision ?? 0;
   const currentCommitId = current?.commitId ?? null;
   const expectedCommitWasProvided = Object.prototype.hasOwnProperty.call(request, "expectedCommitId");
@@ -206,6 +242,12 @@ export function compareAndSwapLiteMemoryScopeHead(args: {
     })}`);
   }
 
+  assertLiteMemoryPendingCommitAppliedAuthority({
+    db,
+    scope: request.scope,
+    commitId: request.commitId,
+  });
+
   const updatedAt = (args.now ?? new Date()).toISOString();
   const result = current?.persisted === true
     ? db.prepare(
@@ -229,7 +271,12 @@ export function compareAndSwapLiteMemoryScopeHead(args: {
     ).run(request.scope, target.id, nextRevision, updatedAt);
 
   if (sqliteChanges(result) !== 1) {
-    return { status: "conflict", current: readLiteMemoryScopeHead(db, request.scope) };
+    return {
+      status: "conflict",
+      current: readLiteMemoryScopeHead(db, request.scope, {
+        pendingSuccessorCommitId: request.commitId,
+      }),
+    };
   }
   const head = readLiteMemoryScopeHead(db, request.scope);
   if (!head?.persisted || head.commitId !== target.id || head.revision !== nextRevision) {

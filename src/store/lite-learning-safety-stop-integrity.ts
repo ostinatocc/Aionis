@@ -19,6 +19,7 @@ import {
   type FeedbackAttributedV1,
 } from "../memory/learning-episode-ledger.js";
 import {
+  computeFeedbackUpdatedNodeState,
   resolveNodeFeedbackAttributionStrength,
   type NodeFeedbackAttributionStrength,
   type NodeFeedbackOutcome,
@@ -26,6 +27,12 @@ import {
   type NodeFeedbackUsedSurface,
   type NodeFeedbackVerifierStatus,
 } from "../memory/node-feedback-state.js";
+import { nodeEmbeddingAuthorityFieldsAfterTextUpdate } from "../memory/node-embedding-freshness.js";
+import { resolveNodeLifecycleSignals } from "../memory/lifecycle-signals.js";
+import {
+  nodeAuthorityStateAfterPatchV2,
+  type NodeAuthorityStateV2,
+} from "../memory/node-embedding-freshness.js";
 import {
   ToolRuleEvaluationProvenanceSchema,
   type ToolRuleEvaluationProvenance,
@@ -39,11 +46,11 @@ import {
   learningFeedbackAttributionSetDigest,
 } from "./lite-learning-feedback-digest.js";
 import type { LiteLearningAuthorityRow } from "./lite-learning-confirmatory-authority.js";
+import { assertLiteMemoryCommitRootAuthority } from "./lite-memory-commit-integrity.js";
 import type { SqliteDatabase } from "./sqlite.js";
 import {
   assertCanonicalV2MutationJson,
-  canonicalV2CommitHash,
-  materializeSelfCommitReferences,
+  materializeAppliedAuthorityRow,
   type CanonicalAppliedAuthorityMutationV2,
   type CanonicalAuthorityTableMutationV2,
 } from "./write-commit-authority.js";
@@ -271,72 +278,380 @@ function expectedToolFeedbackRuleIds(
     .map((source) => source.rule_node_id);
 }
 
-function protectedFeedbackCommitRoot(args: {
-  db: SqliteDatabase;
-  event: Row;
-  payload: FeedbackAttributedV1;
-  attributions: readonly Row[];
-  hostUseReceipt: Row | null;
-}): {
-  commit: Row;
-  diff: Row;
-  feedback: Row;
-  subjectIds: string[];
-  expectedAttributionStrength: NodeFeedbackAttributionStrength;
-} {
-  const { db, event, payload, attributions, hostUseReceipt } = args;
-  const commit = db.prepare(
-    `SELECT id, scope, parent_commit_id, input_sha256, diff_json, actor,
-            model_version, prompt_version, commit_hash, created_at,
-            digest_version, revision, mutation_digest, legacy_anchor_commit_id
-     FROM lite_memory_commits WHERE id = ?`,
-  ).get(event.source_commit_id) as Row | undefined;
-  if (!commit
-    || commit.id !== event.source_commit_id
-    || typeof commit.scope !== "string"
-    || typeof commit.actor !== "string"
-    || typeof commit.diff_json !== "string"
-    || typeof commit.input_sha256 !== "string"
-    || !/^[a-f0-9]{64}$/u.test(commit.input_sha256)
-    || typeof commit.commit_hash !== "string"
-    || !/^[a-f0-9]{64}$/u.test(commit.commit_hash)
-    || commit.model_version !== null
-    || commit.prompt_version !== null) {
-    throw new Error("lite_learning_integrity_failed:feedback_source_commit");
-  }
-  const namespaceSha256 = event.memory_namespace_sha256;
-  if (typeof namespaceSha256 !== "string"
-    || namespaceSha256 !== sha256Hex(commit.scope)) {
-    throw new Error("lite_learning_integrity_failed:feedback_source_commit_scope");
-  }
-  const diff = exactObject(
-    parseCanonical(commit.diff_json, "feedback_source_commit_diff"),
-    [
-      "job", "started_at", "scope", "actor", "run_id", "guide_trace_id",
-      "learning_episode_id", "feedback_operation_id", "outcome", "activate",
-      "feedback", "reason", "requested", "resolved_by_client", "found_node_ids",
-      "missing_node_ids", "missing_client_ids",
-    ],
-    "feedback_source_commit_diff",
-  );
-  const requested = exactObject(diff.requested, ["node_ids", "client_ids"], "feedback_source_commit_requested");
-  const feedback = exactObject(
-    diff.feedback,
-    [
-      "used_surface", "verifier_status", "tool_status", "runtime_signal_refs",
-      "boundary_ignored_memory_ids", "verified_host_receipt", "subjects",
-    ],
-    "feedback_source_commit_feedback",
-  );
-  if (!Array.isArray(feedback.subjects)) {
-    throw new Error("lite_learning_integrity_failed:feedback_source_commit_subjects");
-  }
+const PROTECTED_FEEDBACK_CONTEXT_FIELDS = [
+  "job", "started_at", "scope", "actor", "run_id", "guide_trace_id",
+  "learning_episode_id", "feedback_operation_id", "outcome", "activate",
+  "feedback", "reason", "requested", "resolved_by_client", "found_node_ids",
+  "missing_node_ids", "missing_client_ids",
+] as const;
+
+const PROTECTED_FEEDBACK_REQUEST_FIELDS = ["node_ids", "client_ids"] as const;
+
+const PROTECTED_FEEDBACK_FIELDS = [
+  "used_surface", "verifier_status", "tool_status", "runtime_signal_refs",
+  "boundary_ignored_memory_ids", "verified_host_receipt", "subjects",
+] as const;
+
+const PROTECTED_FEEDBACK_NODE_ROW_FIELDS = [
+  "id", "scope", "client_id", "type", "tier", "title", "text_summary",
+  "slots_json", "raw_ref", "evidence_ref", "embedding_vector_json",
+  "embedding_model", "memory_lane", "producer_agent_id", "owner_agent_id",
+  "owner_team_id", "embedding_status", "embedding_last_error", "salience",
+  "importance", "confidence", "redaction_version", "commit_id", "created_at",
+] as const;
+
+const PROTECTED_FEEDBACK_NODE_REQUEST_FIELDS = [
+  "tier", "slots_json", "text_summary", "salience", "importance", "confidence",
+  "update_tier", "side_effects", "operation_context",
+] as const;
+
+const PROTECTED_FEEDBACK_NODE_MUTABLE_FIELDS = [
+  "slots_json", "salience", "importance", "confidence", "commit_id",
+] as const;
+
+const PROTECTED_FEEDBACK_NODE_SIDE_EFFECTS = [
+  "refresh_execution_native_index",
+  "refresh_keyword_index",
+  "refresh_embedding_projection",
+  "enqueue_ann_projection_when_enabled",
+] as const;
+
+function protectedFeedbackSubjectIds(attributions: readonly Row[]): string[] {
   const subjectIds = canonicalStrings(attributions.map((attribution) => {
     if (attribution.subject_kind !== "memory") {
       throw new Error("lite_learning_integrity_failed:feedback_source_commit_subject_kind");
     }
     return requiredString(attribution, "subject_id");
   }));
+  if (new Set(subjectIds).size !== subjectIds.length) {
+    throw new Error("lite_learning_integrity_failed:feedback_source_commit_subjects");
+  }
+  return subjectIds;
+}
+
+type RootedProtectedFeedbackNodeMutation = Readonly<{
+  memoryId: string;
+  before: Row;
+  after: Row;
+}>;
+
+function finiteAuthorityNumber(value: unknown, errorCode: string): number {
+  if (typeof value !== "number" || !Number.isFinite(value)) {
+    throw new Error(`lite_learning_integrity_failed:${errorCode}`);
+  }
+  return value;
+}
+
+function authorityNodeStateV2(row: Row, errorCode: string): NodeAuthorityStateV2 {
+  requiredString(row, "id");
+  requiredString(row, "scope");
+  requiredString(row, "type");
+  requiredString(row, "tier");
+  requiredString(row, "commit_id");
+  requiredString(row, "created_at");
+  nullableAuthorityString(row, "title", errorCode);
+  nullableAuthorityString(row, "text_summary", errorCode);
+  nullableAuthorityString(row, "raw_ref", errorCode);
+  nullableAuthorityString(row, "evidence_ref", errorCode);
+  nullableAuthorityString(row, "embedding_model", errorCode);
+  nullableAuthorityString(row, "embedding_last_error", errorCode);
+  requiredObject(row.slots_json, errorCode);
+  requiredEnum(row.embedding_status, ["pending", "ready", "failed"] as const, errorCode);
+  finiteAuthorityNumber(row.salience, errorCode);
+  finiteAuthorityNumber(row.importance, errorCode);
+  finiteAuthorityNumber(row.confidence, errorCode);
+  return row as NodeAuthorityStateV2;
+}
+
+function assertProtectedMemoryFeedbackNodeAfterStates(args: {
+  nodes: readonly RootedProtectedFeedbackNodeMutation[];
+  operationContext: Row;
+  inputSha256: string;
+}): void {
+  if (!/^[a-f0-9]{64}$/u.test(args.inputSha256)) {
+    throw new Error("lite_learning_integrity_failed:feedback_source_commit_input_sha256");
+  }
+  const context = args.operationContext;
+  const feedback = exactObject(
+    context.feedback,
+    PROTECTED_FEEDBACK_FIELDS,
+    "feedback_source_commit_feedback",
+  );
+  const outcome = requiredEnum(
+    context.outcome,
+    ["positive", "negative", "neutral"] as const,
+    "feedback_source_commit_outcome",
+  );
+  const usedSurface = requiredEnum(
+    feedback.used_surface,
+    ["use_now", "inspect_before_use", "do_not_use", "explicit_host_assertion"] as const,
+    "feedback_source_commit_surface",
+  );
+  const verifierStatus = nullableEnum(
+    feedback.verifier_status,
+    ["passed", "failed", "not_run", "unknown"] as const,
+    "feedback_source_commit_verifier_status",
+  );
+  const toolStatus = nullableEnum(
+    feedback.tool_status,
+    ["succeeded", "failed", "not_run", "unknown"] as const,
+    "feedback_source_commit_tool_status",
+  );
+  const runtimeSignalRefs = stringArray(
+    feedback.runtime_signal_refs,
+    "feedback_source_commit_runtime_refs",
+  );
+  const boundaryIds = new Set(stringArray(
+    feedback.boundary_ignored_memory_ids,
+    "feedback_source_commit_boundaries",
+  ));
+  const startedAt = requiredString(context, "started_at");
+  if (typeof context.activate !== "boolean"
+    || typeof feedback.verified_host_receipt !== "boolean") {
+    throw new Error("lite_learning_integrity_failed:feedback_source_commit_inputs");
+  }
+  const reason = context.reason === null
+    ? null
+    : requiredString(context, "reason");
+  const runId = context.run_id === null ? null : requiredString(context, "run_id");
+  const guideTraceId = context.guide_trace_id === null
+    ? null
+    : requiredString(context, "guide_trace_id");
+  const episodeId = context.learning_episode_id === null
+    ? null
+    : requiredString(context, "learning_episode_id");
+  const operationId = context.feedback_operation_id === null
+    ? null
+    : requiredString(context, "feedback_operation_id");
+
+  for (const node of args.nodes) {
+    const before = authorityNodeStateV2(
+      node.before,
+      "feedback_source_commit_node_before_state",
+    );
+    const nextState = computeFeedbackUpdatedNodeState({
+      node: {
+        id: before.id,
+        type: before.type,
+        tier: before.tier,
+        title: before.title,
+        text_summary: before.text_summary,
+        slots: before.slots_json as Record<string, unknown>,
+        salience: before.salience,
+        importance: before.importance,
+        confidence: before.confidence,
+      },
+      feedback: {
+        outcome,
+        run_id: runId,
+        reason,
+        input_sha256: args.inputSha256,
+        source: "nodes_activate",
+        timestamp: startedAt,
+        used_surface: usedSurface,
+        verifier_status: verifierStatus,
+        tool_status: toolStatus,
+        runtime_signal_refs: runtimeSignalRefs,
+        boundary_ignored: boundaryIds.has(node.memoryId),
+        verified_host_receipt: feedback.verified_host_receipt,
+      },
+    });
+    const nextSlots: Record<string, unknown> = {
+      ...nextState.slots,
+      last_feedback_guide_trace_id: guideTraceId,
+      last_feedback_episode_id: episodeId,
+      last_feedback_operation_id: operationId,
+    };
+    if (context.activate) nextSlots.last_activated_at = startedAt;
+    const lifecycle = resolveNodeLifecycleSignals({
+      type: before.type,
+      tier: before.tier,
+      title: before.title,
+      text_summary: before.text_summary,
+      slots: nextSlots,
+      salience: nextState.salience,
+      importance: nextState.importance,
+      confidence: nextState.confidence,
+      raw_ref: before.raw_ref,
+      evidence_ref: before.evidence_ref,
+      reference_time: startedAt,
+    });
+    const expectedAfter = nodeAuthorityStateAfterPatchV2({
+      before,
+      patch: {
+        id: node.memoryId,
+        slots: lifecycle.slots,
+        textSummary: before.text_summary,
+        salience: lifecycle.salience,
+        importance: lifecycle.importance,
+        confidence: lifecycle.confidence,
+      },
+    });
+    if (!sameCanonicalValue(node.after, expectedAfter)) {
+      throw new Error("lite_learning_integrity_failed:feedback_source_commit_node_state");
+    }
+  }
+}
+
+/**
+ * Roots protected memory feedback in every v2 node mutation, rather than
+ * trusting one representative mutation. The returned operation context is
+ * the exact legacy semantic root consumed by the shared verifier below.
+ */
+export function assertProtectedMemoryFeedbackAuthorityMutationRoot(args: {
+  mutation: unknown;
+  scope: string;
+  subjectIds: readonly string[];
+  inputSha256: string;
+}): {
+  operationContext: Row;
+  mutations: CanonicalAuthorityTableMutationV2[];
+} {
+  const mutation = exactObject(
+    args.mutation,
+    ["contract", "digest_version", "applied_at", "authority_kind", "policy", "mutations"],
+    "feedback_source_commit_diff",
+  );
+  const policy = exactObject(
+    mutation.policy,
+    ["commit_reference", "verification", "no_op"],
+    "feedback_source_commit_policy",
+  );
+  if (mutation.contract !== "aionis_applied_authority_mutation_v2"
+    || mutation.digest_version !== 2
+    || mutation.authority_kind !== "nodes_activate"
+    || typeof mutation.applied_at !== "string"
+    || policy.commit_reference !== "$self"
+    || policy.verification !== "read_after_exact_match"
+    || policy.no_op !== "return_current_head"
+    || !Array.isArray(mutation.mutations)
+    || mutation.mutations.length === 0) {
+    throw new Error("lite_learning_integrity_failed:feedback_source_commit_diff");
+  }
+
+  const mutations = mutation.mutations as CanonicalAuthorityTableMutationV2[];
+  const expectedSubjectIds = canonicalStrings(args.subjectIds);
+  if (new Set(expectedSubjectIds).size !== expectedSubjectIds.length) {
+    throw new Error("lite_learning_integrity_failed:feedback_source_commit_subjects");
+  }
+  const rootedSubjectIds: string[] = [];
+  const rootedNodes: RootedProtectedFeedbackNodeMutation[] = [];
+  let sharedOperationContext: Row | null = null;
+  for (const [index, candidate] of mutations.entries()) {
+    const entry = exactObject(
+      candidate,
+      ["table", "identity", "operation", "before", "requested", "after"],
+      `feedback_source_commit_node_mutation_${index}`,
+    );
+    if (entry.table !== "lite_memory_nodes" || entry.operation !== "update") {
+      throw new Error("lite_learning_integrity_failed:feedback_source_commit_node_mutation_table");
+    }
+    const identity = exactObject(
+      entry.identity,
+      ["scope", "id"],
+      `feedback_source_commit_node_identity_${index}`,
+    );
+    const before = exactObject(
+      entry.before,
+      PROTECTED_FEEDBACK_NODE_ROW_FIELDS,
+      `feedback_source_commit_node_before_${index}`,
+    );
+    const after = exactObject(
+      entry.after,
+      PROTECTED_FEEDBACK_NODE_ROW_FIELDS,
+      `feedback_source_commit_node_after_${index}`,
+    );
+    const requested = exactObject(
+      entry.requested,
+      PROTECTED_FEEDBACK_NODE_REQUEST_FIELDS,
+      `feedback_source_commit_node_requested_${index}`,
+    );
+    const memoryId = requiredString(identity, "id");
+    if (identity.scope !== args.scope
+      || before.id !== memoryId
+      || before.scope !== args.scope
+      || after.id !== memoryId
+      || after.scope !== args.scope
+      || requiredString(before, "commit_id") === "$self"
+      || after.commit_id !== "$self"
+      || requested.update_tier !== false
+      || stableStringify(requested.side_effects)
+        !== stableStringify(PROTECTED_FEEDBACK_NODE_SIDE_EFFECTS)
+      || !sameCanonicalValue(requested.tier, after.tier)
+      || !sameCanonicalValue(requested.slots_json, after.slots_json)
+      || !sameCanonicalValue(requested.text_summary, after.text_summary)
+      || !sameCanonicalValue(requested.salience, after.salience)
+      || !sameCanonicalValue(requested.importance, after.importance)
+      || !sameCanonicalValue(requested.confidence, after.confidence)) {
+      throw new Error("lite_learning_integrity_failed:feedback_source_commit_node_mutation");
+    }
+    assertOnlyAuthorityFieldsChanged({
+      before,
+      after,
+      allowed: PROTECTED_FEEDBACK_NODE_MUTABLE_FIELDS,
+      errorCode: "feedback_source_commit_node_mutation",
+    });
+    const operationContext = exactObject(
+      requested.operation_context,
+      PROTECTED_FEEDBACK_CONTEXT_FIELDS,
+      `feedback_source_commit_operation_context_${index}`,
+    );
+    if (sharedOperationContext === null) {
+      sharedOperationContext = operationContext;
+    } else if (!sameCanonicalValue(sharedOperationContext, operationContext)) {
+      throw new Error("lite_learning_integrity_failed:feedback_source_commit_operation_context_mismatch");
+    }
+    rootedSubjectIds.push(memoryId);
+    rootedNodes.push({ memoryId, before, after });
+  }
+  if (new Set(rootedSubjectIds).size !== rootedSubjectIds.length
+    || stableStringify(canonicalStrings(rootedSubjectIds))
+      !== stableStringify(expectedSubjectIds)) {
+    throw new Error("lite_learning_integrity_failed:feedback_source_commit_node_subjects");
+  }
+  if (sharedOperationContext === null) {
+    throw new Error("lite_learning_integrity_failed:feedback_source_commit_operation_context_missing");
+  }
+  assertProtectedMemoryFeedbackNodeAfterStates({
+    nodes: rootedNodes,
+    operationContext: sharedOperationContext,
+    inputSha256: args.inputSha256,
+  });
+  return { operationContext: sharedOperationContext, mutations };
+}
+
+function assertProtectedFeedbackRootSemantics(args: {
+  diff: unknown;
+  commit: Row;
+  event: Row;
+  payload: FeedbackAttributedV1;
+  attributions: readonly Row[];
+  hostUseReceipt: Row | null;
+  subjectIds: string[];
+}): {
+  diff: Row;
+  feedback: Row;
+  expectedAttributionStrength: NodeFeedbackAttributionStrength;
+} {
+  const { commit, event, payload, attributions, hostUseReceipt, subjectIds } = args;
+  const diff = exactObject(
+    args.diff,
+    PROTECTED_FEEDBACK_CONTEXT_FIELDS,
+    "feedback_source_commit_diff",
+  );
+  const requested = exactObject(
+    diff.requested,
+    PROTECTED_FEEDBACK_REQUEST_FIELDS,
+    "feedback_source_commit_requested",
+  );
+  const feedback = exactObject(
+    diff.feedback,
+    PROTECTED_FEEDBACK_FIELDS,
+    "feedback_source_commit_feedback",
+  );
+  if (!Array.isArray(feedback.subjects)) {
+    throw new Error("lite_learning_integrity_failed:feedback_source_commit_subjects");
+  }
   const boundaryIds = canonicalStrings(attributions
     .filter((attribution) => attribution.boundary_outcome === "boundary_ignored")
     .map((attribution) => requiredString(attribution, "subject_id")));
@@ -426,29 +741,137 @@ function protectedFeedbackCommitRoot(args: {
     || diff.feedback_operation_id !== event.operation_id) {
     throw new Error("lite_learning_integrity_failed:feedback_source_commit_identity");
   }
-  let parentHash = "";
-  if (commit.parent_commit_id !== null) {
-    const parent = db.prepare(
-      `SELECT commit_hash FROM lite_memory_commits WHERE id = ? AND scope = ?`,
-    ).get(commit.parent_commit_id, commit.scope) as Row | undefined;
-    if (!parent || typeof parent.commit_hash !== "string" || !/^[a-f0-9]{64}$/u.test(parent.commit_hash)) {
-      throw new Error("lite_learning_integrity_failed:feedback_source_commit_parent");
+  return { diff, feedback, expectedAttributionStrength };
+}
+
+function protectedFeedbackCommitRoot(args: {
+  db: SqliteDatabase;
+  event: Row;
+  payload: FeedbackAttributedV1;
+  attributions: readonly Row[];
+  hostUseReceipt: Row | null;
+}): {
+  commit: Row;
+  diff: Row;
+  feedback: Row;
+  subjectIds: string[];
+  expectedAttributionStrength: NodeFeedbackAttributionStrength;
+} {
+  const { db, event, payload, attributions, hostUseReceipt } = args;
+  const commit = db.prepare(
+    `SELECT id, scope, parent_commit_id, input_sha256, diff_json, actor,
+            model_version, prompt_version, commit_hash, created_at,
+            digest_version, revision, mutation_digest, legacy_anchor_commit_id
+     FROM lite_memory_commits WHERE id = ?`,
+  ).get(event.source_commit_id) as Row | undefined;
+  if (!commit
+    || commit.id !== event.source_commit_id
+    || typeof commit.scope !== "string"
+    || typeof commit.actor !== "string"
+    || typeof commit.diff_json !== "string"
+    || typeof commit.input_sha256 !== "string"
+    || !/^[a-f0-9]{64}$/u.test(commit.input_sha256)
+    || typeof commit.commit_hash !== "string"
+    || !/^[a-f0-9]{64}$/u.test(commit.commit_hash)
+    || commit.model_version !== null
+    || commit.prompt_version !== null) {
+    throw new Error("lite_learning_integrity_failed:feedback_source_commit");
+  }
+  const namespaceSha256 = event.memory_namespace_sha256;
+  if (typeof namespaceSha256 !== "string"
+    || namespaceSha256 !== sha256Hex(commit.scope)) {
+    throw new Error("lite_learning_integrity_failed:feedback_source_commit_scope");
+  }
+  const subjectIds = protectedFeedbackSubjectIds(attributions);
+  let semanticDiff: unknown;
+  if (commit.digest_version === 1) {
+    semanticDiff = parseCanonical(commit.diff_json, "feedback_source_commit_diff");
+  } else if (commit.digest_version === 2) {
+    if (typeof commit.created_at !== "string"
+      || !Number.isSafeInteger(commit.revision)
+      || Number(commit.revision) < 1
+      || typeof commit.mutation_digest !== "string"
+      || !/^[a-f0-9]{64}$/u.test(commit.mutation_digest)) {
+      throw new Error("lite_learning_integrity_failed:feedback_source_commit_v2");
     }
-    parentHash = parent.commit_hash;
+    let mutation: CanonicalAppliedAuthorityMutationV2;
+    try {
+      mutation = assertCanonicalV2MutationJson({
+        diffJson: commit.diff_json,
+        mutationDigest: commit.mutation_digest,
+        createdAt: commit.created_at,
+        scope: commit.scope,
+      }) as CanonicalAppliedAuthorityMutationV2;
+    } catch (error) {
+      throw new Error("lite_learning_integrity_failed:feedback_source_commit_diff", { cause: error });
+    }
+    semanticDiff = assertProtectedMemoryFeedbackAuthorityMutationRoot({
+      mutation,
+      scope: commit.scope,
+      subjectIds,
+      inputSha256: commit.input_sha256,
+    }).operationContext;
+  } else {
+    throw new Error("lite_learning_integrity_failed:feedback_source_commit_digest_version");
   }
-  const expectedCommitHash = sha256Hex(stableStringify({
-    parentHash,
-    inputSha: commit.input_sha256,
-    diffSha: sha256Hex(commit.diff_json),
-    scope: commit.scope,
-    actor: commit.actor,
-    kind: "nodes_activate",
-  }));
-  if (commit.commit_hash !== expectedCommitHash
-    || commit.id !== stableUuid(`lite:commit:${expectedCommitHash}`)) {
-    throw new Error("lite_learning_integrity_failed:feedback_source_commit_hash");
+  const rooted = assertProtectedFeedbackRootSemantics({
+    diff: semanticDiff,
+    commit,
+    event,
+    payload,
+    attributions,
+    hostUseReceipt,
+    subjectIds,
+  });
+  if (commit.digest_version === 1) {
+    let parentHash = "";
+    if (commit.parent_commit_id !== null) {
+      const parent = db.prepare(
+        `SELECT commit_hash, digest_version
+         FROM lite_memory_commits WHERE id = ? AND scope = ?`,
+      ).get(commit.parent_commit_id, commit.scope) as Row | undefined;
+      if (!parent
+        || typeof parent.commit_hash !== "string"
+        || !/^[a-f0-9]{64}$/u.test(parent.commit_hash)) {
+        throw new Error("lite_learning_integrity_failed:feedback_source_commit_parent");
+      }
+      if (parent.digest_version !== 1 && parent.digest_version !== 2) {
+        throw new Error("lite_learning_integrity_failed:feedback_source_commit_parent_digest_version");
+      }
+      parentHash = parent.commit_hash;
+    }
+    const expectedCommitHash = sha256Hex(stableStringify({
+      parentHash,
+      inputSha: commit.input_sha256,
+      diffSha: sha256Hex(commit.diff_json),
+      scope: commit.scope,
+      actor: commit.actor,
+      kind: "nodes_activate",
+    }));
+    if (commit.commit_hash !== expectedCommitHash
+      || commit.id !== stableUuid(`lite:commit:${expectedCommitHash}`)) {
+      throw new Error("lite_learning_integrity_failed:feedback_source_commit_hash");
+    }
+  } else {
+    try {
+      assertLiteMemoryCommitRootAuthority({
+        db,
+        scope: String(commit.scope),
+        commitId: String(commit.id),
+      });
+    } catch (error) {
+      throw new Error("lite_learning_integrity_failed:feedback_source_commit_authority", {
+        cause: error,
+      });
+    }
   }
-  return { commit, diff, feedback, subjectIds, expectedAttributionStrength };
+  return {
+    commit,
+    diff: rooted.diff,
+    feedback: rooted.feedback,
+    subjectIds,
+    expectedAttributionStrength: rooted.expectedAttributionStrength,
+  };
 }
 
 const TOOL_FEEDBACK_REQUEST_FIELDS = [
@@ -478,6 +901,44 @@ function assertOnlyAuthorityFieldsChanged(args: {
     if (!allowed.has(field) && !sameCanonicalValue(args.before[field], args.after[field])) {
       throw new Error(`lite_learning_integrity_failed:${args.errorCode}`);
     }
+  }
+}
+
+function nullableAuthorityString(row: Row, field: string, errorCode: string): string | null {
+  const value = row[field];
+  if (value !== null && typeof value !== "string") {
+    throw new Error(`lite_learning_integrity_failed:${errorCode}`);
+  }
+  return value as string | null;
+}
+
+function assertNodeEmbeddingAuthorityTransition(args: {
+  before: Row;
+  after: Row;
+  errorCode: string;
+}): void {
+  const beforeTextSummary = nullableAuthorityString(args.before, "text_summary", args.errorCode);
+  const afterTextSummary = nullableAuthorityString(args.after, "text_summary", args.errorCode);
+  const beforeEmbeddingStatus = requiredEnum(
+    args.before.embedding_status,
+    ["pending", "ready", "failed"] as const,
+    args.errorCode,
+  );
+  const expected = nodeEmbeddingAuthorityFieldsAfterTextUpdate({
+    beforeTextSummary,
+    afterTextSummary,
+    current: {
+      embedding_vector_json: args.before.embedding_vector_json,
+      embedding_model: nullableAuthorityString(args.before, "embedding_model", args.errorCode),
+      embedding_status: beforeEmbeddingStatus,
+      embedding_last_error: nullableAuthorityString(args.before, "embedding_last_error", args.errorCode),
+    },
+  });
+  if (!sameCanonicalValue(args.after.embedding_vector_json, expected.embedding_vector_json)
+    || args.after.embedding_model !== expected.embedding_model
+    || args.after.embedding_status !== expected.embedding_status
+    || args.after.embedding_last_error !== expected.embedding_last_error) {
+    throw new Error(`lite_learning_integrity_failed:${args.errorCode}`);
   }
 }
 
@@ -622,10 +1083,18 @@ export function assertToolFeedbackAuthorityMutationRoot(args: {
       }
     } else {
       const before = requiredObject(entry.before, "tool_feedback_source_commit_node_before");
+      assertNodeEmbeddingAuthorityTransition({
+        before,
+        after,
+        errorCode: "tool_feedback_source_commit_node_embedding_transition",
+      });
       assertOnlyAuthorityFieldsChanged({
         before,
         after,
-        allowed: ["slots_json", "text_summary", "salience", "importance", "confidence", "commit_id"],
+        allowed: [
+          "slots_json", "text_summary", "salience", "importance", "confidence", "commit_id",
+          "embedding_vector_json", "embedding_model", "embedding_status", "embedding_last_error",
+        ],
         errorCode: "tool_feedback_source_commit_node_mutation",
       });
     }
@@ -728,30 +1197,16 @@ function toolFeedbackCommitRoot(args: {
     outcome,
   });
   const rootedFeedback = rooted.feedback;
-  let parentHash = "";
-  if (commit.parent_commit_id !== null) {
-    const parent = db.prepare(
-      `SELECT commit_hash FROM lite_memory_commits WHERE id = ? AND scope = ?`,
-    ).get(commit.parent_commit_id, commit.scope) as Row | undefined;
-    if (!parent || typeof parent.commit_hash !== "string" || !/^[a-f0-9]{64}$/u.test(parent.commit_hash)) {
-      throw new Error("lite_learning_integrity_failed:tool_feedback_source_commit_parent");
-    }
-    parentHash = parent.commit_hash;
-  }
-  const expectedCommitHash = canonicalV2CommitHash({
-    digestVersion: 2,
-    revision: Number(commit.revision),
-    parentHash,
-    inputSha256: String(commit.input_sha256),
-    mutationDigest: String(commit.mutation_digest),
-    scope: String(commit.scope),
-    actor: String(commit.actor),
-    modelVersion: null,
-    promptVersion: null,
-  });
-  if (commit.commit_hash !== expectedCommitHash
-    || commit.id !== stableUuid(`lite:commit:${expectedCommitHash}`)) {
-    throw new Error("lite_learning_integrity_failed:tool_feedback_source_commit_hash");
+  try {
+    assertLiteMemoryCommitRootAuthority({
+      db,
+      scope: String(commit.scope),
+      commitId: String(commit.id),
+    });
+  } catch (error) {
+    throw new Error("lite_learning_integrity_failed:tool_feedback_source_commit_authority", {
+      cause: error,
+    });
   }
   const decision = db.prepare(
     `SELECT id, scope, decision_kind, run_id, selected_tool, candidates_json,
@@ -765,7 +1220,11 @@ function toolFeedbackCommitRoot(args: {
     || decision.scope !== commit.scope) {
     throw new Error("lite_learning_integrity_failed:tool_feedback_decision_binding");
   }
-  const materializedDecisionAfter = materializeSelfCommitReferences(rooted.decisionAfter, String(commit.id));
+  const materializedDecisionAfter = materializeAppliedAuthorityRow(
+    "lite_memory_execution_decisions",
+    rooted.decisionAfter,
+    String(commit.id),
+  );
   const persistedDecisionState: Row = {
     id: decision.id,
     scope: decision.scope,

@@ -3,13 +3,38 @@ import assert from "node:assert/strict";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
+import { runAppliedAuthorityMutationV2 } from
+  "../../src/memory/applied-authority-mutation.ts";
+import {
+  applyNodeAuthorityPatchesV2,
+  buildNodeAuthorityMutationV2,
+  verifyNodeAuthorityPatchesV2,
+  type NodeAuthorityPatchV2,
+} from "../../src/memory/node-authority-mutation.ts";
 import { createLiteRecallStore } from "../../src/store/lite-recall-store.ts";
-import { createLiteWriteStore } from "../../src/store/lite-write-store.ts";
+import { inspectLiteMemoryCommitAuthority } from
+  "../../src/store/lite-memory-commit-integrity.ts";
+import { createLiteRuntimeDatabase } from "../../src/store/lite-runtime-database.ts";
+import {
+  createLiteWriteStore,
+  createLiteWriteStoreFromDatabase,
+} from "../../src/store/lite-write-store.ts";
+import { createSqliteDatabase } from "../../src/store/sqlite.ts";
 import { applyMemoryWrite, prepareMemoryWrite } from "../../src/memory/write.ts";
+import { sha256Hex } from "../../src/util/crypto.ts";
 
 function tmpDbPath(name: string): string {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), "aionis-lite-recall-lexical-"));
   return path.join(dir, `${name}.sqlite`);
+}
+
+const EMBEDDING_DIMENSIONS = 1_536;
+
+function embedding(values: number[]): number[] {
+  assert.ok(values.length > 0 && values.length <= EMBEDDING_DIMENSIONS);
+  return values.length === EMBEDDING_DIMENSIONS
+    ? [...values]
+    : [...values, ...Array.from({ length: EMBEDDING_DIMENSIONS - values.length }, () => 0)];
 }
 
 async function insertCommit(store: ReturnType<typeof createLiteWriteStore>, scope: string, suffix: string): Promise<string> {
@@ -23,6 +48,65 @@ async function insertCommit(store: ReturnType<typeof createLiteWriteStore>, scop
     promptVersion: null,
     commitHash: `commit-hash-${suffix}`,
   });
+}
+
+async function prepareMigratedLexicalFixture(
+  dbPath: string,
+  seed: (store: ReturnType<typeof createLiteWriteStore>) => Promise<void>,
+): Promise<void> {
+  const legacyDatabase = createLiteRuntimeDatabase(dbPath);
+  const legacyStore = createLiteWriteStoreFromDatabase(legacyDatabase, {
+    annProjectionEnabled: false,
+    allowLegacyV1Fixtures: true,
+    closeDatabaseOnClose: false,
+  });
+  let legacyStoreClosed = false;
+  try {
+    legacyDatabase.db.exec("BEGIN IMMEDIATE");
+    try {
+      legacyDatabase.db.exec("DROP TABLE lite_runtime_authority_adoption_bindings");
+      legacyDatabase.db.exec("DROP TABLE lite_runtime_authority_adoption_manifests");
+      const metadataUpdate = legacyDatabase.db.prepare(
+        `UPDATE lite_runtime_schema_metadata
+         SET version = 5, updated_at = ?
+         WHERE component = 'write_projection'`,
+      ).run("2026-07-19T00:00:00.000Z");
+      assert.equal(Number(metadataUpdate.changes ?? 0), 1);
+      legacyDatabase.db.exec("COMMIT");
+    } catch (error) {
+      legacyDatabase.db.exec("ROLLBACK");
+      throw error;
+    }
+
+    await seed(legacyStore);
+    const legacyAuthority = inspectLiteMemoryCommitAuthority(legacyDatabase.db);
+    assert.equal(legacyAuthority.ok, true, JSON.stringify(legacyAuthority.findings));
+    assert.ok(legacyAuthority.legacy_commit_count > 0);
+    assert.equal(legacyAuthority.v2_commit_count, 0);
+    await legacyStore.close();
+    legacyStoreClosed = true;
+  } finally {
+    if (!legacyStoreClosed) await legacyStore.close();
+    await legacyDatabase.close();
+  }
+
+  const migratedStore = createLiteWriteStore(dbPath, { annProjectionEnabled: false });
+  await migratedStore.close();
+  const migrated = createSqliteDatabase(dbPath);
+  try {
+    const metadata = migrated.prepare(
+      `SELECT version FROM lite_runtime_schema_metadata
+       WHERE component = 'write_projection'`,
+    ).get() as { version: number } | undefined;
+    assert.equal(metadata?.version, 6);
+    const authority = inspectLiteMemoryCommitAuthority(migrated);
+    assert.equal(authority.ok, true, JSON.stringify(authority.findings));
+    assert.ok(authority.adoption_manifest_count > 0);
+    assert.ok(authority.adoption_binding_count > 0);
+    assert.equal(authority.adoption_binding_verified_count, authority.adoption_binding_count);
+  } finally {
+    migrated.close();
+  }
 }
 
 async function insertNode(
@@ -68,9 +152,7 @@ async function insertNode(
 
 test("lexical recall finds keyword matches even when semantic embedding is not ready", async () => {
   const dbPath = tmpDbPath("keyword-no-embedding");
-  const writeStore = createLiteWriteStore(dbPath);
-  const recallStore = createLiteRecallStore(dbPath);
-  try {
+  await prepareMigratedLexicalFixture(dbPath, async (writeStore) => {
     await writeStore.withTx(async () => {
       const commitId = await insertCommit(writeStore, "lexical/default", "keyword-no-embedding");
       await insertNode(writeStore, {
@@ -91,14 +173,17 @@ test("lexical recall finds keyword matches even when semantic embedding is not r
         scope: "lexical/default",
         title: "Unrelated billing route",
         textSummary: "Billing route with a ready embedding but no rare keyword.",
-        embeddingVector: [1, 0, 0],
+        embeddingVector: embedding([1, 0, 0]),
         commitId,
       });
     });
+  });
 
+  const recallStore = createLiteRecallStore(dbPath);
+  try {
     const access = recallStore.createRecallAccess();
     const semantic = await access.stage1SemanticCandidates({
-      queryEmbedding: [1, 0, 0],
+      queryEmbedding: embedding([1, 0, 0]),
       scope: "lexical/default",
       oversample: 5,
       limit: 5,
@@ -122,20 +207,19 @@ test("lexical recall finds keyword matches even when semantic embedding is not r
       || lexical[0]?.sources?.[0]?.matched_fields?.includes("text_summary"));
   } finally {
     await recallStore.close();
-    await writeStore.close();
   }
 });
 
 test("lexical recall index follows anchor state updates", async () => {
   const dbPath = tmpDbPath("keyword-update");
-  const writeStore = createLiteWriteStore(dbPath);
-  const recallStore = createLiteRecallStore(dbPath);
-  try {
+  const scope = "lexical/update";
+  const nodeId = "updatable-node";
+  await prepareMigratedLexicalFixture(dbPath, async (writeStore) => {
     await writeStore.withTx(async () => {
-      const commitId = await insertCommit(writeStore, "lexical/update", "keyword-update");
+      const commitId = await insertCommit(writeStore, scope, "keyword-update");
       await insertNode(writeStore, {
-        id: "updatable-node",
-        scope: "lexical/update",
+        id: nodeId,
+        scope,
         title: "Initial route",
         textSummary: "No rare marker yet.",
         slots: {},
@@ -143,24 +227,60 @@ test("lexical recall index follows anchor state updates", async () => {
         embeddingStatus: "pending",
         commitId,
       });
-      await writeStore.updateNodeAnchorState({
-        scope: "lexical/update",
-        id: "updatable-node",
-        slots: {
-          target_files: ["src/runtime/quartzRouter.ts"],
-          workflow_signature: "quartz-router",
-        },
-        textSummary: "The accepted route now uses QuartzRouterBoundary.",
-        salience: 0.9,
-        importance: 0.5,
-        confidence: 0.9,
-        commitId,
-      });
     });
+  });
+
+  const writeStore = createLiteWriteStore(dbPath, { annProjectionEnabled: false });
+  const recallStore = createLiteRecallStore(dbPath);
+  try {
+    const beforeStates = await writeStore.nodeStatesByIds(scope, [nodeId]);
+    const before = beforeStates.get(nodeId);
+    assert.ok(before);
+    const patch: NodeAuthorityPatchV2 = {
+      id: nodeId,
+      slots: {
+        target_files: ["src/runtime/quartzRouter.ts"],
+        workflow_signature: "quartz-router",
+      },
+      textSummary: "The accepted route now uses QuartzRouterBoundary.",
+      salience: 0.9,
+      importance: 0.5,
+      confidence: 0.9,
+    };
+    const updated = await runAppliedAuthorityMutationV2({
+      store: writeStore,
+      scope,
+      actor: "lexical-test",
+      inputSha256: sha256Hex(`lexical-anchor-update:${nodeId}`),
+      plan: async () => ({
+        status: "mutate" as const,
+        authorityKind: "lexical_anchor_update_test",
+        mutations: [buildNodeAuthorityMutationV2({ before, patch })],
+        async apply({ commitId }) {
+          await applyNodeAuthorityPatchesV2({
+            store: writeStore,
+            scope,
+            patches: [patch],
+            commitId,
+          });
+          return true;
+        },
+        async verify({ commitId }) {
+          return await verifyNodeAuthorityPatchesV2({
+            store: writeStore,
+            scope,
+            patches: [patch],
+            commitId,
+            errorLabel: "lexical_anchor_update_test",
+          });
+        },
+      }),
+    });
+    assert.equal(updated.status, "applied");
 
     const lexical = await recallStore.createRecallAccess().stage1LexicalCandidates({
       queryText: "QuartzRouterBoundary",
-      scope: "lexical/update",
+      scope,
       limit: 5,
       consumerAgentId: null,
       consumerTeamId: null,
@@ -243,47 +363,45 @@ test("ordinary memory write construction feeds alias and fact fields into lexica
 
 test("ordinary memory relation facts protect QA evidence in hybrid recall", async () => {
   const dbPath = tmpDbPath("ordinary-memory-relation-qa");
-  const writeStore = createLiteWriteStore(dbPath);
-  const recallStore = createLiteRecallStore(dbPath);
-  try {
-    const prepared = await prepareMemoryWrite(
-      {
-        tenant_id: "default",
-        scope: "ordinary/qa",
-        actor: "qa-test",
-        producer_agent_id: "qa-test",
-        owner_agent_id: "qa-test",
-        input_text: "MemoryData relation fact.",
-        auto_embed: false,
-        nodes: [{
-          client_id: "ordinary:memorydata:sister-hobby",
-          type: "concept",
-          title: "MemoryData source 17",
-          text_summary: "Session 1 - Turn 18. User: My sister enjoys Camping on quiet weekends.",
-          confidence: 0.86,
-          evidence_ref: "17,17|0",
-          slots: {
-            source_ids: ["17", "17|0"],
-            sample_id: "qa_relation_fact",
-          },
-        }],
-      },
-      "default",
-      "default",
-      {
-        maxTextLen: 10_000,
-        piiRedaction: false,
-        allowCrossScopeEdges: false,
-      },
-      null,
-    );
+  const prepared = await prepareMemoryWrite(
+    {
+      tenant_id: "default",
+      scope: "ordinary/qa",
+      actor: "qa-test",
+      producer_agent_id: "qa-test",
+      owner_agent_id: "qa-test",
+      input_text: "MemoryData relation fact.",
+      auto_embed: false,
+      nodes: [{
+        client_id: "ordinary:memorydata:sister-hobby",
+        type: "concept",
+        title: "MemoryData source 17",
+        text_summary: "Session 1 - Turn 18. User: My sister enjoys Camping on quiet weekends.",
+        confidence: 0.86,
+        evidence_ref: "17,17|0",
+        slots: {
+          source_ids: ["17", "17|0"],
+          sample_id: "qa_relation_fact",
+        },
+      }],
+    },
+    "default",
+    "default",
+    {
+      maxTextLen: 10_000,
+      piiRedaction: false,
+      allowCrossScopeEdges: false,
+    },
+    null,
+  );
 
-    const ordinary = prepared.nodes[0]?.slots.ordinary_memory_v1 as Record<string, unknown> | undefined;
-    assert.ok(Array.isArray(ordinary?.relation_facts));
-    assert.deepEqual(ordinary?.source_ids, ["17", "17|0"]);
-    assert.ok(JSON.stringify(ordinary?.relation_facts).includes("sister"));
-    assert.ok(JSON.stringify(ordinary?.relation_facts).includes("Camping"));
+  const ordinary = prepared.nodes[0]?.slots.ordinary_memory_v1 as Record<string, unknown> | undefined;
+  assert.ok(Array.isArray(ordinary?.relation_facts));
+  assert.deepEqual(ordinary?.source_ids, ["17", "17|0"]);
+  assert.ok(JSON.stringify(ordinary?.relation_facts).includes("sister"));
+  assert.ok(JSON.stringify(ordinary?.relation_facts).includes("Camping"));
 
+  await prepareMigratedLexicalFixture(dbPath, async (writeStore) => {
     await writeStore.withTx(async () => {
       const commitId = await insertCommit(writeStore, "ordinary/qa", "ordinary-memory-relation-qa-distractors");
       for (let index = 0; index < 4; index += 1) {
@@ -293,13 +411,17 @@ test("ordinary memory relation facts protect QA evidence in hybrid recall", asyn
           title: `Unrelated memory ${index}`,
           textSummary: `A different personal fact about office location and meeting notes ${index}.`,
           slots: { source_ids: [`distractor-${index}`] },
-          embeddingVector: [1, 0, 0],
+          embeddingVector: embedding([1, 0, 0]),
           embeddingStatus: "ready",
           commitId,
         });
       }
     });
+  });
 
+  const writeStore = createLiteWriteStore(dbPath, { annProjectionEnabled: false });
+  const recallStore = createLiteRecallStore(dbPath);
+  try {
     await writeStore.withTx(() =>
       applyMemoryWrite(prepared, {
         maxTextLen: 10_000,
@@ -311,7 +433,7 @@ test("ordinary memory relation facts protect QA evidence in hybrid recall", asyn
 
     const hybrid = await recallStore.createRecallAccess().stage1HybridCandidates({
       queryText: "What hobby does my sister enjoy?",
-      queryEmbedding: [1, 0, 0],
+      queryEmbedding: embedding([1, 0, 0]),
       scope: "ordinary/qa",
       limit: 3,
       oversample: 3,

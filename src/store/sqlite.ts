@@ -1,6 +1,5 @@
 import { createRequire } from "node:module";
 import {
-  chmodSync,
   closeSync,
   constants,
   fchmodSync,
@@ -118,10 +117,23 @@ function chmodExisting(path: string, mode: number): void {
       constants.O_RDONLY | (constants.O_NOFOLLOW ?? 0),
     );
     const openedStat = fstatSync(fd);
-    if (!openedStat.isFile()) {
-      throw new Error(`runtime_sqlite_artifact_must_be_regular_file:${path}`);
+    if (!openedStat.isFile()
+      || openedStat.dev !== pathStat.dev || openedStat.ino !== pathStat.ino) {
+      throw new Error(`runtime_sqlite_artifact_changed_during_mode_hardening:${path}`);
+    }
+    if (process.platform !== "win32" && typeof process.getuid === "function"
+      && openedStat.uid !== process.getuid()) {
+      throw new Error(`runtime_sqlite_artifact_owner_invalid:${path}`);
     }
     fchmodSync(fd, mode);
+    const after = lstatSync(path);
+    if (after.isSymbolicLink() || !after.isFile()
+      || after.dev !== pathStat.dev || after.ino !== pathStat.ino) {
+      throw new Error(`runtime_sqlite_artifact_changed_during_mode_hardening:${path}`);
+    }
+    if (process.platform !== "win32" && (after.mode & 0o7777) !== mode) {
+      throw new Error(`runtime_sqlite_artifact_mode_invalid:${path}:${(after.mode & 0o7777).toString(8)}`);
+    }
   } catch (error) {
     if ((error as NodeJS.ErrnoException)?.code !== "ENOENT") throw error;
   } finally {
@@ -137,6 +149,50 @@ function assertPrivateRuntimeSqliteArtifactPath(path: string): void {
     }
   } catch (error) {
     if ((error as NodeJS.ErrnoException)?.code !== "ENOENT") throw error;
+  }
+}
+
+function hardenPrivateRuntimeSqliteDirectory(path: string): void {
+  const directory = resolve(dirname(path));
+  if (directory === parse(directory).root || directory === resolve(".")) {
+    throw new Error("runtime_sqlite_requires_dedicated_data_directory");
+  }
+  const before = lstatSync(directory);
+  if (!before.isDirectory() || (before.mode & 0o1000) !== 0) {
+    throw new Error("runtime_sqlite_requires_dedicated_data_directory");
+  }
+  if (process.platform !== "win32" && typeof process.getuid === "function"
+    && before.uid !== process.getuid()) {
+    throw new Error(`runtime_sqlite_directory_owner_invalid:${directory}`);
+  }
+
+  const fd = openSync(
+    directory,
+    constants.O_RDONLY | (constants.O_DIRECTORY ?? 0) | (constants.O_NOFOLLOW ?? 0),
+  );
+  try {
+    const opened = fstatSync(fd);
+    if (!opened.isDirectory() || opened.dev !== before.dev || opened.ino !== before.ino) {
+      throw new Error(`runtime_sqlite_directory_changed_during_mode_hardening:${directory}`);
+    }
+    if (process.platform !== "win32" && typeof process.getuid === "function"
+      && opened.uid !== process.getuid()) {
+      throw new Error(`runtime_sqlite_directory_owner_invalid:${directory}`);
+    }
+    fchmodSync(fd, PRIVATE_RUNTIME_DIRECTORY_MODE);
+  } finally {
+    closeSync(fd);
+  }
+
+  const after = lstatSync(directory);
+  if (!after.isDirectory() || after.dev !== before.dev || after.ino !== before.ino) {
+    throw new Error(`runtime_sqlite_directory_changed_during_mode_hardening:${directory}`);
+  }
+  if (process.platform !== "win32"
+    && (after.mode & 0o7777) !== PRIVATE_RUNTIME_DIRECTORY_MODE) {
+    throw new Error(
+      `runtime_sqlite_directory_mode_invalid:${directory}:${(after.mode & 0o7777).toString(8)}`,
+    );
   }
 }
 
@@ -156,41 +212,111 @@ export function preparePrivateRuntimeSqlitePath(path: string): void {
   }
 
   const directory = resolve(dirname(path));
-  if (directory === parse(directory).root || directory === resolve(".")) {
-    throw new Error("runtime_sqlite_requires_dedicated_data_directory");
-  }
   mkdirSync(directory, { recursive: true, mode: PRIVATE_RUNTIME_DIRECTORY_MODE });
-  const directoryStat = lstatSync(directory);
-  if (!directoryStat.isDirectory() || (directoryStat.mode & 0o1000) !== 0) {
-    throw new Error("runtime_sqlite_requires_dedicated_data_directory");
-  }
-  chmodSync(directory, PRIVATE_RUNTIME_DIRECTORY_MODE);
+  // A directory descriptor is safe to close while SQLite owns locks on files
+  // inside that directory. This repairs a conventional 0755 data directory
+  // without opening or closing the database, WAL, SHM, or journal files.
+  hardenPrivateRuntimeSqliteDirectory(path);
 
   for (const artifact of [path, `${path}-wal`, `${path}-shm`, `${path}-journal`]) {
     assertPrivateRuntimeSqliteArtifactPath(artifact);
   }
 
-  const fd = openSync(
-    path,
-    constants.O_CREAT | constants.O_RDWR | (constants.O_NOFOLLOW ?? 0),
-    PRIVATE_RUNTIME_SQLITE_MODE,
-  );
+  let fd: number | null = null;
   try {
+    fd = openSync(
+      path,
+      constants.O_CREAT | constants.O_EXCL | constants.O_RDWR | (constants.O_NOFOLLOW ?? 0),
+      PRIVATE_RUNTIME_SQLITE_MODE,
+    );
     if (!fstatSync(fd).isFile()) {
       throw new Error(`runtime_sqlite_artifact_must_be_regular_file:${path}`);
     }
     fchmodSync(fd, PRIVATE_RUNTIME_SQLITE_MODE);
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException)?.code !== "EEXIST") throw error;
+    // Existing artifacts are never repaired during Runtime startup. A live
+    // SQLite connection may already own POSIX locks, while pathname chmod has
+    // an unavoidable lstat-to-syscall symlink race in Node's portable API.
+    // Incorrect modes therefore require explicit quiescent/offline repair.
+    assertPrivateRuntimeSqliteArtifactMode(path, PRIVATE_RUNTIME_SQLITE_MODE, true);
   } finally {
-    closeSync(fd);
+    if (fd !== null) closeSync(fd);
+  }
+
+  for (const artifact of [`${path}-wal`, `${path}-shm`, `${path}-journal`]) {
+    assertPrivateRuntimeSqliteArtifactMode(artifact, PRIVATE_RUNTIME_SQLITE_MODE);
   }
 }
 
-/** Re-applies owner-only modes after SQLite has materialized WAL/SHM files. */
+/**
+ * Re-applies owner-only modes to a quiescent SQLite snapshot.
+ *
+ * This descriptor-based helper must never run while any SQLite connection to
+ * the database is alive. POSIX close(2) can cancel locks held by SQLite on a
+ * different descriptor in the same process. Live stores use the stat-only
+ * assertion below instead.
+ */
 export function hardenPrivateRuntimeSqliteArtifacts(path: string): void {
   chmodExisting(path, PRIVATE_RUNTIME_SQLITE_MODE);
   chmodExisting(`${path}-wal`, PRIVATE_RUNTIME_SQLITE_MODE);
   chmodExisting(`${path}-shm`, PRIVATE_RUNTIME_SQLITE_MODE);
   chmodExisting(`${path}-journal`, PRIVATE_RUNTIME_SQLITE_MODE);
+}
+
+/** Repairs a Runtime path only while every SQLite connection to it is closed. */
+export function hardenPrivateRuntimeSqlitePathOffline(path: string): void {
+  hardenPrivateRuntimeSqliteDirectory(path);
+  hardenPrivateRuntimeSqliteArtifacts(path);
+  assertPrivateRuntimeSqliteArtifactModes(path);
+}
+
+function assertPrivateRuntimeSqliteArtifactMode(
+  path: string,
+  expectedMode: number,
+  required = false,
+): void {
+  try {
+    const artifact = lstatSync(path);
+    if (artifact.isSymbolicLink() || !artifact.isFile()) {
+      throw new Error(`runtime_sqlite_artifact_must_be_regular_file:${path}`);
+    }
+    if (process.platform !== "win32" && typeof process.getuid === "function"
+      && artifact.uid !== process.getuid()) {
+      throw new Error(`runtime_sqlite_artifact_owner_invalid:${path}`);
+    }
+    if (process.platform !== "win32" && (artifact.mode & 0o7777) !== expectedMode) {
+      throw new Error(
+        `runtime_sqlite_artifact_mode_invalid:${path}:${(artifact.mode & 0o7777).toString(8)}`,
+      );
+    }
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException)?.code !== "ENOENT") throw error;
+    if (required) throw new Error(`runtime_sqlite_artifact_missing:${path}`);
+  }
+}
+
+/** Verifies live SQLite artifacts without opening or closing another file descriptor. */
+export function assertPrivateRuntimeSqliteArtifactModes(path: string): void {
+  const directory = resolve(dirname(path));
+  const directoryStat = lstatSync(directory);
+  if (!directoryStat.isDirectory()) {
+    throw new Error("runtime_sqlite_requires_dedicated_data_directory");
+  }
+  if (process.platform !== "win32" && typeof process.getuid === "function"
+    && directoryStat.uid !== process.getuid()) {
+    throw new Error(`runtime_sqlite_directory_owner_invalid:${directory}`);
+  }
+  if (process.platform !== "win32"
+    && (directoryStat.mode & 0o7777) !== PRIVATE_RUNTIME_DIRECTORY_MODE) {
+    throw new Error(
+      `runtime_sqlite_directory_mode_invalid:${directory}:${(directoryStat.mode & 0o7777).toString(8)}`,
+    );
+  }
+  assertPrivateRuntimeSqliteArtifactMode(path, PRIVATE_RUNTIME_SQLITE_MODE, true);
+  for (const artifact of [`${path}-wal`, `${path}-shm`, `${path}-journal`]) {
+    assertPrivateRuntimeSqliteArtifactMode(artifact, PRIVATE_RUNTIME_SQLITE_MODE);
+  }
 }
 
 /** Opens a Runtime authority database with an owner-only creation contract. */
@@ -200,11 +326,15 @@ export function createPrivateRuntimeSqliteDatabase(path: string): SqliteDatabase
   preparePrivateRuntimeSqlitePath(path);
   const db = new mod.DatabaseSync(path);
   try {
+    // Revalidate immediately after SQLite opens the pathname and before the
+    // first SQL statement. This narrows the remaining same-UID swap window
+    // without opening another descriptor or disturbing SQLite's locks.
+    assertPrivateRuntimeSqliteArtifactModes(path);
     db.exec(`
       PRAGMA busy_timeout = 5000;
       PRAGMA synchronous = NORMAL;
     `);
-    hardenPrivateRuntimeSqliteArtifacts(path);
+    assertPrivateRuntimeSqliteArtifactModes(path);
     return db;
   } catch (error) {
     db.close();
