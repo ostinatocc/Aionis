@@ -3867,6 +3867,70 @@ state writes would leave a holder-crash race. Managed quiesce, live writer-
 fence/revision policy, private signing, D2/holds, publication, release verdict,
 multi-host consensus, and the external-head CLI also remain later work.
 
+**Formal design checkpoint (2026-07-18, Task 8.2D-3a.3b):** ADR-0002 freezes a
+one-shot deployment-slot authority worker as a future production composition.
+Its implementation is deferred during the v0.3.10 convergence sprint; the
+checkpoint preserves the design boundary without authorizing new production
+mechanism before commit authority and release evidence are repaired.
+This is based on the current kernel rather than a hypothetical service split:
+lease, reservation, and prepared-completion capabilities are private WeakMap
+objects, and the carrier lease plus state writer already execute in one PID.
+The unresolved risk is that the five raw lifecycle entry points remain callable
+from a larger Runtime PID, where closing another descriptor for the carrier
+inode can release a POSIX lock without invalidating the SQLite savepoint.
+
+The worker therefore owns the whole open-root, derive-slot, acquire, reserve,
+prepare, commit, release, and close-root sequence. A parent receives only the
+immutable reservation inspection, returns the complete canonical signed
+binding receipt plus registered external policy, and never receives an opaque
+authority capability or raw carrier/state path. The first production slice adds
+strict protocol, entry, and client modules while leaving the low-level kernel
+in place and marking its mutation API internal. A source-inventory gate permits
+production imports of acquire/reserve/prepare/commit/release only from the
+worker entry; worker threads and a lock-only child are insufficient because
+they preserve the same-PID close or holder/state-writer race respectively.
+
+IPC is one exact canonical JSON string per message. Its exact-key envelope
+contains a canonical payload string and SHA-256; strict payloads bind a CSPRNG
+session nonce, sequence, prior-payload digest, operation ID, and the caller's
+existing operation-request digest. The sole normal transcript is client
+`start`, worker `reservation_ready`, client `complete|abandon`, and worker
+terminal. Exact completed replay may return an early terminal. Receipt and
+policy parsing reuse the current 16-KiB and 1-MiB canonical contracts; the
+protocol adds a separately versioned root-path limit and derives message/frame
+limits field by field rather than borrowing an unrelated journal limit.
+
+A terminal result is accepted only after the worker has successfully released
+the carrier, closed the root, sent the exact terminal, disconnected IPC, and
+exited with code 0 and no signal. EOF, timeout, signal, malformed transcript,
+or uncertain commit/release starts at most one fresh worker with the identical
+slot and operation tuple. Durable state then resolves the uncertainty: absent
+operation means the reservation never committed and the callback may be
+retry-safe invoked for a new reservation; existing completion is exact replay
+with no callback; operation without completion is a burned generation and
+requires a caller-chosen new operation ID. A second uncertain worker returns a
+typed indeterminate result and never loops.
+
+The implementation stays on the repository's actual TypeScript runtime:
+`process.execPath` plus an absolute resolved `tsx` loader and fixed source entry.
+It moves `tsx` to runtime dependencies, passes no request data in argv, inherits
+no application environment or arbitrary descriptors, bounds private startup
+diagnostics, and exposes no production crash hook. Real tests use OS processes,
+SQLite, IPC, contention, disconnect, and `SIGKILL`, including test-only pauses
+immediately before and after the real transaction `COMMIT` calls.
+
+This checkpoint is a design and claim boundary, not implementation evidence.
+It can establish only one-shot isolation of the carrier/state lifecycle after
+the code and real-process matrix pass. It does not establish verified local
+filesystem locking, isolated provisioning-lock ownership, trusted launcher root
+selection, provisioning or slot-state anti-rollback, managed writer quiesce,
+writer fence/revision policy, private signing, D2, tracked holds, publication,
+release verdict, consensus, or the external-head command. The low-level
+inspection fields remain `required_not_established`; a separate non-signing
+worker-session inspection may describe only the cleanly completed composition.
+See `docs/adr/0002-isolate-deployment-slot-authority-worker.md` for the exact
+protocol, failure matrix, alternatives, consequences, and acceptance boundary.
+
 For an external kind, ingestion re-resolves the reservation, its sole ticket
 consumption, sole claim, sole supervisor binding, and sole session termination
 in the same tenant. The

@@ -18,6 +18,7 @@ Read before changing code:
 
 - `docs/architecture/AIONIS_LEARNING_EPISODE_LEDGER_DESIGN.md`
 - `docs/adr/0001-use-append-only-learning-episode-ledger.md`
+- `docs/adr/0002-isolate-deployment-slot-authority-worker.md`
 - `docs/AIONIS_PRODUCT_CONTRACT.md`
 - `docs/AIONIS_STATE_MODEL.md`
 - `docs/architecture/runtime-complexity-budget.json`
@@ -2773,6 +2774,262 @@ belongs only to an unpublished, non-authoritative scratch transaction; SQLite
 may recover those scratch bytes before candidate selection. This checkpoint
 therefore claims zero authority/final-publication mutation on owner mismatch,
 not byte-for-byte immutability of dirty unpublished scratch.
+
+**Task 8.2D-3a.3b implementation plan (frozen 2026-07-18; execution deferred):
+Isolate the carrier/state authority lifecycle in one one-shot process.**
+
+The v0.3.10 convergence sprint defers this production implementation until the
+Runtime commit authority, lifecycle admission, local-data permissions, shutdown
+semantics, and exact-commit release evidence are repaired. The steps below are
+retained as a future implementation contract and are not active release work.
+
+ADR-0002 records the actual boundary. The current kernel already keeps the
+carrier lock, durable-state writer, and WeakMap-branded lease/reservation/
+prepared-completion capabilities together. This task does not split them. It
+prevents those lifecycle functions from being composed inside the larger
+Runtime PID, where an unrelated close of another carrier-inode descriptor could
+release a POSIX lock. A lock-only child and `worker_threads` are not acceptable.
+
+**Step 0: Freeze the architecture and existing-contract inventory**
+
+Files:
+
+- Add: `docs/adr/0002-isolate-deployment-slot-authority-worker.md`
+- Modify: `docs/architecture/AIONIS_LEARNING_EPISODE_LEDGER_DESIGN.md`
+- Modify: `docs/plans/2026-07-13-learning-episode-ledger.md`
+
+The ADR must remain `Proposed` until the real subprocess matrix passes. It
+freezes the four-message transcript, clean-terminal predicate, one automatic
+fresh-worker reconciliation, failure matrix, TypeScript/`tsx` runtime choice,
+source-import governance, and explicit non-goals. It must not present the
+existing test child as a production protocol or claim that a production caller
+already misuses the kernel; there is currently no such caller.
+
+Before code, keep these current contracts exact:
+
+- operation ID is 1..256 UTF-8 bytes, exact-trimmed, and rejects ASCII C0/DEL;
+- deployment slot is 1..256 UTF-8 bytes, exact-trimmed, valid Unicode, and
+  rejects every `Cc` character;
+- operation-request SHA-256 remains caller-domain input rather than a digest of
+  the worker frame;
+- canonical signed binding receipt is at most 16 KiB;
+- canonical historical external policy is at most 1 MiB; and
+- configured root currently has no public path-length ceiling, so any worker
+  ceiling is a new versioned compatibility decision, not an inherited fact.
+
+**Step 1: Add the pure protocol and shared runtime validators**
+
+Files:
+
+- Add:
+  `src/store/lite-runtime-deployment-slot-authority-worker-protocol.ts`
+- Add:
+  `scripts/ci/lite-runtime-deployment-slot-authority-worker-protocol.test.ts`
+- Modify: `src/store/lite-runtime-deployment-slot-authority.ts`
+- Modify: `src/store/lite-runtime-deployment-slot-path-authority.ts`
+- Modify: `src/memory/learning-runtime-database-binding.ts`
+
+The protocol module must have no filesystem, SQLite, child-process, route, or
+server import. Move or export the exact operation-ID, slot, digest, reservation-
+inspection, completion, and canonical byte-limit contracts so the kernel and
+wire parser consume one implementation; do not paste look-alike validators into
+the parent. Preserve the existing authority exports through type re-exports if
+needed for compatibility.
+
+Define one canonical string frame with exact
+`contract_version/payload_json/payload_sha256` keys. Every strict payload binds
+session nonce digest, sequence, prior-payload digest, operation tuple, and one
+of `start`, `reservation_ready`, `complete`, `abandon`, or `terminal`. Check the
+outer byte ceiling before outer parse and the payload byte ceiling/digest before
+payload parse. Require exact stable JSON at both levels so duplicate keys,
+alternative key order, whitespace variants, extra fields, malformed UTF-8
+surrogates, and non-canonical numbers fail closed.
+
+Derive message ceilings from exact field maxima. Export the existing 16-KiB
+receipt and 1-MiB policy constants instead of duplicating them. Introduce a
+named worker-root-path ceiling with an explicit compatibility test, then compute
+frame overhead from the schema and golden maximum-size values. Do not use
+2/4 MiB, PATH_MAX, a provisioning-journal limit, or a timeout simply because it
+is a familiar round number.
+
+Protocol tests must cover byte—not character—boundaries, multibyte identifiers,
+unpaired surrogates, every extra/missing key, duplicate keys, digest mismatch,
+sequence/previous-digest mismatch, cross-session replay, exact maximum receipt
+and policy, one-byte overflow, and deterministic golden transcript digests.
+
+Run:
+
+```bash
+npx tsx --test --test-concurrency=1 \
+  scripts/ci/lite-runtime-deployment-slot-authority-worker-protocol.test.ts
+npm run -s typecheck
+git diff --check
+```
+
+**Step 2: Implement the fixed one-shot worker entry**
+
+Files:
+
+- Add:
+  `src/store/lite-runtime-deployment-slot-authority-worker-entry.ts`
+- Add:
+  `scripts/ci/lite-runtime-deployment-slot-authority-worker-entry.test.ts`
+- Modify: `package.json`
+- Modify: `package-lock.json`
+
+The entry accepts no domain argv/env/file configuration. After one strict
+`start`, it opens the configured root with the supplied manifest digest,
+derives the slot, and owns acquire -> reserve -> prepare -> commit -> release ->
+root close in one PID. The parent receives only the frozen reservation
+inspection. All opaque capabilities remain inside the worker and are consumed
+or revoked there.
+
+Install message, disconnect, and termination handling before emitting
+`reservation_ready`. One state machine accepts exactly one parent response.
+Every reachable path goes through a single cleanup owner: release first, close
+root second. Only after both succeed may the entry send a determinate terminal,
+disconnect IPC, and exit 0. Release/root-close uncertainty produces an
+indeterminate terminal when possible and non-clean exit semantics; it never
+relabels a completion as safely delivered. `SIGKILL` remains unrecoverable
+inside the child and is intentionally resolved by the next process.
+
+Run through the repository's actual source contract. Resolve `tsx` to an
+absolute loader path, use the fixed source entry, and move `tsx` from
+`devDependencies` to `dependencies`. Do not add `dist` probing, `npx`, a
+caller-selected entry/cwd, or a source fallback. The worker sends no stack or
+unbounded message and exposes no production observer, clock, random, or fault
+control.
+
+The entry test uses a real configured root, authority databases, and IPC. It
+proves fresh reserve/complete, exact replay without another completion request,
+explicit abandon, malformed response cleanup, parent disconnect cleanup,
+duplicate response rejection, and that root retention is fully released before
+normal exit.
+
+**Step 3: Implement the production client and durable reconciliation**
+
+Files:
+
+- Add:
+  `src/store/lite-runtime-deployment-slot-authority-worker-client.ts`
+- Add:
+  `scripts/ci/lite-runtime-deployment-slot-authority-worker.test.ts`
+
+Spawn only `process.execPath` with the absolute resolved `tsx` loader and fixed
+entry. Use ignored stdin/stdout, bounded private stderr, one IPC channel, a
+fixed minimal non-secret environment, `detached=false`, and no `unref` or
+inherited application descriptor. Request data and completion material travel
+only in canonical IPC frames.
+
+The client API accepts root, expected manifest digest, slot, operation tuple,
+abort signal, and one async completion-material callback. It rejects every
+pending phase exactly once on spawn error, early disconnect/close, protocol
+error, abort, or deadline. Timeout first sends canonical `abandon`, permits one
+bounded cleanup window, then uses process termination and finally `SIGKILL` if
+the worker cannot close. Production session/callback/cleanup constants are
+module-owned and frozen only after recording real local/CI operation latency
+with a documented safety margin; callers and environment cannot weaken them.
+
+Accept a determinate result only with an exact terminal frame, IPC disconnect,
+and `close(code=0, signal=null)`. Any mutation-phase uncertainty starts one
+fresh worker with the identical operation tuple:
+
+- missing operation: continue with the newly reserved generation; the callback
+  may be invoked once more and must be retry-safe;
+- exact completion: return stored bytes and never invoke the callback;
+- operation without completion: return the kernel's burned-generation error
+  and require the caller to choose a new operation ID.
+
+The second worker becoming uncertain returns a typed
+`outcome_unknown_after_reconciliation`; there is no unbounded retry. A normal
+validation, conflict, or burned result is determinate and is not automatically
+repeated. The result may include a non-signing worker-session inspection for
+the terminal transcript and clean process boundary, but it must not mutate the
+low-level `required_not_established` authority claims.
+
+**Step 4: Enforce the import boundary and prove the real crash matrix**
+
+Files:
+
+- Add:
+  `scripts/ci/lite-runtime-deployment-slot-authority-worker-source.test.mjs`
+- Add or modify a support child under `scripts/ci/support/` only for transaction-
+  edge `SIGKILL` orchestration
+- Modify:
+  `scripts/ci/lite-runtime-deployment-slot-authority-worker.test.ts`
+- Modify the existing authority test only where the production worker replaces
+  its ad-hoc composition
+
+Inventory tracked and untracked `src` TypeScript with the same TypeScript AST
+approach used by complexity governance. In production source:
+
+- only the worker entry may import or call acquire/reserve/prepare/commit/release;
+- the client may not import the authority kernel, path authority, SQLite, or
+  protected-authority database;
+- the protocol may not import the authority kernel;
+- the entry's direct imports are limited to protocol, path authority, and the
+  authority kernel and may not reach app/server/routes/product modules; and
+- only the client contains the fixed worker-entry filename, and it must resolve
+  rather than statically import it.
+
+Use real competing child processes and real `SIGKILL`; no mocked filesystem,
+SQLite, IPC, process, or lock result. The test-only transaction-edge child may
+wrap the real `DatabaseSync.prototype.exec` after fixture creation, match the
+exact `COMMIT`, pause immediately before or after the real call, and let the
+parent kill the process. It must not add a production fault hook.
+
+Cover at least:
+
+- acquire commit before/after;
+- reserve commit before/after;
+- prepare followed by kill;
+- completion commit before/after;
+- carrier-witness commit before/after;
+- active-reservation release abandonment before witness;
+- parent disconnect and abort races;
+- two-process contention; and
+- terminal-send/disconnect/exit uncertainty.
+
+The fresh worker must prove the exact expected outcome at each edge: no durable
+operation and safe retry; burned generation; or byte-identical completion
+replay. A terminal message followed by abnormal exit remains indeterminate and
+must reconcile.
+
+**Step 5: Govern complexity, run the complete suite, and commit atomically**
+
+The current source file/line budget is exact. Measure the finished tree first.
+Delete or merge obsolete test-support structure where doing so improves the
+boundary; otherwise review and update the structural budget in the same commit
+with the three new production modules named in the report. Route and environment
+budgets must not move because D3a.3b adds neither.
+
+Run focused checks first, then the complete serialized suite once on the final
+tree:
+
+```bash
+set -euo pipefail
+node --test \
+  scripts/ci/lite-runtime-deployment-slot-authority-worker-source.test.mjs
+npx tsx --test --test-concurrency=1 \
+  scripts/ci/lite-runtime-deployment-slot-authority-worker-protocol.test.ts \
+  scripts/ci/lite-runtime-deployment-slot-authority-worker-entry.test.ts \
+  scripts/ci/lite-runtime-deployment-slot-authority-worker.test.ts \
+  scripts/ci/lite-runtime-deployment-slot-authority.test.ts
+npm run -s typecheck
+npm run -s complexity:check
+npm run -s lite:test
+git diff --check
+```
+
+Acceptance is: zero raw production lifecycle import outside the entry; zero
+capability or internal path crossing IPC; exact replay with no callback after
+completion uncertainty; explicit burn after reservation-without-completion;
+bounded child cleanup; clean terminal only after release/root close; all real
+contention/disconnect/`SIGKILL` cases passing; complete suite green; and no
+claim of local-lock verification, provisioning-process isolation, trusted root
+selection, anti-rollback, writer quiesce/fence, signer, publication, or
+consensus. Then change ADR-0002 from `Proposed` to `Accepted` in the same atomic
+D3a.3b implementation commit.
 
 Extend the production gate to consume the ledger-derived current-shadow export
 and the tool gate to consume a strict external `run-manifest.json`; both reports
