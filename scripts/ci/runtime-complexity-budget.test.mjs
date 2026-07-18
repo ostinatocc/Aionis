@@ -9,10 +9,10 @@ import { fileURLToPath } from "node:url";
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..", "..");
 const COLLECTOR = path.join(ROOT, "scripts", "ci", "runtime-complexity-budget.mjs");
 const BUDGET = path.join(ROOT, "docs", "architecture", "runtime-complexity-budget.json");
-const EXPECTED_BASELINE_COMMIT = "25e2ffa4304b899c6773e101388a1297b7e145a9";
+const EXPECTED_BASELINE_COMMIT = "0546946b93f8d1556562c5b047c93edfe0e2deaf";
 const EXPECTED_THRESHOLDS = {
-  source_files: 340,
-  source_lines: 183080,
+  source_files: 341,
+  source_lines: 184380,
   route_matrix_entries: 21,
   env_schema_fields: 177,
   import_cycles: 0,
@@ -66,8 +66,14 @@ function assertBudgetMetadata(budget) {
   assert.equal(budget.baseline_commit, EXPECTED_BASELINE_COMMIT);
   assert.equal(typeof budget.intent, "string");
   assert.equal(budget.intent, budget.intent.trim());
-  assert.match(budget.intent, /Task 8\.2D-3a\.2 rebaseline/);
-  assert.match(budget.intent, /configured-authority-path module/);
+  assert.match(budget.intent, /Task 8\.2D-3a\.3a rebaseline/);
+  assert.match(budget.intent, /configured-root slot-path authority module/);
+  assert.match(budget.intent, /expected manifest digest/);
+  assert.match(budget.intent, /deterministic sharded mapping/);
+  assert.match(budget.intent, /remove the raw authority-state path/);
+  assert.match(budget.intent, /bootstrap provisioning returns no live authority/);
+  assert.match(budget.intent, /private lease retentions prevent premature root close/);
+  assert.match(budget.intent, /Durable registration v2/);
   assert.match(budget.intent, /EXTRA-synchronous WAL carrier and append-only state/);
   assert.match(budget.intent, /conditional retained BEGIN IMMEDIATE lease/);
   assert.match(budget.intent, /hash-chained clean-release state witnesses/);
@@ -77,7 +83,11 @@ function assertBudgetMetadata(budget) {
   assert.match(budget.intent, /WeakMap-branded/);
   assert.match(budget.intent, /explicitly signing-ineligible/);
   assert.match(budget.intent, /does not claim verified local-locking filesystem semantics/);
-  assert.match(budget.intent, /launcher slot-path uniqueness/);
+  assert.match(budget.intent, /establishes deterministic slot-path uniqueness/);
+  assert.match(
+    budget.intent,
+    /trusted launcher root selection and protected half-provision recovery remain explicit missing capabilities/,
+  );
   assert.match(budget.intent, /joint-snapshot anti-rollback/);
   assert.match(budget.intent, /enabled external-head CLI/);
   assert.match(budget.intent, /no route, environment field, largest-file growth, or import cycle/);

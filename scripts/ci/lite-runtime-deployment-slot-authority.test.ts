@@ -13,6 +13,7 @@ import {
   chmodSync,
   existsSync,
   lstatSync,
+  mkdirSync,
   mkdtempSync,
   readFileSync,
   realpathSync,
@@ -60,10 +61,20 @@ import {
   inspectLiteRuntimeDeploymentSlotCheckpointGeneration,
   inspectLiteRuntimeDeploymentSlotExclusiveLease,
   prepareLiteRuntimeDeploymentSlotBindingCompletion,
-  provisionLiteRuntimeDeploymentSlotAuthority,
+  provisionLiteRuntimeDeploymentSlotAuthority as provisionLiteRuntimeDeploymentSlotAuthorityRaw,
   releaseLiteRuntimeDeploymentSlotExclusiveLease as releaseLiteRuntimeDeploymentSlotExclusiveLeaseRaw,
   reserveLiteRuntimeDeploymentSlotCheckpointGeneration,
 } from "../../src/store/lite-runtime-deployment-slot-authority.js";
+import {
+  closeLiteRuntimeDeploymentSlotPathAuthorityRoot,
+  deriveLiteRuntimeDeploymentSlotPathCapability,
+  inspectLiteRuntimeDeploymentSlotPathAuthorityRoot,
+  inspectLiteRuntimeDeploymentSlotPathCapability,
+  openLiteRuntimeDeploymentSlotPathAuthorityRoot,
+  provisionLiteRuntimeDeploymentSlotPathAuthorityRoot,
+  type LiteRuntimeDeploymentSlotPathAuthorityRootCapability,
+  type LiteRuntimeDeploymentSlotPathCapability,
+} from "../../src/store/lite-runtime-deployment-slot-path-authority.js";
 
 const ROOT = resolve(fileURLToPath(new URL("../..", import.meta.url)));
 const LEASE_CHILD = fileURLToPath(
@@ -75,6 +86,10 @@ const MAX_U64_DECIMAL = "18446744073709551615";
 const ACTIVE_CHILDREN = new Set<RunningChild>();
 const DEFAULT_LEASE_ACQUIRED_AT = new Date("2026-07-17T08:00:00.000Z");
 const DEFAULT_LEASE_RELEASED_AT = new Date("2026-07-17T08:00:00.000Z");
+const SLOT_PATH_BY_AUTHORITY_STATE_PATH = new Map<
+  string,
+  LiteRuntimeDeploymentSlotPathCapability
+>();
 
 const LAUNCHER_KEYS = generateKeyPairSync("ed25519");
 const ROTATED_LAUNCHER_KEYS = generateKeyPairSync("ed25519");
@@ -82,12 +97,51 @@ const ATTESTOR_KEYS = generateKeyPairSync("ed25519");
 const BROKER_KEYS = generateKeyPairSync("ed25519");
 const ATTACKER_KEYS = generateKeyPairSync("ed25519");
 
+type LegacySlotPathArgs = Readonly<{
+  authorityStatePath: string;
+  deploymentSlot: string;
+}>;
+
+function resolveFixtureSlotPath(args: LegacySlotPathArgs) {
+  const slotPath = SLOT_PATH_BY_AUTHORITY_STATE_PATH.get(args.authorityStatePath);
+  if (!slotPath) {
+    throw new Error(
+      "launcher slot-path mapping mismatch: raw or redirected authority path is unavailable",
+    );
+  }
+  const inspection = inspectLiteRuntimeDeploymentSlotPathCapability(slotPath);
+  if (inspection.deployment_slot !== args.deploymentSlot) {
+    throw new Error(
+      "launcher slot-path mapping mismatch: deployment slot is bound by the opaque capability",
+    );
+  }
+  return slotPath;
+}
+
 function acquireLiteRuntimeDeploymentSlotExclusiveLease(
-  args: Parameters<typeof acquireLiteRuntimeDeploymentSlotExclusiveLeaseRaw>[0],
+  args: Omit<
+    Parameters<typeof acquireLiteRuntimeDeploymentSlotExclusiveLeaseRaw>[0],
+    "slotPath"
+  > & LegacySlotPathArgs,
 ) {
+  const { authorityStatePath, deploymentSlot, ...options } = args;
   return acquireLiteRuntimeDeploymentSlotExclusiveLeaseRaw({
-    ...args,
+    ...options,
+    slotPath: resolveFixtureSlotPath({ authorityStatePath, deploymentSlot }),
     now: args.now ?? DEFAULT_LEASE_ACQUIRED_AT,
+  });
+}
+
+function provisionLiteRuntimeDeploymentSlotAuthority(
+  args: Omit<
+    Parameters<typeof provisionLiteRuntimeDeploymentSlotAuthorityRaw>[0],
+    "slotPath"
+  > & LegacySlotPathArgs,
+) {
+  const { authorityStatePath, deploymentSlot, ...options } = args;
+  return provisionLiteRuntimeDeploymentSlotAuthorityRaw({
+    ...options,
+    slotPath: resolveFixtureSlotPath({ authorityStatePath, deploymentSlot }),
   });
 }
 
@@ -107,6 +161,10 @@ async function releaseLiteRuntimeDeploymentSlotExclusiveLease(
 
 type Fixture = Readonly<{
   rootDirectory: string;
+  rootPath: string;
+  rootManifestSha256: string;
+  rootCap: LiteRuntimeDeploymentSlotPathAuthorityRootCapability;
+  slotPath: LiteRuntimeDeploymentSlotPathCapability;
   authorityStatePath: string;
   runtimeDatabasePath: string;
   databaseFileDevice: string;
@@ -115,12 +173,6 @@ type Fixture = Readonly<{
   databaseMainFileSha256: string;
   runtimeDatabasePin: LiteRuntimeProtectedAuthorityDatabasePin;
 }>;
-
-type FixtureLayout =
-  | "disjoint"
-  | "runtime_main_at_state_wal"
-  | "runtime_main_at_state_upper_wal"
-  | "state_main_at_runtime_wal";
 
 type ChildMode =
   | "commit_and_hold"
@@ -287,24 +339,31 @@ const ROTATED_POLICY = createExternalExecutionPolicy({
 });
 const ROTATED_POLICY_SHA256 = externalExecutionPolicyDigest(ROTATED_POLICY);
 
-function createFixture(label: string, layout: FixtureLayout = "disjoint"): Fixture {
+function createFixture(label: string): Fixture {
   const rootDirectory = mkdtempSync(
-    join(realpathSync(tmpdir()), `aionis-d3a2-${label}-`),
+    join(realpathSync(tmpdir()), `aionis-d3a3a-${label}-`),
   );
   chmodSync(rootDirectory, 0o700);
-  const defaultAuthorityStatePath = join(
-    rootDirectory,
-    "deployment-slot-authority.sqlite",
+  const rootPath = join(rootDirectory, "launcher-authority");
+  mkdirSync(rootPath, { mode: 0o700 });
+  chmodSync(rootPath, 0o700);
+  const provisionedRoot = provisionLiteRuntimeDeploymentSlotPathAuthorityRoot({
+    rootPath,
+    now: new Date("2026-07-17T03:59:00.000Z"),
+  });
+  const rootCap = openLiteRuntimeDeploymentSlotPathAuthorityRoot({
+    rootPath,
+    expectedRootManifestSha256: provisionedRoot.root_manifest_sha256,
+  });
+  const rootInspection = inspectLiteRuntimeDeploymentSlotPathAuthorityRoot(rootCap);
+  const slotPath = deriveLiteRuntimeDeploymentSlotPathCapability(
+    rootCap,
+    DEPLOYMENT_SLOT,
   );
-  const defaultRuntimeDatabasePath = join(rootDirectory, "runtime.db");
-  const authorityStatePath = layout === "state_main_at_runtime_wal"
-    ? `${defaultRuntimeDatabasePath}-wal`
-    : defaultAuthorityStatePath;
-  const runtimeDatabasePath = layout === "runtime_main_at_state_wal"
-    ? `${defaultAuthorityStatePath}-wal`
-    : layout === "runtime_main_at_state_upper_wal"
-      ? `${defaultAuthorityStatePath}-WAL`
-      : defaultRuntimeDatabasePath;
+  const slotInspection = inspectLiteRuntimeDeploymentSlotPathCapability(slotPath);
+  const authorityStatePath = slotInspection.authority_state_path;
+  const runtimeDatabasePath = join(rootDirectory, "runtime.db");
+  SLOT_PATH_BY_AUTHORITY_STATE_PATH.set(authorityStatePath, slotPath);
   const database = new DatabaseSync(runtimeDatabasePath);
   try {
     database.exec(`
@@ -328,6 +387,10 @@ function createFixture(label: string, layout: FixtureLayout = "disjoint"): Fixtu
   const stat = statSync(runtimeDatabasePath, { bigint: true });
   return {
     rootDirectory,
+    rootPath,
+    rootManifestSha256: rootInspection.root_manifest_sha256,
+    rootCap,
+    slotPath,
     authorityStatePath,
     runtimeDatabasePath,
     databaseFileDevice: stat.dev.toString(10),
@@ -491,7 +554,8 @@ function startLeaseChild(args: Readonly<{
     "--import",
     "tsx",
     LEASE_CHILD,
-    args.fixture.authorityStatePath,
+    args.fixture.rootPath,
+    args.fixture.rootManifestSha256,
     DEPLOYMENT_SLOT,
     args.mode,
     args.operationId ?? "",
@@ -655,20 +719,28 @@ async function commitCompletion(args: Readonly<{
   });
 }
 
-test("D3a.2 durable deployment-slot authority", { concurrency: 1 }, async (t) => {
+test("D3a.3a configured-root-mapped durable deployment-slot authority", { concurrency: 1 }, async (t) => {
   const roots = new Set<string>();
   const runtimePins = new Set<LiteRuntimeProtectedAuthorityDatabasePin>();
+  const rootCapabilities = new Set<
+    LiteRuntimeDeploymentSlotPathAuthorityRootCapability
+  >();
   t.after(async () => {
     await terminateActiveChildren();
     for (const pin of runtimePins) {
       closeLiteRuntimeProtectedAuthorityDatabasePin(pin);
     }
+    for (const rootCapability of rootCapabilities) {
+      closeLiteRuntimeDeploymentSlotPathAuthorityRoot(rootCapability);
+    }
     for (const root of roots) rmSync(root, { recursive: true, force: true });
+    SLOT_PATH_BY_AUTHORITY_STATE_PATH.clear();
   });
-  const fixture = (label: string, layout: FixtureLayout = "disjoint") => {
-    const value = createFixture(label, layout);
+  const fixture = (label: string) => {
+    const value = createFixture(label);
     roots.add(value.rootDirectory);
     runtimePins.add(value.runtimeDatabasePin);
+    rootCapabilities.add(value.rootCap);
     return value;
   };
 
@@ -684,6 +756,20 @@ test("D3a.2 durable deployment-slot authority", { concurrency: 1 }, async (t) =>
     assert.equal(first.database_instance_id, DATABASE_INSTANCE_ID);
     assert.equal(first.database_file_device, current.databaseFileDevice);
     assert.equal(first.database_file_inode, current.databaseFileInode);
+    const slotInspection = inspectLiteRuntimeDeploymentSlotPathCapability(
+      current.slotPath,
+    );
+    assert.equal(first.launcher_root_instance_id, slotInspection.root_instance_id);
+    assert.equal(
+      first.launcher_root_manifest_sha256,
+      slotInspection.root_manifest_sha256,
+    );
+    assert.equal(
+      first.slot_path_mapping_sha256,
+      slotInspection.slot_path_mapping_sha256,
+    );
+    assert.equal(first.slot_path_mapping, "launcher_root_sha256_sharded_v1");
+    assert.equal(first.slot_provisioning_recovery, "required_not_established");
     assert.equal(Object.isFrozen(first), true);
     const stateStat = lstatSync(current.authorityStatePath, { bigint: true });
     assert.equal(stateStat.isFile(), true);
@@ -694,9 +780,36 @@ test("D3a.2 durable deployment-slot authority", { concurrency: 1 }, async (t) =>
       authorityStatePath: current.authorityStatePath,
       deploymentSlot: DEPLOYMENT_SLOT,
     });
+    const leaseInspection = inspectLiteRuntimeDeploymentSlotExclusiveLease(lease);
     assert.equal(
-      inspectLiteRuntimeDeploymentSlotExclusiveLease(lease).first_binding_anchor_sha256,
+      leaseInspection.first_binding_anchor_sha256,
       first.first_binding_anchor_sha256,
+    );
+    assert.equal(
+      leaseInspection.slot_path_mapping_sha256,
+      first.slot_path_mapping_sha256,
+    );
+    assert.equal(
+      leaseInspection.filesystem_locking_verification,
+      "required_not_established",
+    );
+    assert.equal(
+      (leaseInspection.required_next_capabilities as readonly string[]).includes(
+        "launcher_slot_path_mapping",
+      ),
+      false,
+    );
+    assert.equal(
+      leaseInspection.required_next_capabilities.includes(
+        "trusted_launcher_root_selection",
+      ),
+      true,
+    );
+    assert.equal(
+      leaseInspection.required_next_capabilities.includes(
+        "protected_slot_provisioning_recovery",
+      ),
+      true,
     );
     await releaseLiteRuntimeDeploymentSlotExclusiveLease(lease);
     await assert.rejects(
@@ -708,44 +821,47 @@ test("D3a.2 durable deployment-slot authority", { concurrency: 1 }, async (t) =>
     );
   });
 
-  await t.test("provision rejects overlapping SQLite main and sidecar namespaces", async (namespaceTest) => {
-    await namespaceTest.test("Runtime main cannot occupy the authority-state WAL name", async () => {
-      const current = fixture(
-        "runtime-main-at-state-wal",
-        "runtime_main_at_state_wal",
+  await t.test("launcher mapping makes caller-selected authority layouts unreachable", async (mappingTest) => {
+    await mappingTest.test("the same exact slot derives the same root-confined path", () => {
+      const current = fixture("deterministic-path");
+      const first = inspectLiteRuntimeDeploymentSlotPathCapability(current.slotPath);
+      const second = inspectLiteRuntimeDeploymentSlotPathCapability(
+        deriveLiteRuntimeDeploymentSlotPathCapability(current.rootCap, DEPLOYMENT_SLOT),
       );
-      assert.equal(current.runtimeDatabasePath, `${current.authorityStatePath}-wal`);
-      await assert.rejects(
-        async () => await provisionFixture(current),
-        /SQLite namespaces overlap|path conflict|sidecar/iu,
-      );
-      assert.equal(existsSync(current.authorityStatePath), false);
-      assert.equal(existsSync(`${current.authorityStatePath}.lease`), false);
+      assert.equal(second.authority_state_path, first.authority_state_path);
+      assert.equal(second.lease_carrier_path, `${first.authority_state_path}.lease`);
+      assert.equal(second.slot_path_mapping_sha256, first.slot_path_mapping_sha256);
+      assert.equal(first.root_manifest_sha256, current.rootManifestSha256);
+      assert.equal(first.authority_state_path.startsWith(`${current.rootPath}/`), true);
     });
 
-    await namespaceTest.test("authority-state main cannot occupy the Runtime WAL name", async () => {
-      const current = fixture(
-        "state-main-at-runtime-wal",
-        "state_main_at_runtime_wal",
+    await mappingTest.test("path-like and Unicode-distinct slots remain digest-named and disjoint", () => {
+      const current = fixture("exact-slot-bytes");
+      const pathLike = inspectLiteRuntimeDeploymentSlotPathCapability(
+        deriveLiteRuntimeDeploymentSlotPathCapability(current.rootCap, "../alternate-slot"),
       );
-      assert.equal(current.authorityStatePath, `${current.runtimeDatabasePath}-wal`);
-      await assert.rejects(
-        async () => await provisionFixture(current),
-        /SQLite namespaces overlap|path conflict|sidecar/iu,
+      const composed = inspectLiteRuntimeDeploymentSlotPathCapability(
+        deriveLiteRuntimeDeploymentSlotPathCapability(current.rootCap, "caf\u00e9"),
       );
-      assert.equal(existsSync(current.authorityStatePath), false);
-      assert.equal(existsSync(`${current.authorityStatePath}.lease`), false);
+      const decomposed = inspectLiteRuntimeDeploymentSlotPathCapability(
+        deriveLiteRuntimeDeploymentSlotPathCapability(current.rootCap, "cafe\u0301"),
+      );
+      for (const inspection of [pathLike, composed, decomposed]) {
+        assert.equal(inspection.authority_state_path.startsWith(`${current.rootPath}/slots/v1/`), true);
+        assert.equal(inspection.authority_state_path.endsWith("/state.sqlite"), true);
+        assert.equal(inspection.authority_state_path.includes(".."), false);
+      }
+      assert.notEqual(pathLike.slot_sha256, composed.slot_sha256);
+      assert.notEqual(composed.slot_sha256, decomposed.slot_sha256);
     });
 
-    await namespaceTest.test("Runtime main cannot use a case-folded authority WAL alias", async () => {
-      const current = fixture(
-        "runtime-main-at-state-upper-wal",
-        "runtime_main_at_state_upper_wal",
-      );
-      assert.equal(current.runtimeDatabasePath, `${current.authorityStatePath}-WAL`);
+    await mappingTest.test("a pre-existing digest slot directory requires explicit recovery", async () => {
+      const current = fixture("preexisting-slot-directory");
+      const inspection = inspectLiteRuntimeDeploymentSlotPathCapability(current.slotPath);
+      mkdirSync(inspection.slot_directory_path, { recursive: true, mode: 0o700 });
       await assert.rejects(
         async () => await provisionFixture(current),
-        /SQLite namespaces overlap|path conflict|alias|case|sidecar/iu,
+        /already exists|recovery|slot directory|provision/iu,
       );
       assert.equal(existsSync(current.authorityStatePath), false);
       assert.equal(existsSync(`${current.authorityStatePath}.lease`), false);
@@ -856,7 +972,7 @@ test("D3a.2 durable deployment-slot authority", { concurrency: 1 }, async (t) =>
       try {
         assert.equal(sqlitePragmaScalar(database, "journal_mode"), "wal");
         assert.equal(sqlitePragmaScalar(database, "application_id"), applicationId);
-        assert.equal(sqlitePragmaScalar(database, "user_version"), 1);
+        assert.equal(sqlitePragmaScalar(database, "user_version"), 2);
         // These settings are connection-local. Leave an ordinary SQLite
         // connection at its weakest values; the production open must reapply
         // EXTRA/fullfsync/checkpoint_fullfsync before its own PRAGMA assertion.
@@ -1082,6 +1198,62 @@ test("D3a.2 durable deployment-slot authority", { concurrency: 1 }, async (t) =>
     await releaseLiteRuntimeDeploymentSlotExclusiveLease(recovered);
   });
 
+  await t.test("a contended acquire releases its root retention before rejecting", async () => {
+    const current = fixture("contended-root-retention");
+    await provisionFixture(current);
+    const holder = startLeaseChild({ fixture: current, mode: "hold_lease" });
+    try {
+      await within(holder.leaseHeld, "child deployment slot lease");
+      await assert.rejects(
+        async () => await acquireLiteRuntimeDeploymentSlotExclusiveLease({
+          authorityStatePath: current.authorityStatePath,
+          deploymentSlot: DEPLOYMENT_SLOT,
+        }),
+        /busy|lease|locked|exclusive/u,
+      );
+
+      closeLiteRuntimeDeploymentSlotPathAuthorityRoot(current.rootCap);
+      rootCapabilities.delete(current.rootCap);
+      assert.throws(
+        () => inspectLiteRuntimeDeploymentSlotPathAuthorityRoot(current.rootCap),
+        /closed/iu,
+      );
+    } finally {
+      await killChild(holder);
+    }
+  });
+
+  await t.test("an active lease retains its root until release", async () => {
+    const current = fixture("root-retention");
+    await provisionFixture(current);
+    const lease = await acquireLiteRuntimeDeploymentSlotExclusiveLease({
+      authorityStatePath: current.authorityStatePath,
+      deploymentSlot: DEPLOYMENT_SLOT,
+    });
+    assert.throws(
+      () => closeLiteRuntimeDeploymentSlotPathAuthorityRoot(current.rootCap),
+      /in use|retain|active lease/iu,
+    );
+    await assert.rejects(
+      async () => await acquireLiteRuntimeDeploymentSlotExclusiveLease({
+        authorityStatePath: current.authorityStatePath,
+        deploymentSlot: DEPLOYMENT_SLOT,
+      }),
+      /busy|lease|locked|exclusive/u,
+    );
+    assert.equal(
+      assertLiteRuntimeDeploymentSlotExclusiveLease(lease).deployment_slot,
+      DEPLOYMENT_SLOT,
+    );
+    await releaseLiteRuntimeDeploymentSlotExclusiveLease(lease);
+    closeLiteRuntimeDeploymentSlotPathAuthorityRoot(current.rootCap);
+    rootCapabilities.delete(current.rootCap);
+    assert.throws(
+      () => inspectLiteRuntimeDeploymentSlotPathAuthorityRoot(current.rootCap),
+      /closed/iu,
+    );
+  });
+
   await t.test("SIGKILL after head commit replays the exact durable receipt", async () => {
     const current = fixture("completion-crash");
     const provisioned = await provisionFixture(current);
@@ -1190,6 +1362,10 @@ test("D3a.2 durable deployment-slot authority", { concurrency: 1 }, async (t) =>
     );
     assert.equal(reservationInspection.checkpoint_generation, "3");
     assert.equal(reservationInspection.expected_binding_chain.chain_kind, "first");
+    assert.equal(
+      reservationInspection.slot_path_mapping_sha256,
+      provisioned.slot_path_mapping_sha256,
+    );
     if (reservationInspection.expected_binding_chain.chain_kind !== "first") {
       throw new Error("expected first deployment-slot binding chain");
     }
@@ -1220,6 +1396,14 @@ test("D3a.2 durable deployment-slot authority", { concurrency: 1 }, async (t) =>
     assert.equal(firstCommitted.exact_replay, false);
     assert.equal(firstCommitted.checkpoint_generation, "3");
     assert.equal(
+      firstCommitted.slot_path_mapping_sha256,
+      provisioned.slot_path_mapping_sha256,
+    );
+    assert.equal(
+      firstCommitted.slot_path_mapping,
+      "launcher_root_sha256_sharded_v1",
+    );
+    assert.equal(
       firstCommitted.database_binding_receipt_sha256,
       learningRuntimeDatabaseBindingReceiptDigest(firstEnvelope),
     );
@@ -1236,6 +1420,10 @@ test("D3a.2 durable deployment-slot authority", { concurrency: 1 }, async (t) =>
     });
     assert.equal(replayed.exact_replay, true);
     assert.equal(replayed.checkpoint_generation, "3");
+    assert.equal(
+      replayed.slot_path_mapping_sha256,
+      firstCommitted.slot_path_mapping_sha256,
+    );
     assert.equal(
       replayed.database_binding_receipt_sha256,
       firstCommitted.database_binding_receipt_sha256,

@@ -12,6 +12,11 @@ import {
   releaseLiteRuntimeDeploymentSlotExclusiveLease,
   reserveLiteRuntimeDeploymentSlotCheckpointGeneration,
 } from "../../../src/store/lite-runtime-deployment-slot-authority.js";
+import {
+  deriveLiteRuntimeDeploymentSlotPathCapability,
+  inspectLiteRuntimeDeploymentSlotPathCapability,
+  openLiteRuntimeDeploymentSlotPathAuthorityRoot,
+} from "../../../src/store/lite-runtime-deployment-slot-path-authority.js";
 
 type ChildMode =
   | "commit_and_hold"
@@ -49,10 +54,14 @@ async function waitForParentRelease(): Promise<void> {
 }
 
 async function main(): Promise<void> {
-  const authorityStatePath = requiredArg(2, "authority_state_path");
-  const deploymentSlot = requiredArg(3, "deployment_slot");
-  const mode = requiredArg(4, "mode") as ChildMode;
-  const operationId = process.argv[5];
+  const rootPath = requiredArg(2, "root_path");
+  const expectedRootManifestSha256 = requiredArg(
+    3,
+    "expected_root_manifest_sha256",
+  );
+  const deploymentSlot = requiredArg(4, "deployment_slot");
+  const mode = requiredArg(5, "mode") as ChildMode;
+  const operationId = process.argv[6];
   if (mode !== "hold_lease"
     && mode !== "hold_carrier_transaction"
     && mode !== "hold_state_transaction"
@@ -60,9 +69,19 @@ async function main(): Promise<void> {
     && mode !== "commit_and_hold") {
     throw new Error("invalid_child_mode");
   }
+  const rootCapability = openLiteRuntimeDeploymentSlotPathAuthorityRoot({
+    rootPath,
+    expectedRootManifestSha256,
+  });
+  const slotPath = deriveLiteRuntimeDeploymentSlotPathCapability(
+    rootCapability,
+    deploymentSlot,
+  );
+  const slotPathInspection = inspectLiteRuntimeDeploymentSlotPathCapability(slotPath);
+  const authorityStatePath = slotPathInspection.authority_state_path;
 
   if (mode === "hold_carrier_transaction") {
-    const carrierPath = `${authorityStatePath}.lease`;
+    const carrierPath = slotPathInspection.lease_carrier_path;
     const database = new DatabaseSync(carrierPath);
     try {
       const journalMode = database.prepare("PRAGMA journal_mode").get() as
@@ -194,15 +213,14 @@ async function main(): Promise<void> {
   }
 
   const lease = await acquireLiteRuntimeDeploymentSlotExclusiveLease({
-    authorityStatePath,
-    deploymentSlot,
+    slotPath,
     now: new Date("2026-07-17T08:00:00.000Z"),
   });
   send({ type: "lease_held" });
 
   if (mode === "reserve_and_hold" || mode === "commit_and_hold") {
     if (!operationId) throw new Error("missing_operation_id");
-    const operationRequestSha256 = requiredArg(6, "operation_request_sha256");
+    const operationRequestSha256 = requiredArg(7, "operation_request_sha256");
     const reservation = await reserveLiteRuntimeDeploymentSlotCheckpointGeneration({
       lease,
       operationId,
@@ -221,7 +239,7 @@ async function main(): Promise<void> {
       checkpointGeneration: inspection.checkpoint_generation,
     });
     if (mode === "commit_and_hold") {
-      const configPath = requiredArg(7, "completion_config_path");
+      const configPath = requiredArg(8, "completion_config_path");
       const config = JSON.parse(readFileSync(configPath, "utf8")) as Readonly<{
         envelope: unknown;
         externalExecutionPolicy: unknown;

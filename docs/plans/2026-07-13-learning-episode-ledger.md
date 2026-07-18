@@ -2658,6 +2658,48 @@ managed-writer quiesce, live writer-fence and revision-policy capabilities, the
 private signer channel, D2 aggregate, tracked holds, public publication, multi-
 host consensus, and the production external-head CLI remain later D3 work.
 
+**Implementation checkpoint (2026-07-18, Task 8.2D-3a.3a):** The launcher-side
+naming substrate now uses an opaque configured-root capability rather than a
+caller-supplied state path. A one-time owner-controlled mode-0700 root receives an exclusive,
+canonical immutable manifest that binds its random instance ID, canonical
+realpath, device/inode, layout version, and creation time. Provisioning returns
+only an immutable bootstrap inspection; operational use must separately reopen
+with the exact manifest SHA-256. The root
+capability retains an `O_DIRECTORY | O_NOFOLLOW` descriptor and revalidates the
+path, descriptor, physical identity, UID/mode, ACL-free ancestor chain,
+single-link mode-0600 manifest, canonical bytes, and pinned digest on every
+derivation and authority operation. An active lease holds a private root
+retention, so root close fails before closing until that lease releases.
+
+An exact trimmed 1..256-byte UTF-8 deployment-slot identity is domain-separated
+SHA-256 mapped to one fixed sharded path under that root. A WeakMap-branded slot
+capability carries the sole state/carrier paths and their canonical mapping
+digest. First provisioning exclusively creates the digest-named mode-0700 slot
+directory; any pre-existing directory, symlink, regular file, sidecar, or
+partial attempt requires explicit recovery rather than choosing a sibling
+path. The public deployment-slot provision/acquire APIs no longer accept raw
+paths or a separate slot label. Durable registration schema v2 and every lease,
+reservation, completion, and exact replay bind the root-instance, manifest,
+and slot-mapping digests, so the recorded label cannot be reopened through a
+second authority path within the trusted root.
+
+This checkpoint establishes the deterministic slot-path mapping inside one
+supplied configured root; the production launcher has not yet established the
+single trusted root selection. It deliberately
+does not infer local SQLite locking from ownership/mode/ACL checks and does not
+claim isolated carrier ownership. A crash after exclusive slot-directory
+creation but before the two databases and initial witness complete also remains
+fail-closed `recovery_required`; no protected classify/resume/abort procedure is
+claimed yet. `trusted_launcher_root_selection`,
+`protected_slot_provisioning_recovery`, `verified_local_locking_filesystem`, and
+the one-shot authority worker therefore remain explicit requirements, alongside
+non-rollback state, managed-writer quiesce, live writer-fence/revision-policy,
+private signing, D2 composition, tracked holds, publication, consensus, and the
+disabled external-head command. Protected provisioning recovery must precede
+automatic production bootstrap. D3a.3b must then keep the complete acquire/
+reserve/complete/release state machine inside one isolated worker; a child that
+merely holds the carrier while its parent mutates state is not sufficient.
+
 Extend the production gate to consume the ledger-derived current-shadow export
 and the tool gate to consume a strict external `run-manifest.json`; both reports
 must bind task family, source/applicable revision, candidate/gate configuration

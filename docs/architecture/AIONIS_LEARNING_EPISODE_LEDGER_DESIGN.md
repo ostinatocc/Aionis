@@ -3754,6 +3754,48 @@ private launcher/attestor channels, D2 aggregate, tracked holds, public
 publication, release verdict, and multi-host consensus. The external-head
 command remains disabled.
 
+**Implementation checkpoint (2026-07-18, Task 8.2D-3a.3a):** The launcher-side
+boundary now derives authority naming through opaque configured-root and
+slot-path capabilities. Root
+provisioning requires one canonical owner-controlled mode-0700 directory and
+creates an exclusive canonical manifest binding a random root-instance ID,
+root realpath, device/inode, deterministic layout version, and creation time.
+Provision returns only a bootstrap inspection; it cannot itself authorize slot
+operations. A separate open requires the exact manifest SHA-256.
+The live root capability retains an `O_DIRECTORY | O_NOFOLLOW` descriptor and
+rechecks descriptor/path identity, ownership/mode, ACL-free ancestors, the
+single-link mode-0600 manifest, its canonical bytes, and its pinned digest on
+every operation. A private retention acquired with each live lease prevents the
+root descriptor from closing before that lease releases.
+
+The exact 1..256-byte UTF-8 deployment-slot identity is domain-separated SHA-256
+mapped to one fixed sharded directory. Its WeakMap-branded capability is the
+only input accepted by deployment-slot provision and acquire; the former raw
+`authorityStatePath + deploymentSlot` surface has been removed. First provision
+exclusively creates the digest-named mode-0700 directory, so pre-existing or
+partial artifacts require explicit recovery and cannot redirect the slot to a
+sibling instance. Registration schema v2 durably includes the root-instance,
+root-manifest, and slot-path-mapping digests; provisioning, lease, reservation,
+completion, and exact replay expose the same provenance and no longer list
+launcher slot-path mapping as missing.
+
+This proves deterministic uniqueness only inside one supplied configured root;
+production launcher selection of the single trusted root is not established.
+It does not prove the mount is local or that SQLite locking is correct on that
+mount, does not isolate the retained carrier from every other descriptor in its
+process, and does not add anti-rollback. A crash between exclusive slot-directory
+creation and the complete paired registration/initial witness remains
+`recovery_required`; this batch intentionally provides no unsafe automatic
+deletion, but a protected classify/resume/abort recovery boundary is still
+missing. `trusted_launcher_root_selection` and
+`protected_slot_provisioning_recovery` therefore remain required. After that,
+D3a.3b must move the entire acquire/reserve/prepare+commit/release state machine
+into a one-shot authority worker with crash-aware async IPC; a lock-only child
+with parent-side state writes would leave a holder-crash race. Managed quiesce,
+live writer-fence/revision policy, private signing, D2/holds, publication,
+release verdict, multi-host consensus, and the external-head CLI also remain
+later work.
+
 For an external kind, ingestion re-resolves the reservation, its sole ticket
 consumption, sole claim, sole supervisor binding, and sole session termination
 in the same tenant. The

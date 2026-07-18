@@ -41,13 +41,23 @@ import {
   type SqliteDatabase,
 } from "./sqlite.js";
 import type { LiteRuntimeDatabase } from "./lite-runtime-database.js";
+import {
+  assertLiteRuntimeDeploymentSlotPathCapability,
+  assertLiteRuntimeDeploymentSlotPathProvisioned,
+  prepareLiteRuntimeDeploymentSlotPathForProvisioning,
+  releaseLiteRuntimeDeploymentSlotPathRetention,
+  retainLiteRuntimeDeploymentSlotPathCapability,
+  type LiteRuntimeDeploymentSlotPathCapability,
+  type LiteRuntimeDeploymentSlotPathInspection,
+  type LiteRuntimeDeploymentSlotPathRetentionCapability,
+} from "./lite-runtime-deployment-slot-path-authority.js";
 
 const MAX_U64 = 0xffff_ffff_ffff_ffffn;
 const MAX_CANONICAL_POLICY_BYTES = 1024 * 1024;
 const MAX_OPERATION_ID_BYTES = 256;
 const DEPLOYMENT_SLOT_STATE_APPLICATION_ID = 0x41494f53;
 const DEPLOYMENT_SLOT_LEASE_APPLICATION_ID = 0x41494f4c;
-const DEPLOYMENT_SLOT_SCHEMA_VERSION = 1;
+const DEPLOYMENT_SLOT_SCHEMA_VERSION = 2;
 const SQLITE_AUTHORITY_NAMESPACE_SUFFIXES = ["", "-wal", "-shm", "-journal"] as const;
 
 export type LiteRuntimeDeploymentSlotAuthorityErrorCode =
@@ -126,8 +136,8 @@ export type LiteRuntimeDeploymentSlotPreparedBindingCompletionCapability =
 
 export type LiteRuntimeDeploymentSlotProvisioningInspection = Readonly<{
   contract_version:
-    "aionis_lite_runtime_deployment_slot_provisioning_inspection_v1";
-  authority_scope: "caller_configured_authority_path_registration";
+    "aionis_lite_runtime_deployment_slot_provisioning_inspection_v2";
+  authority_scope: "configured_root_deterministic_slot_path_registration";
   signing_eligible: false;
   deployment_slot: string;
   authority_state_path: string;
@@ -140,14 +150,19 @@ export type LiteRuntimeDeploymentSlotProvisioningInspection = Readonly<{
   database_file_inode: string;
   first_binding_anchor_sha256: string;
   registration_sha256: string;
-  slot_path_mapping: "trusted_launcher_configuration_required";
+  launcher_root_instance_id: string;
+  launcher_root_manifest_sha256: string;
+  slot_path_mapping_sha256: string;
+  slot_path_mapping: "launcher_root_sha256_sharded_v1";
+  trusted_launcher_root_selection: "required_not_established";
+  slot_provisioning_recovery: "required_not_established";
 }>;
 
 export type LiteRuntimeDeploymentSlotLeaseInspection = Readonly<{
   contract_version:
-    "aionis_lite_runtime_deployment_slot_exclusive_lease_inspection_v1";
+    "aionis_lite_runtime_deployment_slot_exclusive_lease_inspection_v2";
   authority_scope:
-    "configured_authority_path_conditional_process_live_exclusivity";
+    "configured_root_slot_path_conditional_process_live_exclusivity";
   signing_eligible: false;
   deployment_slot: string;
   authority_state_path: string;
@@ -163,16 +178,20 @@ export type LiteRuntimeDeploymentSlotLeaseInspection = Readonly<{
   first_binding_anchor_sha256: string;
   current_database_binding_receipt_sha256: string | null;
   current_checkpoint_generation: string | null;
-  filesystem_locking_assumption:
-    "trusted_single_host_local_locking_filesystem";
+  launcher_root_instance_id: string;
+  launcher_root_manifest_sha256: string;
+  slot_path_mapping_sha256: string;
+  filesystem_locking_verification: "required_not_established";
   same_process_carrier_fd_isolation: "required_not_established";
-  slot_path_mapping: "trusted_launcher_configuration_required";
+  slot_path_mapping: "launcher_root_sha256_sharded_v1";
+  trusted_launcher_root_selection: "required_not_established";
   rollback_resistance:
     "clean_release_prefix_only_without_carrier_storage_rollback";
   required_next_capabilities: readonly [
     "verified_local_locking_filesystem",
     "isolated_carrier_lock_process",
-    "launcher_slot_path_mapping",
+    "trusted_launcher_root_selection",
+    "protected_slot_provisioning_recovery",
     "nonrollback_slot_state_authority",
     "managed_runtime_writer_quiesce",
     "runtime_attestation_writer_fence",
@@ -183,8 +202,8 @@ export type LiteRuntimeDeploymentSlotLeaseInspection = Readonly<{
 
 export type LiteRuntimeDeploymentSlotReservationInspection = Readonly<{
   contract_version:
-    "aionis_lite_runtime_deployment_slot_checkpoint_reservation_inspection_v1";
-  authority_scope: "configured_authority_path_generation_and_chain_expectation";
+    "aionis_lite_runtime_deployment_slot_checkpoint_reservation_inspection_v2";
+  authority_scope: "configured_root_slot_path_generation_and_chain_expectation";
   signing_eligible: false;
   deployment_slot: string;
   operation_id: string;
@@ -204,16 +223,20 @@ export type LiteRuntimeDeploymentSlotReservationInspection = Readonly<{
   database_instance_id: string;
   database_file_device: string;
   database_file_inode: string;
-  filesystem_locking_assumption:
-    "trusted_single_host_local_locking_filesystem";
+  launcher_root_instance_id: string;
+  launcher_root_manifest_sha256: string;
+  slot_path_mapping_sha256: string;
+  filesystem_locking_verification: "required_not_established";
   same_process_carrier_fd_isolation: "required_not_established";
-  slot_path_mapping: "trusted_launcher_configuration_required";
+  slot_path_mapping: "launcher_root_sha256_sharded_v1";
+  trusted_launcher_root_selection: "required_not_established";
   rollback_resistance:
     "clean_release_prefix_only_without_carrier_storage_rollback";
   required_next_capabilities: readonly [
     "verified_local_locking_filesystem",
     "isolated_carrier_lock_process",
-    "launcher_slot_path_mapping",
+    "trusted_launcher_root_selection",
+    "protected_slot_provisioning_recovery",
     "nonrollback_slot_state_authority",
     "managed_runtime_writer_quiesce",
     "runtime_attestation_writer_fence",
@@ -224,8 +247,8 @@ export type LiteRuntimeDeploymentSlotReservationInspection = Readonly<{
 
 export type LiteRuntimeDeploymentSlotBindingCompletion = Readonly<{
   contract_version:
-    "aionis_lite_runtime_deployment_slot_binding_completion_v1";
-  authority_scope: "configured_authority_path_chain_transition";
+    "aionis_lite_runtime_deployment_slot_binding_completion_v2";
+  authority_scope: "configured_root_slot_path_chain_transition";
   signing_eligible: false;
   exact_replay: boolean;
   deployment_slot: string;
@@ -238,12 +261,18 @@ export type LiteRuntimeDeploymentSlotBindingCompletion = Readonly<{
   external_execution_policy_sha256: string;
   external_execution_policy_json: string;
   completed_at: string;
+  launcher_root_instance_id: string;
+  launcher_root_manifest_sha256: string;
+  slot_path_mapping_sha256: string;
+  slot_path_mapping: "launcher_root_sha256_sharded_v1";
+  trusted_launcher_root_selection: "required_not_established";
   rollback_resistance:
     "current_lineage_only_without_carrier_storage_rollback";
   required_next_capabilities: readonly [
     "verified_local_locking_filesystem",
     "isolated_carrier_lock_process",
-    "launcher_slot_path_mapping",
+    "trusted_launcher_root_selection",
+    "protected_slot_provisioning_recovery",
     "nonrollback_slot_state_authority",
     "managed_runtime_writer_quiesce",
     "runtime_attestation_writer_fence",
@@ -266,6 +295,9 @@ type RegistrationRow = {
   singleton: number;
   contract_version: string;
   deployment_slot: string;
+  launcher_root_instance_id: string;
+  launcher_root_manifest_sha256: string;
+  slot_path_mapping_sha256: string;
   authority_instance_id: string;
   carrier_instance_id: string;
   lease_database_device: string;
@@ -364,6 +396,10 @@ type ReplayedState = Readonly<{
 }>;
 
 type LeaseState = {
+  readonly slotPathCapability: LiteRuntimeDeploymentSlotPathCapability;
+  readonly slotPathRetention:
+    LiteRuntimeDeploymentSlotPathRetentionCapability;
+  readonly slotPathInspection: LiteRuntimeDeploymentSlotPathInspection;
   readonly authorityStatePath: string;
   readonly leaseCarrierPath: string;
   readonly statePin: LiteRuntimeProtectedAuthorityDatabasePin;
@@ -413,7 +449,8 @@ const preparedCompletionRegistry = new WeakMap<object, PreparedCompletionState>(
 const NEXT_CAPABILITIES = Object.freeze([
   "verified_local_locking_filesystem",
   "isolated_carrier_lock_process",
-  "launcher_slot_path_mapping",
+  "trusted_launcher_root_selection",
+  "protected_slot_provisioning_recovery",
   "nonrollback_slot_state_authority",
   "managed_runtime_writer_quiesce",
   "runtime_attestation_writer_fence",
@@ -553,11 +590,20 @@ const STATE_REGISTRATION_TABLE_SQL = String.raw`
 CREATE TABLE lite_runtime_deployment_slot_registration (
   singleton INTEGER PRIMARY KEY CHECK (singleton = 1),
   contract_version TEXT NOT NULL CHECK (
-    contract_version = 'aionis_lite_runtime_deployment_slot_registration_v1'
+    contract_version = 'aionis_lite_runtime_deployment_slot_registration_v2'
   ),
   deployment_slot TEXT NOT NULL UNIQUE CHECK (
     length(CAST(deployment_slot AS BLOB)) BETWEEN 1 AND 256
     AND deployment_slot = trim(deployment_slot)
+  ),
+  launcher_root_instance_id TEXT NOT NULL CHECK (
+    ${digestCheck("launcher_root_instance_id")}
+  ),
+  launcher_root_manifest_sha256 TEXT NOT NULL CHECK (
+    ${digestCheck("launcher_root_manifest_sha256")}
+  ),
+  slot_path_mapping_sha256 TEXT NOT NULL UNIQUE CHECK (
+    ${digestCheck("slot_path_mapping_sha256")}
   ),
   authority_instance_id TEXT NOT NULL UNIQUE CHECK (
     ${digestCheck("authority_instance_id")}
@@ -1241,6 +1287,9 @@ function registrationProjection(row: Omit<RegistrationRow, "registration_sha256"
   return stableStringify({
     contract_version: row.contract_version,
     deployment_slot: row.deployment_slot,
+    launcher_root_instance_id: row.launcher_root_instance_id,
+    launcher_root_manifest_sha256: row.launcher_root_manifest_sha256,
+    slot_path_mapping_sha256: row.slot_path_mapping_sha256,
     authority_instance_id: row.authority_instance_id,
     carrier_instance_id: row.carrier_instance_id,
     lease_database_device: row.lease_database_device,
@@ -1264,15 +1313,20 @@ function initializeState(path: string, row: RegistrationRow): void {
       db.prepare(
         `INSERT INTO lite_runtime_deployment_slot_registration
            (singleton, contract_version, deployment_slot, authority_instance_id,
-            carrier_instance_id, lease_database_device, lease_database_inode,
+            launcher_root_instance_id, launcher_root_manifest_sha256,
+            slot_path_mapping_sha256, carrier_instance_id,
+            lease_database_device, lease_database_inode,
             database_realpath, database_instance_id, database_file_device,
             database_file_inode, first_binding_anchor_sha256,
             registration_sha256, created_at)
-         VALUES (1, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+         VALUES (1, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       ).run(
         row.contract_version,
         row.deployment_slot,
         row.authority_instance_id,
+        row.launcher_root_instance_id,
+        row.launcher_root_manifest_sha256,
+        row.slot_path_mapping_sha256,
         row.carrier_instance_id,
         row.lease_database_device,
         row.lease_database_inode,
@@ -1315,34 +1369,31 @@ function readRuntimeDatabaseIdentity(
 }
 
 /**
- * One-time launcher provisioning. The Runtime path and physical identity are
- * derived from an opaque protected-database pin; callers cannot register a
- * display path or a free-standing database identifier as authority.
+ * One-time configured-root provisioning. Both the authority path and the Runtime
+ * physical identity come from opaque capabilities. Callers cannot select an
+ * alternate path for the same deployment slot or register a display-only
+ * database identity.
  */
 export function provisionLiteRuntimeDeploymentSlotAuthority(args: Readonly<{
-  authorityStatePath: string;
-  deploymentSlot: string;
+  slotPath: LiteRuntimeDeploymentSlotPathCapability;
   runtimeDatabasePin: LiteRuntimeProtectedAuthorityDatabasePin;
   now?: Date;
   randomBytesFactory?: (size: number) => Uint8Array;
 }>): LiteRuntimeDeploymentSlotProvisioningInspection {
-  const authorityStatePath = requireAbsolutePath(
-    args.authorityStatePath,
-    "authority state path",
+  const slotPathInspection = assertLiteRuntimeDeploymentSlotPathCapability(
+    args.slotPath,
   );
-  const leaseCarrierPath = liteRuntimeDeploymentSlotLeaseCarrierPath(authorityStatePath);
-  const deploymentSlot = assertBoundedId(args.deploymentSlot, "deployment slot");
+  const authorityStatePath = slotPathInspection.authority_state_path;
+  const leaseCarrierPath = slotPathInspection.lease_carrier_path;
+  const deploymentSlot = slotPathInspection.deployment_slot;
   const runtimeInspection = assertLiteRuntimeProtectedAuthorityDatabasePinned(
     args.runtimeDatabasePin,
   );
-  assertTrustedProvisioningParent(authorityStatePath);
-  assertTrustedProvisioningParent(leaseCarrierPath);
   assertDisjointSqlitePathNamespaces([
     { label: "durable state", path: authorityStatePath },
     { label: "lease carrier", path: leaseCarrierPath },
     { label: "Runtime database", path: runtimeInspection.database_realpath },
   ]);
-  assertProvisioningPairAbsent(authorityStatePath, leaseCarrierPath);
   const databaseInstanceId = readRuntimeDatabaseIdentity(args.runtimeDatabasePin);
   const createdAt = canonicalTime(args.now ?? new Date(), "provisioning time");
   const authorityInstanceId = randomDigest(
@@ -1357,6 +1408,10 @@ export function provisionLiteRuntimeDeploymentSlotAuthority(args: Readonly<{
     args.randomBytesFactory,
     "first-binding anchor",
   );
+  prepareLiteRuntimeDeploymentSlotPathForProvisioning(args.slotPath);
+  assertTrustedProvisioningParent(authorityStatePath);
+  assertTrustedProvisioningParent(leaseCarrierPath);
+  assertProvisioningPairAbsent(authorityStatePath, leaseCarrierPath);
 
   // Create both inodes before initializing either database so each side can
   // bind the other's physical identity without a circular pathname lookup.
@@ -1374,8 +1429,11 @@ export function provisionLiteRuntimeDeploymentSlotAuthority(args: Readonly<{
 
   const registrationWithoutDigest: Omit<RegistrationRow, "registration_sha256"> = {
     singleton: 1,
-    contract_version: "aionis_lite_runtime_deployment_slot_registration_v1",
+    contract_version: "aionis_lite_runtime_deployment_slot_registration_v2",
     deployment_slot: deploymentSlot,
+    launcher_root_instance_id: slotPathInspection.root_instance_id,
+    launcher_root_manifest_sha256: slotPathInspection.root_manifest_sha256,
+    slot_path_mapping_sha256: slotPathInspection.slot_path_mapping_sha256,
     authority_instance_id: authorityInstanceId,
     carrier_instance_id: carrierInstanceId,
     lease_database_device: carrierStat.dev.toString(10),
@@ -1447,8 +1505,9 @@ export function provisionLiteRuntimeDeploymentSlotAuthority(args: Readonly<{
 
   return Object.freeze({
     contract_version:
-      "aionis_lite_runtime_deployment_slot_provisioning_inspection_v1" as const,
-    authority_scope: "caller_configured_authority_path_registration" as const,
+      "aionis_lite_runtime_deployment_slot_provisioning_inspection_v2" as const,
+    authority_scope:
+      "configured_root_deterministic_slot_path_registration" as const,
     signing_eligible: false as const,
     deployment_slot: deploymentSlot,
     authority_state_path: authorityStatePath,
@@ -1461,7 +1520,12 @@ export function provisionLiteRuntimeDeploymentSlotAuthority(args: Readonly<{
     database_file_inode: String(runtimeInspection.database_inode),
     first_binding_anchor_sha256: firstBindingAnchorSha256,
     registration_sha256: registration.registration_sha256,
-    slot_path_mapping: "trusted_launcher_configuration_required" as const,
+    launcher_root_instance_id: slotPathInspection.root_instance_id,
+    launcher_root_manifest_sha256: slotPathInspection.root_manifest_sha256,
+    slot_path_mapping_sha256: slotPathInspection.slot_path_mapping_sha256,
+    slot_path_mapping: "launcher_root_sha256_sharded_v1" as const,
+    trusted_launcher_root_selection: "required_not_established" as const,
+    slot_provisioning_recovery: "required_not_established" as const,
   });
 }
 
@@ -1504,7 +1568,9 @@ function readSingletonRegistration(db: SqliteDatabase): RegistrationRow {
   }
   const row = rows[0]!;
   const keys = [
-    "singleton", "contract_version", "deployment_slot", "authority_instance_id",
+    "singleton", "contract_version", "deployment_slot",
+    "launcher_root_instance_id", "launcher_root_manifest_sha256",
+    "slot_path_mapping_sha256", "authority_instance_id",
     "carrier_instance_id", "lease_database_device", "lease_database_inode",
     "database_realpath", "database_instance_id", "database_file_device",
     "database_file_inode", "first_binding_anchor_sha256", "registration_sha256",
@@ -1514,13 +1580,19 @@ function readSingletonRegistration(db: SqliteDatabase): RegistrationRow {
   const registration = row as unknown as RegistrationRow;
   if (registration.singleton !== 1
     || registration.contract_version
-      !== "aionis_lite_runtime_deployment_slot_registration_v1") {
+      !== "aionis_lite_runtime_deployment_slot_registration_v2") {
     return authorityError(
       "lite_runtime_deployment_slot_authority_integrity_failed",
       "deployment-slot registration singleton is invalid",
     );
   }
   assertBoundedId(registration.deployment_slot, "registered deployment slot");
+  assertDigest(registration.launcher_root_instance_id, "launcher root instance id");
+  assertDigest(
+    registration.launcher_root_manifest_sha256,
+    "launcher root manifest digest",
+  );
+  assertDigest(registration.slot_path_mapping_sha256, "slot-path mapping digest");
   assertDigest(registration.authority_instance_id, "authority instance id");
   assertDigest(registration.carrier_instance_id, "carrier instance id");
   parseCanonicalU64(registration.lease_database_device, "lease database device");
@@ -2411,6 +2483,23 @@ function assertRuntimeMapping(
   }
 }
 
+function assertLauncherSlotPathMapping(
+  registration: RegistrationRow,
+  inspection: LiteRuntimeDeploymentSlotPathInspection,
+): void {
+  if (registration.deployment_slot !== inspection.deployment_slot
+    || registration.launcher_root_instance_id !== inspection.root_instance_id
+    || registration.launcher_root_manifest_sha256
+      !== inspection.root_manifest_sha256
+    || registration.slot_path_mapping_sha256
+      !== inspection.slot_path_mapping_sha256) {
+    return authorityError(
+      "lite_runtime_deployment_slot_authority_slot_mismatch",
+      "deployment-slot durable registration does not match its configured-root path capability",
+    );
+  }
+}
+
 function runStateTransaction<T>(
   stateDatabase: LiteRuntimeDatabase,
   statePin: LiteRuntimeProtectedAuthorityDatabasePin,
@@ -2509,8 +2598,8 @@ function completionFromRow(
   }
   return Object.freeze({
     contract_version:
-      "aionis_lite_runtime_deployment_slot_binding_completion_v1" as const,
-    authority_scope: "configured_authority_path_chain_transition" as const,
+      "aionis_lite_runtime_deployment_slot_binding_completion_v2" as const,
+    authority_scope: "configured_root_slot_path_chain_transition" as const,
     signing_eligible: false as const,
     exact_replay: exactReplay,
     deployment_slot: replayed.registration.deployment_slot,
@@ -2523,6 +2612,12 @@ function completionFromRow(
     external_execution_policy_sha256: completion.external_execution_policy_sha256,
     external_execution_policy_json: completion.external_execution_policy_json,
     completed_at: completion.completed_at,
+    launcher_root_instance_id: replayed.registration.launcher_root_instance_id,
+    launcher_root_manifest_sha256:
+      replayed.registration.launcher_root_manifest_sha256,
+    slot_path_mapping_sha256: replayed.registration.slot_path_mapping_sha256,
+    slot_path_mapping: "launcher_root_sha256_sharded_v1" as const,
+    trusted_launcher_root_selection: "required_not_established" as const,
     rollback_resistance:
       "current_lineage_only_without_carrier_storage_rollback" as const,
     required_next_capabilities: NEXT_CAPABILITIES,
@@ -2537,9 +2632,9 @@ function leaseInspection(
 ): LiteRuntimeDeploymentSlotLeaseInspection {
   return Object.freeze({
     contract_version:
-      "aionis_lite_runtime_deployment_slot_exclusive_lease_inspection_v1" as const,
+      "aionis_lite_runtime_deployment_slot_exclusive_lease_inspection_v2" as const,
     authority_scope:
-      "configured_authority_path_conditional_process_live_exclusivity" as const,
+      "configured_root_slot_path_conditional_process_live_exclusivity" as const,
     signing_eligible: false as const,
     deployment_slot: state.registration.deployment_slot,
     authority_state_path: state.authorityStatePath,
@@ -2557,10 +2652,14 @@ function leaseInspection(
       replayed.head?.completion.database_binding_receipt_sha256 ?? null,
     current_checkpoint_generation:
       replayed.head?.completion.checkpoint_generation ?? null,
-    filesystem_locking_assumption:
-      "trusted_single_host_local_locking_filesystem" as const,
+    launcher_root_instance_id: state.registration.launcher_root_instance_id,
+    launcher_root_manifest_sha256:
+      state.registration.launcher_root_manifest_sha256,
+    slot_path_mapping_sha256: state.registration.slot_path_mapping_sha256,
+    filesystem_locking_verification: "required_not_established" as const,
     same_process_carrier_fd_isolation: "required_not_established" as const,
-    slot_path_mapping: "trusted_launcher_configuration_required" as const,
+    slot_path_mapping: "launcher_root_sha256_sharded_v1" as const,
+    trusted_launcher_root_selection: "required_not_established" as const,
     rollback_resistance:
       "clean_release_prefix_only_without_carrier_storage_rollback" as const,
     required_next_capabilities: NEXT_CAPABILITIES,
@@ -2568,23 +2667,22 @@ function leaseInspection(
 }
 
 /**
- * Acquires the retained SQLite writer lock for one configured authority-path
- * instance before opening the mapped Runtime database. Formal exclusivity also
+ * Acquires the retained SQLite writer lock for one configured-root slot path
+ * before opening the mapped Runtime database. Formal exclusivity still
  * requires a verified local-locking filesystem and an isolated carrier holder.
  * The lease has no TTL and performs no PID-based stale takeover.
  */
 export function acquireLiteRuntimeDeploymentSlotExclusiveLease(args: Readonly<{
-  authorityStatePath: string;
-  deploymentSlot: string;
+  slotPath: LiteRuntimeDeploymentSlotPathCapability;
   now?: Date;
   randomBytesFactory?: (size: number) => Uint8Array;
 }>): LiteRuntimeDeploymentSlotExclusiveLeaseCapability {
-  const authorityStatePath = requireAbsolutePath(
-    args.authorityStatePath,
-    "authority state path",
+  const slotPathInspection = assertLiteRuntimeDeploymentSlotPathProvisioned(
+    args.slotPath,
   );
-  const leaseCarrierPath = liteRuntimeDeploymentSlotLeaseCarrierPath(authorityStatePath);
-  const deploymentSlot = assertBoundedId(args.deploymentSlot, "deployment slot");
+  const authorityStatePath = slotPathInspection.authority_state_path;
+  const leaseCarrierPath = slotPathInspection.lease_carrier_path;
+  const deploymentSlot = slotPathInspection.deployment_slot;
   const acquiredAt = canonicalTime(args.now ?? new Date(), "lease acquisition time");
   const leaseHolderTokenSha256 = randomDigest(
     args.randomBytesFactory,
@@ -2594,6 +2692,10 @@ export function acquireLiteRuntimeDeploymentSlotExclusiveLease(args: Readonly<{
     args.randomBytesFactory,
     "SQLite lease guard",
   )}`;
+  const slotPathRetention = retainLiteRuntimeDeploymentSlotPathCapability(
+    args.slotPath,
+  );
+  let slotPathRetentionTransferred = false;
 
   let carrierPin: LiteRuntimeProtectedAuthorityDatabasePin | null = null;
   let statePin: LiteRuntimeProtectedAuthorityDatabasePin | null = null;
@@ -2640,6 +2742,7 @@ export function acquireLiteRuntimeDeploymentSlotExclusiveLease(args: Readonly<{
     stateDatabase = openLiteRuntimeProtectedAuthorityDatabase(statePin);
     configureOpenedAuthorityDatabase(stateDatabase.db);
     let replayed = replayDurableState(stateDatabase.db);
+    assertLauncherSlotPathMapping(replayed.registration, slotPathInspection);
     const carrierIdentity = assertCarrierIdentity(
       carrierDatabase.db,
       deploymentSlot,
@@ -2716,6 +2819,9 @@ export function acquireLiteRuntimeDeploymentSlotExclusiveLease(args: Readonly<{
     const capability = Object.freeze(Object.create(null)) as
       LiteRuntimeDeploymentSlotExclusiveLeaseCapability;
     const state: LeaseState = {
+      slotPathCapability: args.slotPath,
+      slotPathRetention,
+      slotPathInspection,
       authorityStatePath,
       leaseCarrierPath,
       statePin,
@@ -2741,6 +2847,7 @@ export function acquireLiteRuntimeDeploymentSlotExclusiveLease(args: Readonly<{
     carrierDatabase = null;
     stateDatabase = null;
     carrierLocked = false;
+    slotPathRetentionTransferred = true;
     return capability;
   } catch (error) {
     if (error instanceof LiteRuntimeDeploymentSlotAuthorityError) throw error;
@@ -2757,10 +2864,17 @@ export function acquireLiteRuntimeDeploymentSlotExclusiveLease(args: Readonly<{
     closePinBestEffort(runtimePin);
     closePinBestEffort(statePin);
     closePinBestEffort(carrierPin);
+    if (!slotPathRetentionTransferred) {
+      releaseLiteRuntimeDeploymentSlotPathRetention(slotPathRetention);
+    }
   }
 }
 
 function assertLeaseState(state: LeaseState): ReplayedState {
+  const slotPathInspection = assertLiteRuntimeDeploymentSlotPathProvisioned(
+    state.slotPathCapability,
+  );
+  assertLauncherSlotPathMapping(state.registration, slotPathInspection);
   assertCarrierWriterLock(state);
   assertLiteRuntimeProtectedAuthorityDatabasePinned(state.carrierPin);
   assertLiteRuntimeProtectedAuthorityDatabasePinned(state.statePin);
@@ -2850,9 +2964,10 @@ function reservationInspection(
 ): LiteRuntimeDeploymentSlotReservationInspection {
   return Object.freeze({
     contract_version: (
-      "aionis_lite_runtime_deployment_slot_checkpoint_reservation_inspection_v1"
+      "aionis_lite_runtime_deployment_slot_checkpoint_reservation_inspection_v2"
     ) as const,
-    authority_scope: "configured_authority_path_generation_and_chain_expectation" as const,
+    authority_scope:
+      "configured_root_slot_path_generation_and_chain_expectation" as const,
     signing_eligible: false as const,
     deployment_slot: state.registration.deployment_slot,
     operation_id: operation.operation_id,
@@ -2873,10 +2988,14 @@ function reservationInspection(
     database_instance_id: state.registration.database_instance_id,
     database_file_device: state.registration.database_file_device,
     database_file_inode: state.registration.database_file_inode,
-    filesystem_locking_assumption:
-      "trusted_single_host_local_locking_filesystem" as const,
+    launcher_root_instance_id: state.registration.launcher_root_instance_id,
+    launcher_root_manifest_sha256:
+      state.registration.launcher_root_manifest_sha256,
+    slot_path_mapping_sha256: state.registration.slot_path_mapping_sha256,
+    filesystem_locking_verification: "required_not_established" as const,
     same_process_carrier_fd_isolation: "required_not_established" as const,
-    slot_path_mapping: "trusted_launcher_configuration_required" as const,
+    slot_path_mapping: "launcher_root_sha256_sharded_v1" as const,
+    trusted_launcher_root_selection: "required_not_established" as const,
     rollback_resistance:
       "clean_release_prefix_only_without_carrier_storage_rollback" as const,
     required_next_capabilities: RESERVATION_NEXT_CAPABILITIES,
@@ -3476,6 +3595,11 @@ export async function releaseLiteRuntimeDeploymentSlotExclusiveLease(
     releaseFailed = true;
   }
   state.closed = true;
+  try {
+    releaseLiteRuntimeDeploymentSlotPathRetention(state.slotPathRetention);
+  } catch {
+    releaseFailed = true;
+  }
   if (releaseFailed) {
     return authorityError(
       "lite_runtime_deployment_slot_authority_release_failed",
