@@ -102,7 +102,7 @@ node scripts/ci/release-artifact-gate.mjs --check --expect-tag v0.3.10
 ## Candidate Promotion Checklist
 
 Run this only after the reviewed candidate is on remote main and both required
-CI and the credential-injected DashScope `text-embedding-v4` available-mode
+CI and the credential-injected DashScope `qwen3.7-text-embedding` available-mode
 external-package smoke pass on that exact commit:
 
 ```bash

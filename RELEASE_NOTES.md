@@ -107,8 +107,8 @@ node scripts/ci/release-artifact-gate.mjs --check --expect-tag v0.3.10
 ```
 
 Before tagging, inject a DashScope credential through a protected environment
-and run the external-package smoke with `text-embedding-v4`, expected model
-`dashscope:text-embedding-v4`, and 1,536 dimensions. It must prove ready write
+and run the external-package smoke with `qwen3.7-text-embedding`, expected model
+`dashscope:qwen3.7-text-embedding`, and 1,536 dimensions. It must prove ready write
 embeddings, semantic/ANN query provenance, feedback attribution, persisted
 measure, and exact replay through SDK and MCP. Never store the credential in
 this repository, release notes, or child package environments.
