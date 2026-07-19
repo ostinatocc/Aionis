@@ -239,7 +239,7 @@ function runMigrationChild(dbPath: string): Promise<string> {
 }
 
 function tempDatabase(name: string): { directory: string; path: string } {
-  const directory = fs.mkdtempSync(path.join(os.tmpdir(), `aionis-learning-store-${name}-`));
+  const directory = fs.mkdtempSync(path.join(os.homedir(), `aionis-learning-store-${name}-`));
   return { directory, path: path.join(directory, "runtime.sqlite") };
 }
 
@@ -7750,7 +7750,7 @@ test("protected external lifecycle verifies frozen Ed25519 authority and survive
         `git ${args.join(" ")} failed: ${result.stderr}`,
       );
     };
-    runEvidenceGit("init", "-q");
+    runEvidenceGit("init", "-q", "--template=");
     runEvidenceGit("config", "user.name", "Aionis CI");
     runEvidenceGit("config", "user.email", "aionis-ci@example.invalid");
     runEvidenceGit("add", "--", "run-bundle.aionis", "public-run-authority.json");

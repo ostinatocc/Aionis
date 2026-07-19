@@ -11,7 +11,7 @@ import {
   rmSync,
   unlinkSync,
 } from "node:fs";
-import { tmpdir } from "node:os";
+import { homedir } from "node:os";
 import { join } from "node:path";
 import test, { type TestContext } from "node:test";
 import { DatabaseSync } from "node:sqlite";
@@ -61,7 +61,7 @@ function createFixture(
   createdAt = CREATED_AT,
 ): Fixture {
   const directory = realpathSync(mkdtempSync(join(
-    realpathSync(tmpdir()),
+    realpathSync(homedir()),
     `aionis-provisioning-journal-integrity-${label}-`,
   )));
   chmodSync(directory, 0o700);

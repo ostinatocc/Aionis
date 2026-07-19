@@ -15,7 +15,7 @@ import {
   symlinkSync,
   writeFileSync,
 } from "node:fs";
-import { tmpdir } from "node:os";
+import { homedir } from "node:os";
 import { join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import test, { type TestContext } from "node:test";
@@ -72,7 +72,7 @@ function sha256(value: string | Uint8Array): string {
 
 function createFixture(t: TestContext, label: string): Fixture {
   const directory = realpathSync(mkdtempSync(join(
-    realpathSync(tmpdir()),
+    realpathSync(homedir()),
     `aionis-slot-filesystem-${label}-`,
   )));
   chmodSync(directory, 0o700);

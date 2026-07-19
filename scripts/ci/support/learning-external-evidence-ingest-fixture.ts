@@ -16,7 +16,7 @@ import {
   statSync,
   writeFileSync,
 } from "node:fs";
-import { tmpdir } from "node:os";
+import { homedir } from "node:os";
 import { join } from "node:path";
 
 import stableStringify from "fast-json-stable-stringify";
@@ -270,7 +270,7 @@ function assertCurrentDatabase(database: LiteRuntimeDatabase): void {
 export async function createLearningExternalEvidenceIngestFixture(): Promise<
   LearningExternalEvidenceIngestFixture
 > {
-  const tempRoot = realpathSync.native(tmpdir());
+  const tempRoot = realpathSync.native(homedir());
   const rootDirectory = realpathSync.native(
     mkdtempSync(join(tempRoot, "aionis-external-evidence-ingest-")),
   );
@@ -1171,7 +1171,7 @@ export async function createLearningExternalEvidenceIngestFixture(): Promise<
     });
     chmodSync(archivePath, 0o600);
     chmodSync(publicRunAuthorityPath, 0o600);
-    runGit(evidenceRepositoryPath, "init", "-q");
+    runGit(evidenceRepositoryPath, "init", "-q", "--template=");
     runGit(evidenceRepositoryPath, "config", "user.name", "Aionis CI");
     runGit(
       evidenceRepositoryPath,

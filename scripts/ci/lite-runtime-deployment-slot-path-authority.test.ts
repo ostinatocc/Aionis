@@ -12,7 +12,7 @@ import {
   symlinkSync,
   writeFileSync,
 } from "node:fs";
-import { tmpdir } from "node:os";
+import { homedir } from "node:os";
 import { dirname, join } from "node:path";
 import test, { type TestContext } from "node:test";
 
@@ -39,7 +39,7 @@ type Fixture = Readonly<{
 }>;
 
 function createEmptyRoot(t: TestContext): string {
-  const rootPath = realpathSync(mkdtempSync(join(tmpdir(), "aionis-slot-path-")));
+  const rootPath = realpathSync(mkdtempSync(join(homedir(), "aionis-slot-path-")));
   chmodSync(rootPath, 0o700);
   t.after(() => rmSync(rootPath, { recursive: true, force: true }));
   return rootPath;

@@ -237,6 +237,11 @@ jobs:
           node-version: "22.15.0"
           cache: npm
 
+      - name: Install protected-close ACL verifier
+        run: |
+          sudo apt-get update
+          sudo apt-get install --yes --no-install-recommends acl
+
       - name: Install dependencies
         run: npm ci
 

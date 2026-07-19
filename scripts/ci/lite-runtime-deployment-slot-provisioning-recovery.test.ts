@@ -17,7 +17,7 @@ import {
   realpathSync,
   rmSync,
 } from "node:fs";
-import { tmpdir } from "node:os";
+import { homedir } from "node:os";
 import { basename, dirname, join, resolve } from "node:path";
 import { setTimeout as delay } from "node:timers/promises";
 import { fileURLToPath } from "node:url";
@@ -154,7 +154,7 @@ function initializeRuntimeDatabase(path: string, identitySeed: string): void {
 
 function createFixture(t: TestContext, label: string): Fixture {
   const directory = realpathSync(mkdtempSync(join(
-    realpathSync(tmpdir()),
+    realpathSync(homedir()),
     `aionis-slot-recovery-${label}-`,
   )));
   chmodSync(directory, 0o700);

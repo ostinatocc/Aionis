@@ -350,7 +350,7 @@ test("writer-fence acquisition failure after BEGIN IMMEDIATE releases its SQLite
       stderr += chunk;
     });
     mutator.once("error", reject);
-    mutator.once("exit", (code, signal) => {
+    mutator.once("close", (code, signal) => {
       if (!stdout.includes("READY\n")) {
         reject(new Error(`mutator exited before ready code=${code} signal=${signal}: ${stderr}`));
       }
@@ -359,7 +359,7 @@ test("writer-fence acquisition failure after BEGIN IMMEDIATE releases its SQLite
   const exited = new Promise<Readonly<{ code: number | null; signal: string | null }>>(
     (resolve, reject) => {
       mutator.once("error", reject);
-      mutator.once("exit", (code, signal) => resolve({ code, signal }));
+      mutator.once("close", (code, signal) => resolve({ code, signal }));
     },
   );
 

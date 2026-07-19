@@ -125,7 +125,7 @@ function populateRepository(
 
 function createRepository(label: string, contents = fixture()): RepositoryFixture {
   const directory = temporaryDirectory(label);
-  git(directory, ["init", "--quiet"]);
+  git(directory, ["init", "--quiet", "--template="]);
   return populateRepository(directory, contents);
 }
 
@@ -199,7 +199,7 @@ test("reader rejects dirty and untracked Git inputs from real repositories", () 
 
   const untrackedDirectory = temporaryDirectory("git-untracked");
   try {
-    git(untrackedDirectory, ["init", "--quiet"]);
+    git(untrackedDirectory, ["init", "--quiet", "--template="]);
     writePrivateFile(join(untrackedDirectory, "tracked.txt"), Buffer.from("tracked\n"));
     commitAll(untrackedDirectory, "tracked baseline");
     const contents = fixture();

@@ -23,7 +23,7 @@ import {
   truncateSync,
   writeFileSync,
 } from "node:fs";
-import { tmpdir } from "node:os";
+import { homedir } from "node:os";
 import { join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import test from "node:test";
@@ -341,7 +341,7 @@ const ROTATED_POLICY_SHA256 = externalExecutionPolicyDigest(ROTATED_POLICY);
 
 function createFixture(label: string): Fixture {
   const rootDirectory = mkdtempSync(
-    join(realpathSync(tmpdir()), `aionis-d3a3a-${label}-`),
+    join(realpathSync(homedir()), `aionis-d3a3a-${label}-`),
   );
   chmodSync(rootDirectory, 0o700);
   const rootPath = join(rootDirectory, "launcher-authority");

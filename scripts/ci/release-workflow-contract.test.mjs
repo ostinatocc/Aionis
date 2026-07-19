@@ -368,6 +368,7 @@ test("release smoke rejects mutable image tags before invoking Docker", () => {
 
 test("default CI verifies release metadata, SDK and Manifest ownership, complexity, smoke, and minimum Node", () => {
   const workflow = read(".github/workflows/ci.yml");
+  const minimumNode = workflowJob(workflow, "minimum-node");
   const contractCheckout = workflowStep(workflow, "Checkout standalone SDK contracts");
   const releaseCheckout = workflowStep(workflow, "Checkout frozen SDK release artifact");
   const releaseGate = workflowStep(workflow, "Release artifact gate");
@@ -390,11 +391,9 @@ test("default CI verifies release metadata, SDK and Manifest ownership, complexi
   assert.match(workflow, /npm run -s sdk:check/);
   assert.match(workflow, /npm run -s complexity:check/);
   assert.match(workflow, /npm run -s lite:smoke/);
-  assert.match(workflow, /name: Node 22\.15 minimum compatibility/);
-  assert.match(workflow, /node-version: "22\.15\.0"/);
-  assert.match(workflow, /name: Provisioning journal compatibility/);
+  assert.match(minimumNode, /node-version: "22\.15\.0"/);
   assert.match(
-    workflow,
-    /node --import tsx --test scripts\/ci\/lite-runtime-deployment-slot-provisioning-journal-integrity\.test\.ts/,
+    minimumNode,
+    /name: Install protected-close ACL verifier[\s\S]*?sudo apt-get install --yes --no-install-recommends acl[\s\S]*?name: Provisioning journal compatibility[\s\S]*?node --import tsx --test scripts\/ci\/lite-runtime-deployment-slot-provisioning-journal-integrity\.test\.ts/,
   );
 });
