@@ -56,7 +56,8 @@ function canonical(value: unknown) {
 }
 
 function tempDatabase(name: string) {
-  const directory = fs.mkdtempSync(path.join(os.tmpdir(), `aionis-learning-provision-${name}-`));
+  const directory = fs.mkdtempSync(path.join(os.homedir(), `.aionis-learning-provision-${name}-`));
+  fs.chmodSync(directory, 0o700);
   return { directory, path: path.join(directory, "runtime.sqlite") };
 }
 

@@ -138,6 +138,7 @@ test("Docker image is built once, smoked by digest, and only then promoted", () 
   const freshInstallSmoke = read("scripts/e2e/fresh-install-smoke.ts");
   assert.match(freshInstallSmoke, /git", \["clone", "--bare", "--no-local"/);
   assert.match(freshInstallSmoke, /args\.push\("--skip-install"\)/);
+  assert.match(freshInstallSmoke, /run\(npmCommand\(\), \["ci"\]/);
   assert.match(freshInstallSmoke, /installedCommit === expectedCommit/);
   assert.match(freshInstallSmoke, /--untracked-files=all/);
   assert.match(
@@ -328,6 +329,11 @@ test("cross-package release gates install tarballs packed from exact checkouts",
   assert.match(smoke, /client\.execution\.guideForRole\(/);
   assert.match(smoke, /planning_context_embedding_unavailable/);
   assert.match(smoke, /full_power_agent_context_merge/);
+  assert.match(smoke, /allowEmbeddingUnavailable:/);
+  assert.match(
+    read("scripts/e2e/multi-agent-execution-memory-loop.ts"),
+    /options\.allowEmbeddingUnavailable === true && embeddingProvider === "none"/,
+  );
   assert.match(smoke, /const measureOperationId = "external-package-sdk-measure:" \+ runId/);
   assert.match(smoke, /measure\.operation_id === measureOperationId/);
   assert.match(smoke, /measure\.measurement_persisted === true/);

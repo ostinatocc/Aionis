@@ -91,7 +91,8 @@ import {
 } from "./support/learning-experiment-confirmatory-fixture.ts";
 
 function tmpDbPath(name: string): string {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "aionis-feedback-closed-loop-"));
+  const dir = fs.mkdtempSync(path.join(os.homedir(), ".aionis-feedback-closed-loop-"));
+  fs.chmodSync(dir, 0o700);
   return path.join(dir, `${name}.sqlite`);
 }
 

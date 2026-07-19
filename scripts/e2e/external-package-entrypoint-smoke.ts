@@ -723,7 +723,10 @@ function runCliEntrypointChecks(appDir: string): Record<string, unknown> {
 async function main() {
   const runId = Date.now().toString(36);
   const install = prepareExternalInstall();
-  const session = await openRuntime();
+  const session = await openRuntime({
+    allowEmbeddingUnavailable:
+      process.env.AIONIS_EXTERNAL_SMOKE_EMBEDDING_EXPECTATION?.trim() === "unavailable",
+  });
   try {
     const embeddingExpectation = embeddingExpectationForSession(session);
     const expectedEmbeddingModel = expectedEmbeddingModelForSession(

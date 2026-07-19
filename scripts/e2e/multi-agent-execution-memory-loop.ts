@@ -32,6 +32,10 @@ export type RuntimeSession = {
   handle: RuntimeHandle | null;
 };
 
+export type OpenRuntimeOptions = Readonly<{
+  allowEmbeddingUnavailable?: boolean;
+}>;
+
 export type ReviewerDecision = {
   next_action: "continue_passed_branch" | "repeat_failed_branch" | "unknown";
   used_aionis: boolean;
@@ -166,7 +170,7 @@ export function buildMultiAgentExecutionTree(runId: string): {
   return { baseTree, operations, expectedTree };
 }
 
-export async function openRuntime(): Promise<RuntimeSession> {
+export async function openRuntime(options: OpenRuntimeOptions = {}): Promise<RuntimeSession> {
   const externalBaseUrl = (
     process.env.AIONIS_MULTI_AGENT_E2E_BASE_URL
     || process.env.AIONIS_PRODUCT_E2E_BASE_URL
@@ -183,7 +187,10 @@ export async function openRuntime(): Promise<RuntimeSession> {
     };
   }
 
-  const embedding = requireEmbeddingConfig();
+  const embeddingProvider = process.env.EMBEDDING_PROVIDER?.trim().toLowerCase();
+  const embedding = options.allowEmbeddingUnavailable === true && embeddingProvider === "none"
+    ? null
+    : requireEmbeddingConfig();
   const handle = await startRuntime(embedding);
   return {
     baseUrl: handle.baseUrl,

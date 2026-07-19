@@ -44,7 +44,8 @@ const CHILD_PATH = fileURLToPath(new URL(
 ));
 
 function tempDatabase(name: string) {
-  const directory = fs.mkdtempSync(path.join(os.tmpdir(), `aionis-confirmatory-${name}-`));
+  const directory = fs.mkdtempSync(path.join(os.homedir(), `.aionis-confirmatory-${name}-`));
+  fs.chmodSync(directory, 0o700);
   return { directory, path: path.join(directory, "runtime.sqlite") };
 }
 

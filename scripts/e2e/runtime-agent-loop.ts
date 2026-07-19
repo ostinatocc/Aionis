@@ -126,7 +126,7 @@ async function findFreePort(): Promise<number> {
   });
 }
 
-export async function startRuntime(embedding: EmbeddingConfig): Promise<RuntimeHandle> {
+export async function startRuntime(embedding: EmbeddingConfig | null): Promise<RuntimeHandle> {
   const port = await findFreePort();
   const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "aionis-runtime-agent-e2e-"));
   const logs: string[] = [];
@@ -147,7 +147,7 @@ export async function startRuntime(embedding: EmbeddingConfig): Promise<RuntimeH
       LITE_LOCAL_ACTOR_ID: "local-user",
       LITE_WRITE_SQLITE_PATH: path.join(tmpDir, "write.sqlite"),
       LITE_REPLAY_SQLITE_PATH: path.join(tmpDir, "replay.sqlite"),
-      EMBEDDING_PROVIDER: embedding.provider,
+      EMBEDDING_PROVIDER: embedding?.provider ?? "none",
       SANDBOX_ENABLED: "false",
       SANDBOX_ADMIN_ONLY: "true",
     },

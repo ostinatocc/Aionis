@@ -120,7 +120,7 @@ function installFreshRuntime(input: {
 }
 
 function completeVerifiedRuntimeInstall(targetDir: string): string {
-  const installOutput = run(npmCommand(), ["install"], {
+  const installOutput = run(npmCommand(), ["ci"], {
     cwd: targetDir,
     env: cleanNoKeyEnv(),
     label: "install verified Runtime dependencies",

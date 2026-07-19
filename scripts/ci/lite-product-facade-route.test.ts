@@ -99,7 +99,8 @@ import {
 } from "./support/learning-experiment-confirmatory-fixture.ts";
 
 function tmpDbPath(name: string): string {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "aionis-lite-product-facade-"));
+  const dir = fs.mkdtempSync(path.join(os.homedir(), ".aionis-lite-product-facade-"));
+  fs.chmodSync(dir, 0o700);
   return path.join(dir, `${name}.sqlite`);
 }
 
