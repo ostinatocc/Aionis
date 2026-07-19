@@ -1,6 +1,6 @@
 # Aionis Quickstart Matrix
 
-Status: public entrypoint selection guide for the v0.3.10 development Runtime
+Status: public entrypoint selection guide for the v0.3.10 candidate Runtime
 
 Use this matrix to choose the Aionis integration surface for your Agent. Setup
 installs and configures the Runtime first; verification loops are optional.
@@ -106,7 +106,7 @@ All quickstarts follow the same contract:
 6. Admission dataset export stays in host/operator logs and excludes raw prompt payload.
 7. Client `sufficient_evidence` and `evidence_ids` are ignored by the measure
    gate; only Runtime-owned evidence can make learning or skill export-ready.
-8. This development Runtime supports one Local Runtime process. Multi-instance HA needs
+8. This candidate Runtime supports one Local Runtime process. Multi-instance HA needs
    shared persistence and cross-instance projection reconciliation.
 
 Focused dataset export guide:

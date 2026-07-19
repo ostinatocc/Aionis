@@ -1,13 +1,25 @@
 # Changelog
 
-## v0.3.10 - Atomic Tool Feedback Development
+## v0.3.10 - Evidence Authority and Runtime Convergence Candidate
 
-Development baseline: 2026-07-16
+Candidate preparation: 2026-07-19
 
-This unreleased train gives post-v0.3.9 work a truthful version boundary. It
-includes Task 5.1 atomic tool-feedback attribution, Task 6.1 protected
-measurement-to-episode binding, SDK `0.3.19`, and Manifest `0.1.1`; it does not
-claim a v0.3.10 Runtime tag or Docker publication.
+This Local Runtime Public Beta candidate combines atomic tool-feedback and
+measurement authority with the post-v0.3.9 evidence-ingestion, deployment-slot,
+database-adoption, recovery, and Runtime-convergence work. The immutable tag
+is created only after pre-tag gates pass; pushing it triggers the workflow that
+builds and verifies the Docker image. The release is incomplete until the image
+digest and GitHub Release gates also pass.
+
+### Added
+
+- Protected external-evidence ingestion, lifecycle reconstruction, attestation,
+  archive reading, and exact operation receipts.
+- Crash-replayable deployment-authority tooling with configured-root binding,
+  real SIGKILL recovery evidence, terminal receipts, and fail-closed filesystem
+  checks. The production isolated one-shot worker remains deferred.
+- Exact fixed-gate and predecision evidence authority for selected learning
+  profiles without enabling global autonomous promotion.
 
 ### Changed
 
@@ -22,12 +34,33 @@ claim a v0.3.10 Runtime tag or Docker publication.
   replay, persist immutable measurement records, and bind sufficient
   Runtime-verified effects to the authoritative after episode.
 - v0.3.9 release evidence is restored to its original SDK `0.3.17` coordinate;
-  SDK `0.3.19` belongs only to this development train.
+  SDK `0.3.19` is the frozen client coordinate for this candidate.
+- Runtime commit authority, database adoption, protected filesystem posture,
+  graceful shutdown, and Linux/macOS CI behavior now fail closed under their
+  real deployment contracts.
+- External evidence and fixed-experiment mutation writers live outside the
+  daemon startup boundary; the governed `/v1` product matrix remains a
+  21-route, zero-import-cycle focused surface.
+
+### Compatibility
+
+- Existing v4 and v5 authority databases upgrade transactionally to schema v6.
+  Back up before upgrading; a v6 authority database must not be downgraded to an
+  older Runtime.
+- The governed `/v1` product surface remains 21 routes and the environment
+  schema remains 177 fields. External npm package versions are frozen and are
+  not republished by this Runtime-only candidate.
+- The supported deployment is one self-hosted Runtime process with SQLite
+  authority. The tag workflow is configured to publish only `linux/amd64` for
+  candidate status and to leave Docker `latest` unchanged.
 
 ### Deferred
 
-- Formal gate calibration, promotion authority, and global candidate serving
-  remain future work. Global candidate serving remains off.
+- Formal gate calibration and unqualified global promotion remain future work.
+  The shipped admission-candidate policy defaults to off; explicit selected
+  profile operation remains an operator-controlled evidence posture.
+- Multi-instance HA and a managed multi-tenant service remain outside this
+  candidate.
 
 ## v0.3.9 - Durable Learning Control Candidate
 

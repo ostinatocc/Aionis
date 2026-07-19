@@ -29,6 +29,11 @@ Guided setup:
 npx aionis setup
 ```
 
+The frozen installer currently selects Runtime v0.3.6. It is the default
+published-beta install path, not the v0.3.10 candidate test path. Before the
+v0.3.10 tag exists, test that candidate only from the reviewed source checkout;
+after publication, use the immutable source tag or Docker image.
+
 The setup command asks for the install directory, provider, optional
 AIFS/Zvec/Claude Code setup. If you choose OpenAI, DashScope, MiniMax, or another
 provider, it asks for the matching API key with hidden terminal input, then
@@ -61,15 +66,14 @@ prints Runtime start and integration next steps.
 
 ## Docker
 
-The checked-in development train targets
-`ghcr.io/ostinatocc/aionis:v0.3.10`, but that image is not published while the
-train remains `development`. Run the last published candidate in Docker:
+The checked-in candidate targets `ghcr.io/ostinatocc/aionis:v0.3.10`. Pull it
+only after the immutable tag workflow has verified and promoted its digest:
 
 ```bash
 docker run --rm \
   -p 127.0.0.1:3001:3001 \
   -v aionis-data:/data \
-  ghcr.io/ostinatocc/aionis:v0.3.9
+  ghcr.io/ostinatocc/aionis:v0.3.10
 ```
 
 Then check readiness:

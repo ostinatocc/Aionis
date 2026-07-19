@@ -1,6 +1,6 @@
 # Aionis Observe Guide Audit Quickstart
 
-Status: product quickstart for the v0.3.10 development Runtime
+Status: product quickstart for the v0.3.10 candidate Runtime
 
 This quickstart shows the shortest product path:
 

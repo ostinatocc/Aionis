@@ -43,13 +43,15 @@ rehydrated later, and why each decision was made.
 npx aionis setup
 ```
 
-Current main development: **Runtime v0.3.10 / SDK v0.3.19 / Manifest v0.1.1**.
-The last published Runtime candidate remains v0.3.9; the v0.3.10 source tag and
-Docker image do not exist while the train is marked `development`. It is
-intended for a single self-hosted Runtime process with same-host Agent
-clients. The TypeScript SDK, HTTP API, MCP bridge, AIFS file surface, Memory
-Firewall, Agent Flight Recorder, optional Zvec candidate retrieval, and
-Substrate evidence sidecar are available for beta integration and evaluation.
+Current candidate: **Runtime v0.3.10 / SDK v0.3.19 / Manifest v0.1.1**.
+The frozen `aionis` installer still installs Runtime v0.3.6; the command above
+does not install this candidate. Before `v0.3.10` is tagged, candidate testing
+must use the reviewed source checkout. After the tag workflow succeeds, use the
+immutable source tag or Docker coordinate documented below. The candidate is
+intended for a single self-hosted Runtime process with same-host Agent clients.
+The TypeScript SDK, HTTP API, MCP bridge, AIFS file surface, Memory Firewall,
+Agent Flight Recorder, optional Zvec candidate retrieval, and Substrate
+evidence sidecar are available for beta integration and evaluation.
 
 This product line is not a GA managed service and does not claim multi-instance
 high availability. Lite keeps SQLite as authority; its in-process ANN is rebuilt
@@ -91,7 +93,8 @@ Code setup. API keys are collected with hidden terminal input. The command
 writes the generated Runtime `.env`, delegates the install to `@aionis/create`,
 then prints the next Runtime start and SDK/API/MCP/AIFS connection commands.
 It installs for real Agent integration without running optional verification
-flows by default.
+flows by default. The frozen installer currently selects Runtime v0.3.6; it is
+the default published-beta install path, not the v0.3.10 candidate test path.
 
 For non-interactive installs, set the provider key in the environment:
 
@@ -109,15 +112,15 @@ This enables Zvec as a persisted candidate index while keeping SQLite as the
 Runtime fact source. Aionis still performs final scope, lifecycle, authority,
 admission, and rehydrate governance after candidates are loaded.
 
-The v0.3.10 development target is
-`ghcr.io/ostinatocc/aionis:v0.3.10`; it is not a pullable-artifact claim yet.
-Docker users can run the last published candidate directly:
+The candidate Docker coordinate is `ghcr.io/ostinatocc/aionis:v0.3.10`.
+Pull it only after the tag-triggered release workflow has verified and promoted
+the immutable digest:
 
 ```bash
 docker run --rm \
   -p 127.0.0.1:3001:3001 \
   -v aionis-data:/data \
-  ghcr.io/ostinatocc/aionis:v0.3.9
+  ghcr.io/ostinatocc/aionis:v0.3.10
 ```
 
 The container process listens on `0.0.0.0` inside its network namespace so
