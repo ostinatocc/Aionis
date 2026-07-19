@@ -16,7 +16,7 @@ import {
   statSync,
   writeFileSync,
 } from "node:fs";
-import { homedir } from "node:os";
+import { homedir, tmpdir } from "node:os";
 import { join } from "node:path";
 
 import stableStringify from "fast-json-stable-stringify";
@@ -263,10 +263,6 @@ function assertCurrentDatabase(database: LiteRuntimeDatabase): void {
   }
 }
 
-/**
- * Builds the expensive authority prefix once. The returned database is closed,
- * current, and contains no evidence artifact or evidence-ingest operation.
- */
 export async function createLearningExternalEvidenceIngestFixture(): Promise<
   LearningExternalEvidenceIngestFixture
 > {
@@ -279,7 +275,12 @@ export async function createLearningExternalEvidenceIngestFixture(): Promise<
   const runtime = openConfirmatoryFixtureRuntime(databasePath);
   let runtimeClosed = false;
   let succeeded = false;
+  let evidenceRepositoryRoot: string | null = null;
   try {
+    evidenceRepositoryRoot = mkdtempSync(
+      join(realpathSync.native(tmpdir()), "aionis-external-evidence-repository-"));
+    chmodSync(evidenceRepositoryRoot, 0o700);
+    const evidenceRepositoryPath = realpathSync.native(evidenceRepositoryRoot);
     const ledger = createLiteLearningEpisodeLedgerAccess(runtime.database);
     const databaseInstanceId = await ledger.databaseInstanceId();
     const brokerKeys = generateKeyPairSync("ed25519");
@@ -1156,9 +1157,6 @@ export async function createLearningExternalEvidenceIngestFixture(): Promise<
       ["terminal-run-manifest.json", canonicalBytes(terminalRunManifest)],
     ]));
 
-    const evidenceRepositoryPath = join(rootDirectory, "evidence-repository");
-    mkdirSync(evidenceRepositoryPath, { mode: 0o700 });
-    chmodSync(evidenceRepositoryPath, 0o700);
     const archivePath = join(evidenceRepositoryPath, "run-bundle.aionis");
     const publicRunAuthorityPath = join(
       evidenceRepositoryPath,
@@ -1566,6 +1564,8 @@ export async function createLearningExternalEvidenceIngestFixture(): Promise<
         // Preserve the fixture construction error.
       }
     }
+    if (!succeeded && evidenceRepositoryRoot)
+      rmSync(evidenceRepositoryRoot, { recursive: true, force: true });
     if (!succeeded) rmSync(rootDirectory, { recursive: true, force: true });
   }
 }

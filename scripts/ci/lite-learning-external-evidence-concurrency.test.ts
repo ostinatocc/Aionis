@@ -301,9 +301,6 @@ function cliArgs(
 }
 
 test("external evidence CLI, process contention, and hard crashes preserve one atomic authority pair", {
-  // Every child independently re-verifies the bounded Git metadata/ACL trust
-  // snapshot. Keep this integration timeout above the deliberate security cost
-  // while each individual process remains bounded by the reader limits.
   timeout: 900_000,
 }, async (t) => {
   const base = await createLearningExternalEvidenceIngestFixture();
@@ -659,6 +656,7 @@ test("external evidence CLI, process contention, and hard crashes preserve one a
     });
   } finally {
     await terminateActiveChildren();
-    rmSync(base.rootDirectory, { recursive: true, force: true });
+    for (const directory of [base.evidenceRepositoryPath, base.rootDirectory])
+      rmSync(directory, { recursive: true, force: true });
   }
 });

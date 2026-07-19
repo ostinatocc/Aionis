@@ -428,6 +428,7 @@ test("reader computes and verifies native Git blob IDs in a SHA-256 repository",
         directory,
         "init",
         "--quiet",
+        "--template=",
         "--object-format=sha256",
       ],
       {

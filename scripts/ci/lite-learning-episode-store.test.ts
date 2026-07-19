@@ -6213,6 +6213,7 @@ test("protected external lifecycle verifies frozen Ed25519 authority and survive
   let reopenedDatabase: ReturnType<typeof createLiteRuntimeDatabase> | null = null;
   let reopenedWriteStore: ReturnType<typeof createLiteWriteStoreFromDatabase> | null = null;
   let preparedEvidence: PreparedLiteLearningExternalEvidenceArchive | null = null;
+  let evidenceRepositoryRoot: string | null = null;
   try {
     const keyring = storeCloseKeyring();
     writeStore = createLiteWriteStoreFromDatabase(database, {
@@ -7727,9 +7728,9 @@ test("protected external lifecycle verifies frozen Ed25519 authority and survive
       ["source-bundle.bin", sourceBundleBytes],
       ["terminal-run-manifest.json", canonicalBytes(terminalRunManifest)],
     ]));
-    const evidenceRepositoryPath = path.join(temp.directory, "external-evidence-repository");
-    fs.mkdirSync(evidenceRepositoryPath, { mode: 0o700 });
-    const evidenceRepository = fs.realpathSync.native(evidenceRepositoryPath);
+    evidenceRepositoryRoot = fs.mkdtempSync(path.join(os.tmpdir(), "aionis-external-evidence-repository-"));
+    fs.chmodSync(evidenceRepositoryRoot, 0o700);
+    const evidenceRepository = fs.realpathSync.native(evidenceRepositoryRoot);
     const archivePath = path.join(evidenceRepository, "run-bundle.aionis");
     const publicRunAuthorityPath = path.join(
       evidenceRepository,
@@ -7888,10 +7889,8 @@ test("protected external lifecycle verifies frozen Ed25519 authority and survive
     assert.equal(persistedIngestOperation.commit_id, normalEvidenceBundleCommitId);
 
     const toolTicket = Buffer.alloc(32, 0x42);
-    // Preparing and ingesting the protected Git-backed archive above can take
-    // longer than one authorization window under full-suite contention.  The
-    // held run is a separate broker operation, so freeze its timestamps when
-    // that operation actually begins instead of reusing the earlier run time.
+    // Archive preparation may outlive one authorization window under suite contention;
+    // freeze this independent broker operation when it begins.
     const heldOperationAt = new Date().toISOString();
     const heldReservation = buildReservation({
       artifactKind: "tool_e2e_gate",
@@ -8221,6 +8220,7 @@ test("protected external lifecycle verifies frozen Ed25519 authority and survive
     await reopenedDatabase?.close();
     await writeStore?.close();
     if (!databaseClosed) await database.close();
+    if (evidenceRepositoryRoot) fs.rmSync(evidenceRepositoryRoot, { recursive: true, force: true });
     fs.rmSync(temp.directory, { recursive: true, force: true });
   }
 });

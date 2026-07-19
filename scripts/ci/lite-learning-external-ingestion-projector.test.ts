@@ -628,6 +628,7 @@ test("D2 external-ingestion projector reconstructs only a real same-snapshot cur
       });
     });
   } finally {
-    rmSync(base.rootDirectory, { recursive: true, force: true });
+    for (const directory of [base.evidenceRepositoryPath, base.rootDirectory])
+      rmSync(directory, { recursive: true, force: true });
   }
 });
