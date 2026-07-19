@@ -145,10 +145,10 @@ test("workspace @aionis/create default ref matches release-train.json", { skip: 
   );
 });
 
-test("release docs tag Runtime and explicitly hold the already-frozen installer", () => {
+test("release docs preserve the Runtime tag, frozen installer, and candidate status", () => {
   const train = releaseTrain();
   const runtimeTagCommand = `git tag -a ${train.runtime.source_tag}`;
-  const frozenInstallerMarker = `Do not republish \`${train.packages.create.name}@${train.packages.create.version}\``;
+  if (train.status === "candidate") assert.match(read("RELEASE_NOTES.md"), /gh release create[\s\S]*?--verify-tag[\s\S]*?--prerelease[\s\S]*?--latest=false[\s\S]*?--notes-file/, "candidate GitHub Release must be a verified non-latest prerelease");
 
   for (const file of ["RELEASE_NOTES.md", "docs/AIONIS_RELEASES.md"]) {
     const source = read(file);
@@ -159,26 +159,11 @@ test("release docs tag Runtime and explicitly hold the already-frozen installer"
       source.includes(`${runtimeTagCommand} "$MAIN_COMMIT"`),
       `${file} must tag the verified origin/main commit explicitly`,
     );
-    assert.ok(source.includes(frozenInstallerMarker), `${file} must explicitly hold the frozen Create package`);
+    assert.ok(source.includes(`Do not republish \`${train.packages.create.name}@${train.packages.create.version}\``), `${file} must explicitly hold the frozen Create package`);
     assert.doesNotMatch(
       source,
       /cd \/Volumes\/ziel\/new\.aionis\/aionis-create[\s\S]{0,160}npm publish/,
       `${file} must not instruct operators to republish the frozen Create package`,
     );
-  }
-});
-
-test("candidate GitHub release remains a verified non-latest prerelease", () => {
-  const train = releaseTrain();
-  const releaseNotes = read("RELEASE_NOTES.md");
-  const releaseCommand = releaseNotes.match(
-    /gh release create[^\n]*(?:\n\s+--[^\n]+)+/,
-  )?.[0];
-
-  assert.ok(releaseCommand, "RELEASE_NOTES.md must include a non-interactive GitHub Release command");
-  assert.match(releaseCommand, /\s--verify-tag(?:\s|\\)/, "GitHub Release must require the pushed tag");
-  if (train.status === "candidate") {
-    assert.match(releaseCommand, /\s--prerelease(?:\s|\\)/, "candidate must publish as a prerelease");
-    assert.match(releaseCommand, /\s--latest=false(?:\s|\\)/, "candidate must not become latest");
   }
 });
