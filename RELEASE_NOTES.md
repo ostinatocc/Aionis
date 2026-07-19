@@ -164,6 +164,9 @@ bash scripts/ci/docker-release-smoke.sh "ghcr.io/ostinatocc/aionis@${DIGEST}"
 # Create the GitHub release only after the digest-pinned image smoke passes.
 gh release create v0.3.10 \
   --repo ostinatocc/Aionis \
+  --verify-tag \
+  --prerelease \
+  --latest=false \
   --title "Aionis v0.3.10 Evidence Authority and Runtime Convergence Candidate" \
   --notes-file docs/releases/v0.3.10.md
 ```

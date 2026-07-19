@@ -167,3 +167,18 @@ test("release docs tag Runtime and explicitly hold the already-frozen installer"
     );
   }
 });
+
+test("candidate GitHub release remains a verified non-latest prerelease", () => {
+  const train = releaseTrain();
+  const releaseNotes = read("RELEASE_NOTES.md");
+  const releaseCommand = releaseNotes.match(
+    /gh release create[^\n]*(?:\n\s+--[^\n]+)+/,
+  )?.[0];
+
+  assert.ok(releaseCommand, "RELEASE_NOTES.md must include a non-interactive GitHub Release command");
+  assert.match(releaseCommand, /\s--verify-tag(?:\s|\\)/, "GitHub Release must require the pushed tag");
+  if (train.status === "candidate") {
+    assert.match(releaseCommand, /\s--prerelease(?:\s|\\)/, "candidate must publish as a prerelease");
+    assert.match(releaseCommand, /\s--latest=false(?:\s|\\)/, "candidate must not become latest");
+  }
+});
