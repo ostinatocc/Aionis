@@ -598,10 +598,23 @@ test("concurrent exact provision calls serialize before CSPRNG and return one re
         now: () => "2026-07-14T08:02:00.000Z",
       },
     });
-    const [left, right] = await Promise.all([
+    const outcomes = await Promise.allSettled([
       provisioner.provision(provisionInput()),
       provisioner.provision(provisionInput()),
     ]);
+    for (const outcome of outcomes) {
+      assert.equal(
+        outcome.status,
+        "fulfilled",
+        outcome.status === "rejected" && outcome.reason instanceof Error
+          ? outcome.reason.stack
+          : outcome.status === "rejected" ? String(outcome.reason) : undefined,
+      );
+    }
+    const [left, right] = outcomes.map((outcome) => {
+      if (outcome.status !== "fulfilled") throw outcome.reason;
+      return outcome.value;
+    });
     assert.equal(entropyCalls, 1);
     assert.equal(left.receiptJson, right.receiptJson);
     assert.deepEqual([left.replayed, right.replayed].sort(), [false, true]);
@@ -616,9 +629,10 @@ test("concurrent exact provision calls serialize before CSPRNG and return one re
 test("commit faults roll revision, registrations, bindings, and receipt back together", async () => {
   const temp = tempDatabase("atomic-rollback");
   let failCommit = false;
-  const runtime = await openRuntime(temp.path, (phase) => {
+  const faultInjector: LiteRuntimeDatabaseFaultInjector = (phase) => {
     if (failCommit && phase === "before_commit") throw new Error("injected-provision-before-commit");
-  });
+  };
+  const runtime = await openRuntime(temp.path, faultInjector);
   let entropyCalls = 0;
   try {
     const provisioner = createLiteLearningExperimentProvisioner({
@@ -626,6 +640,7 @@ test("commit faults roll revision, registrations, bindings, and receipt back tog
       writeStore: runtime.writeStore,
       dependencies: {
         registry: passedRegistry(),
+        authorityFaultInjector: faultInjector,
         randomBytes: () => {
           entropyCalls += 1;
           return Uint8Array.from({ length: 32 }, (_, index) => index + entropyCalls);

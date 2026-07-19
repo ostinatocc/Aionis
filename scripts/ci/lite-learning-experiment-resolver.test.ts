@@ -46,6 +46,8 @@ import {
 import { createLiteRuntimeDatabase } from "../../src/store/lite-runtime-database.ts";
 import { createLiteWriteStoreFromDatabase } from "../../src/store/lite-write-store.ts";
 import type { AuthPrincipal } from "../../src/util/auth.ts";
+import { openLearningFixedExperimentAuthoritySession } from
+  "./support/learning-fixed-experiment-authority.ts";
 
 function sha256(value: string): string {
   return createHash("sha256").update(value).digest("hex");
@@ -127,7 +129,8 @@ function externalExecutionPolicy(databaseInstanceId: string) {
 }
 
 function tempDatabase() {
-  const directory = fs.mkdtempSync(path.join(os.tmpdir(), "aionis-learning-resolver-"));
+  const directory = fs.mkdtempSync(path.join(os.homedir(), "aionis-learning-resolver-"));
+  fs.chmodSync(directory, 0o700);
   return { directory, path: path.join(directory, "runtime.sqlite") };
 }
 
@@ -304,34 +307,39 @@ test("immutable experiment resolver replays diagnostic assignment without exposi
       ...bindingBase,
       binding_sha256: learningCollectionPrincipalBindingDigest(bindingBase),
     } satisfies LiteLearningAuthorityRow;
-    await database.transaction.run(async () => {
-      await ledger.insertPolicyVersion({
-        tenant_id: "tenant-resolver",
-        policy_kind: "candidate",
-        policy_id: candidate.policy_id,
-        policy_version: candidate.policy_version,
-        policy_config_sha256: candidateConfig.sha256,
-        policy_config_json: candidateConfig.json,
-        implementation_contract_sha256: candidate.implementation_contract_sha256,
-        prospective_calibration_sha256: null,
-        prospective_calibration_json: null,
-        created_at: "2026-07-14T00:00:00.000Z",
+    const fixedAuthoritySession = openLearningFixedExperimentAuthoritySession(temp.path);
+    try {
+      await fixedAuthoritySession.withTransaction(async (authority) => {
+        await authority.insertPolicyVersion({
+          tenant_id: "tenant-resolver",
+          policy_kind: "candidate",
+          policy_id: candidate.policy_id,
+          policy_version: candidate.policy_version,
+          policy_config_sha256: candidateConfig.sha256,
+          policy_config_json: candidateConfig.json,
+          implementation_contract_sha256: candidate.implementation_contract_sha256,
+          prospective_calibration_sha256: null,
+          prospective_calibration_json: null,
+          created_at: "2026-07-14T00:00:00.000Z",
+        });
+        await authority.insertPolicyVersion({
+          tenant_id: "tenant-resolver",
+          policy_kind: "gate",
+          policy_id: gate.policy_id,
+          policy_version: gate.policy_version,
+          policy_config_sha256: gateConfig.sha256,
+          policy_config_json: gateConfig.json,
+          implementation_contract_sha256: gate.implementation_contract_sha256,
+          prospective_calibration_sha256: gateCalibration.sha256,
+          prospective_calibration_json: gateCalibration.json,
+          created_at: "2026-07-14T00:00:00.000Z",
+        });
+        await authority.insertCollectionPrincipalBinding(binding);
+        await authority.insertExperimentRevision(revision);
       });
-      await ledger.insertPolicyVersion({
-        tenant_id: "tenant-resolver",
-        policy_kind: "gate",
-        policy_id: gate.policy_id,
-        policy_version: gate.policy_version,
-        policy_config_sha256: gateConfig.sha256,
-        policy_config_json: gateConfig.json,
-        implementation_contract_sha256: gate.implementation_contract_sha256,
-        prospective_calibration_sha256: gateCalibration.sha256,
-        prospective_calibration_json: gateCalibration.json,
-        created_at: "2026-07-14T00:00:00.000Z",
-      });
-      await ledger.insertCollectionPrincipalBinding(binding);
-      await ledger.insertExperimentRevision(revision);
-    });
+    } finally {
+      await fixedAuthoritySession.close();
+    }
 
     const resolverRegistry: LearningExperimentResolverRegistry = {
       resolveCandidatePolicy: () => candidate,

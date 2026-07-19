@@ -57,10 +57,20 @@ import {
   learningRandomizationPairIdentityDigest,
   learningRandomizationPairManifestDigest,
   learningRandomizationPairRecordDigest,
-  type LiteLearningConfirmatoryPreTreatmentLineageSnapshot,
   type LiteLearningAuthorityRow,
   type LiteLearningEpisodeLedgerAccess,
 } from "../../src/store/lite-learning-episode-ledger.js";
+import {
+  createLiteLearningFixedExperimentAuthorityAccess,
+  type LiteLearningConfirmatoryPreTreatmentLineageSnapshot,
+  type LiteLearningFixedExperimentAuthorityAccess,
+} from "../../packages/aionis-learning-authority/src/store/lite-learning-fixed-experiment-authority.js";
+import {
+  closeLiteRuntimeProtectedAuthorityDatabasePin,
+  openLiteRuntimeProtectedAuthorityDatabase,
+  pinLiteRuntimeProtectedAuthorityDatabase,
+  runLiteRuntimeProtectedAuthorityTransaction,
+} from "../../packages/aionis-learning-authority/src/store/lite-runtime-protected-authority-database.js";
 import {
   buildApplicabilityManifestFromDatabase,
   buildConfirmatoryApplicabilityCohort,
@@ -68,7 +78,13 @@ import {
 import {
   createLiteRuntimeDatabase,
   type LiteRuntimeDatabase,
+  type LiteRuntimeDatabaseFaultInjector,
 } from "../../src/store/lite-runtime-database.js";
+import {
+  appendLiteRuntimeWriteOperationAuthorityInCurrentTransaction,
+} from "../../src/store/lite-runtime-applied-authority.js";
+import type { SqliteTransactionRunOptions } from
+  "../../src/store/sqlite-transaction-runner.js";
 import {
   LiteTenantScopeAuthorityError,
   assertLiteTenantScopeEncodingAnchor,
@@ -88,9 +104,9 @@ export const LEARNING_EXPERIMENT_PROVISION_OPERATION_KIND =
 export const LEARNING_EXPERIMENT_PROVISION_AUTHORITY_SCOPE =
   "learning-experiment-authority-v1" as const;
 
-const CONFIRMATORY_PROVISION_BEGIN_BUSY_RETRY = {
+const PROTECTED_PROVISION_BEGIN_BUSY_RETRY = {
   // Runtime connections already wait five seconds inside each SQLite BEGIN.
-  // Six attempts keep confirmatory provisioning bounded to roughly 30 seconds
+  // Six attempts keep protected provisioning bounded to roughly 30 seconds
   // without changing the connection-wide busy_timeout for unrelated writes.
   maxAttempts: 6,
   delayMs: 25,
@@ -174,6 +190,12 @@ export type LearningExperimentProvisioningDependencies = Readonly<{
   randomBytes?: (size: number) => Uint8Array;
   now?: () => string;
   defaultTenantId?: string;
+  /** @internal CI seam for crash/lock proofs on the protected writer itself. */
+  authorityFaultInjector?: LiteRuntimeDatabaseFaultInjector;
+  /** @internal CI seam emitted immediately before protected BEGIN IMMEDIATE. */
+  onAuthorityTransactionAttempt?: () => void;
+  /** @internal CI seam used to compress a real SQLite busy window. */
+  authorityBusyTimeoutMs?: number;
 }>;
 
 export type LearningExperimentProvisionResult = Readonly<{
@@ -953,14 +975,135 @@ export type LiteLearningExperimentProvisioner = Readonly<{
   }): Promise<LearningExperimentApplicabilityManifestV1>;
 }>;
 
+export type LiteLearningFixedExperimentAuthorityTransactionRunner = Readonly<{
+  run<T>(
+    fn: (context: Readonly<{
+      authority: LiteLearningFixedExperimentAuthorityAccess;
+      database: LiteRuntimeDatabase;
+      writeStore: LiteLearningProvisionOperationStore;
+    }>) => Promise<T>,
+    options?: SqliteTransactionRunOptions,
+  ): Promise<T>;
+}>;
+
+type LiteLearningProvisionOperationStore = Pick<
+  LiteWriteStore,
+  "getWriteOperation" | "insertWriteOperation"
+>;
+
+function protectedProvisionOperationStore(
+  database: LiteRuntimeDatabase,
+): LiteLearningProvisionOperationStore {
+  const { db, transaction } = database;
+  return Object.freeze({
+    async getWriteOperation(args) {
+      return (db.prepare(
+        `SELECT tenant_id, scope, operation_kind, operation_id,
+                request_sha256, receipt_json, commit_id, created_at
+         FROM lite_runtime_write_operations
+         WHERE tenant_id = ? AND scope = ? AND operation_kind = ? AND operation_id = ?`,
+      ).get(
+        args.tenantId,
+        args.scope,
+        args.operationKind,
+        args.operationId,
+      ) as LiteWriteOperationRow | undefined) ?? null;
+    },
+
+    async insertWriteOperation(args) {
+      return appendLiteRuntimeWriteOperationAuthorityInCurrentTransaction({
+        db,
+        transaction,
+        tenantId: args.tenantId,
+        scope: args.scope,
+        operationKind: args.operationKind,
+        operationId: args.operationId,
+        requestSha256: args.requestSha256,
+        receiptJson: args.receiptJson,
+        commitId: args.commitId ?? null,
+        createdAt: args.createdAt ?? new Date().toISOString(),
+        actor: args.authorityActor,
+      }).row;
+    },
+  });
+}
+
+function protectedFixedExperimentAuthorityRunner(
+  databasePath: string,
+  testHooks: Readonly<{
+    faultInjector?: LiteRuntimeDatabaseFaultInjector;
+    onTransactionAttempt?: () => void;
+    busyTimeoutMs?: number;
+  }> = {},
+): LiteLearningFixedExperimentAuthorityTransactionRunner {
+  return Object.freeze({
+    async run<T>(
+      fn: (context: Readonly<{
+        authority: LiteLearningFixedExperimentAuthorityAccess;
+        database: LiteRuntimeDatabase;
+        writeStore: LiteLearningProvisionOperationStore;
+      }>) => Promise<T>,
+      options: SqliteTransactionRunOptions = {},
+    ): Promise<T> {
+      const pin = pinLiteRuntimeProtectedAuthorityDatabase(databasePath);
+      let database: LiteRuntimeDatabase | null = null;
+      try {
+        database = openLiteRuntimeProtectedAuthorityDatabase(pin, {
+          faultInjector: testHooks.faultInjector,
+        });
+        if (testHooks.busyTimeoutMs !== undefined) {
+          if (!Number.isInteger(testHooks.busyTimeoutMs)
+            || testHooks.busyTimeoutMs < 1
+            || testHooks.busyTimeoutMs > 5_000) {
+            throw new Error("authorityBusyTimeoutMs must be an integer between 1 and 5000");
+          }
+          database.db.exec(`PRAGMA busy_timeout = ${testHooks.busyTimeoutMs}`);
+        }
+        const protectedDatabase = database;
+        const protectedWriteStore = protectedProvisionOperationStore(protectedDatabase);
+        testHooks.onTransactionAttempt?.();
+        return await runLiteRuntimeProtectedAuthorityTransaction(
+          pin,
+          protectedDatabase,
+          async (capability) => await fn({
+            authority: createLiteLearningFixedExperimentAuthorityAccess({
+              database: protectedDatabase,
+              capability,
+            }),
+            database: protectedDatabase,
+            writeStore: protectedWriteStore,
+          }),
+          options,
+        );
+      } finally {
+        try {
+          // The one-shot operation access owns no ANN/background worker. Its
+          // only mutation already completed inside the protected transaction,
+          // so the protected connection can close without another write lock.
+          await database?.close();
+        } finally {
+          closeLiteRuntimeProtectedAuthorityDatabasePin(pin);
+        }
+      }
+    },
+  });
+}
+
 /** @internal Runtime composition/test factory; operator-facing code uses the production wrapper below. */
 export function createLiteLearningExperimentProvisioner(args: {
   database: LiteRuntimeDatabase;
-  writeStore: Pick<LiteWriteStore, "getWriteOperation" | "insertWriteOperation" | "withTx">;
+  writeStore: Pick<LiteWriteStore, "getWriteOperation">;
   ledger?: LiteLearningEpisodeLedgerAccess;
+  authorityTransactionRunner?: LiteLearningFixedExperimentAuthorityTransactionRunner;
   dependencies?: LearningExperimentProvisioningDependencies;
 }): LiteLearningExperimentProvisioner {
   const ledger = args.ledger ?? createLiteLearningEpisodeLedgerAccess(args.database);
+  const authorityTransactionRunner = args.authorityTransactionRunner
+    ?? protectedFixedExperimentAuthorityRunner(args.database.path, {
+      faultInjector: args.dependencies?.authorityFaultInjector,
+      onTransactionAttempt: args.dependencies?.onAuthorityTransactionAttempt,
+      busyTimeoutMs: args.dependencies?.authorityBusyTimeoutMs,
+    });
   const registry = args.dependencies?.registry ?? PRODUCTION_LEARNING_EXPERIMENT_PROVISIONING_REGISTRY;
   const randomBytes = args.dependencies?.randomBytes ?? operatingSystemRandomBytes;
   const now = args.dependencies?.now ?? (() => new Date().toISOString());
@@ -1045,11 +1188,15 @@ export function createLiteLearningExperimentProvisioner(args: {
         );
       }
 
-      return await args.writeStore.withTx(async () => {
+      return await authorityTransactionRunner.run(async ({
+        authority: fixedAuthority,
+        database: authorityDatabase,
+        writeStore: authorityWriteStore,
+      }) => {
         if (defaultTenantId !== null) {
-          ensureTenantScopeAuthority(args.database, defaultTenantId);
+          ensureTenantScopeAuthority(authorityDatabase, defaultTenantId);
         }
-        const raced = await args.writeStore.getWriteOperation(operationKey);
+        const raced = await authorityWriteStore.getWriteOperation(operationKey);
         if (raced) {
           return exactReplay({
             operation: raced,
@@ -1065,10 +1212,10 @@ export function createLiteLearningExperimentProvisioner(args: {
             taskFamily: prepared.taskFamily,
             servingPhase: prepared.experiment.serving_phase,
             databaseInstanceId,
-            db: args.database.db,
+            db: authorityDatabase.db,
           });
         }
-        const existingRevision = args.database.db.prepare(
+        const existingRevision = authorityDatabase.db.prepare(
           `SELECT 1 AS present FROM lite_learning_experiment_revisions
            WHERE tenant_id = ? AND experiment_id = ? AND experiment_revision = ?`,
         ).get(
@@ -1086,7 +1233,7 @@ export function createLiteLearningExperimentProvisioner(args: {
 
         const confirmatoryLineage = derivedConfirmatory === null
           ? null
-          : await ledger.scanConfirmatoryPreTreatmentLineage({
+          : await fixedAuthority.scanConfirmatoryPreTreatmentLineage({
               tenantId: prepared.tenantId,
               experimentId: prepared.experimentId,
               experimentRevision: prepared.experimentRevision,
@@ -1095,7 +1242,7 @@ export function createLiteLearningExperimentProvisioner(args: {
         const createdAt = canonicalUtcMillis(now());
 
         const candidateCreatedAt = existingCreatedAt(
-          args.database.db,
+          authorityDatabase.db,
           "lite_learning_policy_versions",
           {
             tenant_id: prepared.tenantId,
@@ -1104,7 +1251,7 @@ export function createLiteLearningExperimentProvisioner(args: {
             policy_version: authority.candidate.policy_version,
           },
         ) ?? createdAt;
-        await ledger.insertPolicyVersion(authorityRow("lite_learning_policy_versions", {
+        await fixedAuthority.insertPolicyVersion(authorityRow("lite_learning_policy_versions", {
           tenant_id: prepared.tenantId,
           policy_kind: "candidate",
           policy_id: authority.candidate.policy_id,
@@ -1118,7 +1265,7 @@ export function createLiteLearningExperimentProvisioner(args: {
         }));
 
         const gateCreatedAt = existingCreatedAt(
-          args.database.db,
+          authorityDatabase.db,
           "lite_learning_policy_versions",
           {
             tenant_id: prepared.tenantId,
@@ -1127,7 +1274,7 @@ export function createLiteLearningExperimentProvisioner(args: {
             policy_version: authority.gate.policy_version,
           },
         ) ?? createdAt;
-        await ledger.insertPolicyVersion(authorityRow("lite_learning_policy_versions", {
+        await fixedAuthority.insertPolicyVersion(authorityRow("lite_learning_policy_versions", {
           tenant_id: prepared.tenantId,
           policy_kind: "gate",
           policy_id: authority.gate.policy_id,
@@ -1150,7 +1297,7 @@ export function createLiteLearningExperimentProvisioner(args: {
             );
           }
           const bindingCreatedAt = existingCreatedAt(
-            args.database.db,
+            authorityDatabase.db,
             "lite_learning_collection_principal_bindings",
             {
               tenant_id: prepared.tenantId,
@@ -1168,7 +1315,7 @@ export function createLiteLearningExperimentProvisioner(args: {
             binding_sha256: "0".repeat(64),
             created_at: bindingCreatedAt,
           });
-          await ledger.insertCollectionPrincipalBinding({
+          await fixedAuthority.insertCollectionPrincipalBinding({
             ...bindingBase,
             binding_sha256: learningCollectionPrincipalBindingDigest(bindingBase),
           });
@@ -1182,7 +1329,7 @@ export function createLiteLearningExperimentProvisioner(args: {
           if (confirmatoryLineage === null) {
             throw new Error("learning_experiment_confirmatory_lineage_missing");
           }
-          const spentAttempt = args.database.db.prepare(
+          const spentAttempt = authorityDatabase.db.prepare(
             `SELECT confirmatory_attempt_id
              FROM lite_learning_confirmatory_attempts
              WHERE tenant_id = ? AND task_family = ?
@@ -1318,7 +1465,7 @@ export function createLiteLearningExperimentProvisioner(args: {
             attempt_sha256: learningConfirmatoryAttemptDigest(attemptBase),
           };
           confirmatoryLeases = buildConfirmatoryLeaseRows({
-            db: args.database.db,
+            db: authorityDatabase.db,
             tenantId: prepared.tenantId,
             experimentId: prepared.experimentId,
             experimentRevision: prepared.experimentRevision,
@@ -1406,9 +1553,9 @@ export function createLiteLearningExperimentProvisioner(args: {
           created_at: createdAt,
         });
         if (confirmatoryAttempt === null) {
-          await ledger.insertExperimentRevision(revision);
+          await fixedAuthority.insertExperimentRevision(revision);
         } else {
-          await ledger.provisionConfirmatorySet({
+          await fixedAuthority.provisionConfirmatorySet({
             revision,
             attempt: confirmatoryAttempt,
             pairs: confirmatoryPairs,
@@ -1418,7 +1565,7 @@ export function createLiteLearningExperimentProvisioner(args: {
         await ledger.verifyIntegrity();
 
         const manifest = buildApplicabilityManifestFromDatabase({
-          db: args.database.db,
+          db: authorityDatabase.db,
           tenantId: prepared.tenantId,
           experimentId: prepared.experimentId,
           experimentRevision: prepared.experimentRevision,
@@ -1504,7 +1651,7 @@ export function createLiteLearningExperimentProvisioner(args: {
               },
         );
         const receiptJson = stableStringify(receipt);
-        await args.writeStore.insertWriteOperation({
+        await authorityWriteStore.insertWriteOperation({
           ...operationKey,
           requestSha256,
           receiptJson,
@@ -1517,9 +1664,7 @@ export function createLiteLearningExperimentProvisioner(args: {
           applicabilityManifestJson: stableStringify(manifest),
           replayed: false,
         };
-      }, derivedConfirmatory === null
-        ? undefined
-        : { beginBusyRetry: CONFIRMATORY_PROVISION_BEGIN_BUSY_RETRY });
+      }, { beginBusyRetry: PROTECTED_PROVISION_BEGIN_BUSY_RETRY });
     },
 
     async regenerateApplicabilityManifest(input) {

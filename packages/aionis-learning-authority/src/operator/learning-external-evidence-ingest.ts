@@ -18,7 +18,7 @@ import stableStringify from "fast-json-stable-stringify";
 import {
   LearningExternalEvidenceArtifactKindSchema,
   type LearningExternalEvidenceArtifactKind,
-} from "../../../../src/memory/learning-external-evidence.js";
+} from "../memory/learning-external-evidence.js";
 import {
   LearningExternalEvidenceReceiptWriterError,
   publishLearningExternalEvidenceReceipt,

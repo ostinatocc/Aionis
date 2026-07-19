@@ -18,6 +18,10 @@ import {
   type LiteRuntimeProtectedAuthorityDatabasePin,
   type LiteRuntimeProtectedAuthorityTransactionCapability,
 } from "../../packages/aionis-learning-authority/src/store/lite-runtime-protected-authority-database.ts";
+import {
+  createLiteLearningFixedExperimentAuthorityAccess,
+  type LiteLearningFixedExperimentAuthorityAccess,
+} from "../../packages/aionis-learning-authority/src/store/lite-learning-fixed-experiment-authority.ts";
 import { createSqliteDatabase } from "../../src/store/sqlite.ts";
 
 const SUPPORTED_PLATFORM = process.platform === "darwin" || process.platform === "linux";
@@ -272,6 +276,49 @@ test("protected transaction capability is opaque and bound to one database trans
           ),
         );
       },
+    );
+  } finally {
+    if (database) await database.close().catch(() => undefined);
+    closePinBestEffort(pin);
+    fs.rmSync(temp.directory, { recursive: true, force: true });
+  }
+});
+
+test("fixed experiment writer rejects forged and escaped protected transaction authority", {
+  skip: !SUPPORTED_PLATFORM,
+  timeout: 30_000,
+}, async () => {
+  const temp = tempDatabase("fixed-experiment-capability");
+  let pin: LiteRuntimeProtectedAuthorityDatabasePin | null = null;
+  let database: ReturnType<typeof openLiteRuntimeProtectedAuthorityDatabase> | null = null;
+  let escaped: LiteLearningFixedExperimentAuthorityAccess | null = null;
+  try {
+    createRealDatabase(temp.path);
+    pin = pinLiteRuntimeProtectedAuthorityDatabase(temp.path);
+    database = openLiteRuntimeProtectedAuthorityDatabase(pin);
+    const forged = Object.freeze(Object.create(null)) as
+      LiteRuntimeProtectedAuthorityTransactionCapability;
+    assert.throws(
+      () => createLiteLearningFixedExperimentAuthorityAccess({
+        database: database!,
+        capability: forged,
+      }),
+      boundaryCode("lite_runtime_protected_authority_transaction_capability_invalid"),
+    );
+
+    await runLiteRuntimeProtectedAuthorityTransaction(
+      pin,
+      database,
+      async (capability) => {
+        escaped = createLiteLearningFixedExperimentAuthorityAccess({
+          database: database!,
+          capability,
+        });
+      },
+    );
+    await assert.rejects(
+      escaped!.insertPolicyVersion({}),
+      boundaryCode("lite_runtime_protected_authority_transaction_required"),
     );
   } finally {
     if (database) await database.close().catch(() => undefined);

@@ -33,7 +33,7 @@ import {
   type LearningExternalEvidenceArtifactKind,
   type LearningExternalEvidenceStatus,
   type LearningExternalEvidenceValidatedContractSetV1,
-} from "../../src/memory/learning-external-evidence.js";
+} from "../../packages/aionis-learning-authority/src/memory/learning-external-evidence.js";
 
 type JsonObject = Record<string, unknown>;
 

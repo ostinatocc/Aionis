@@ -2,8 +2,8 @@ import {
   LearningExperimentProvisioningError,
   createLiteLearningExperimentProvisioner,
 } from "../../../tools/learning-experiments/lite-learning-experiment-provisioning.js";
-import type { SqliteTransactionRunOptions } from
-  "../../../src/store/sqlite-transaction-runner.js";
+import type { LiteRuntimeDatabaseFaultInjector } from
+  "../../../src/store/lite-runtime-database.js";
 import {
   CONFIRMATORY_DEFAULT_TENANT_ID,
   CONFIRMATORY_NOW,
@@ -51,45 +51,33 @@ process.on("message", (message: ParentCommand) => {
 });
 
 let heldBeforeCommit = false;
+const authorityFaultInjector: LiteRuntimeDatabaseFaultInjector = async (phase) => {
+  if (role !== "holder" || phase !== "before_commit" || heldBeforeCommit) return;
+  heldBeforeCommit = true;
+  process.send?.({ type: "lock_held", childIndex });
+  await releaseLockGate.promise;
+};
 const runtime = openConfirmatoryFixtureRuntime(databasePath, {
-  faultInjector: async (phase) => {
-    if (role !== "holder" || phase !== "before_commit" || heldBeforeCommit) return;
-    heldBeforeCommit = true;
-    process.send?.({ type: "lock_held", childIndex });
-    await releaseLockGate.promise;
-  },
+  faultInjector: authorityFaultInjector,
 });
-if (role === "contender") {
-  // Compress the production 5-second busy window while preserving a real
-  // SQLite BEGIN IMMEDIATE timeout. The parent holds the winner beyond this
-  // complete window, so a one-shot BEGIN deterministically fails.
-  runtime.database.db.exec("PRAGMA busy_timeout = 250");
-}
 const entropySizes: number[] = [];
 let transactionAttemptingSent = false;
-const writeStore = role === "holder"
-  ? runtime.writeStore
-  : {
-      getWriteOperation: runtime.writeStore.getWriteOperation.bind(runtime.writeStore),
-      insertWriteOperation: runtime.writeStore.insertWriteOperation.bind(runtime.writeStore),
-      async withTx<T>(
-        fn: () => Promise<T>,
-        options?: SqliteTransactionRunOptions,
-      ): Promise<T> {
-        if (!transactionAttemptingSent) {
-          transactionAttemptingSent = true;
-          process.send?.({ type: "transaction_attempting", childIndex });
-        }
-        return await runtime.writeStore.withTx(fn, options);
-      },
-    };
 const provisioner = createLiteLearningExperimentProvisioner({
   database: runtime.database,
-  writeStore,
+  writeStore: runtime.writeStore,
   dependencies: {
     registry: createConfirmatoryPassedRegistry(),
     defaultTenantId: CONFIRMATORY_DEFAULT_TENANT_ID,
     now: () => CONFIRMATORY_NOW,
+    authorityFaultInjector,
+    ...(role === "contender" ? {
+      authorityBusyTimeoutMs: 250,
+      onAuthorityTransactionAttempt: () => {
+        if (transactionAttemptingSent) return;
+        transactionAttemptingSent = true;
+        process.send?.({ type: "transaction_attempting", childIndex });
+      },
+    } : {}),
     randomBytes: (size) => {
       entropySizes.push(size);
       if (size === 32) return new Uint8Array(32).fill(0x31 + childIndex);

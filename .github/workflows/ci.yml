@@ -254,10 +254,30 @@ jobs:
       - name: Lite public smoke
         run: npm run -s lite:smoke
 
+  sandbox-shutdown-macos:
+    name: Sandbox shutdown (macOS)
+    runs-on: macos-latest
+    timeout-minutes: 15
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "24"
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Verify real sandbox shutdown
+        run: node --import tsx --test scripts/ci/lite-runtime-security-shutdown.test.ts
+
   required:
     name: Required CI gates
     if: always()
-    needs: [runtime, runtime-core, runtime-recovery, minimum-node]
+    needs: [runtime, runtime-core, runtime-recovery, minimum-node, sandbox-shutdown-macos]
     runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:
@@ -267,8 +287,10 @@ jobs:
           CORE_RESULT: ${{ needs['runtime-core'].result }}
           RECOVERY_RESULT: ${{ needs['runtime-recovery'].result }}
           MINIMUM_NODE_RESULT: ${{ needs.minimum-node.result }}
+          SANDBOX_SHUTDOWN_MACOS_RESULT: ${{ needs.sandbox-shutdown-macos.result }}
         run: |
           test "$RUNTIME_RESULT" = success
           test "$CORE_RESULT" = success
           test "$RECOVERY_RESULT" = success
           test "$MINIMUM_NODE_RESULT" = success
+          test "$SANDBOX_SHUTDOWN_MACOS_RESULT" = success

@@ -53,7 +53,7 @@ import {
   learningExternalPreterminalPayloadSetDigest,
   learningExternalRunnerOutputManifestDigest,
   learningExternalTerminalRunManifestDigest,
-} from "../../../src/memory/learning-external-evidence.js";
+} from "../../../packages/aionis-learning-authority/src/memory/learning-external-evidence.js";
 import {
   LearningExperimentExternalInputSetV1Schema,
   learningExperimentApplicabilityManifestDigest,
@@ -70,7 +70,7 @@ import {
 } from "../../../src/store/lite-learning-episode-ledger.js";
 import {
   resolveLiteLearningExternalNormalLifecycleSnapshot,
-} from "../../../src/store/lite-learning-external-authority.js";
+} from "../../../packages/aionis-learning-authority/src/store/lite-learning-external-lifecycle-reader.js";
 import {
   createLiteLearningExperimentProvisioner,
 } from "../../../tools/learning-experiments/lite-learning-experiment-provisioning.js";
@@ -78,6 +78,10 @@ import type { LiteRuntimeDatabase } from "../../../src/store/lite-runtime-databa
 import type {
   LiteLearningExternalEvidenceServiceInput,
 } from "../../../packages/aionis-learning-authority/src/store/lite-learning-external-evidence-service.js";
+import {
+  openLearningExternalRunAuthoritySession,
+  type LearningExternalRunAuthoritySession,
+} from "./learning-external-run-authority.js";
 import {
   inspectLiteRuntimeSchema,
   LITE_RUNTIME_WRITE_SCHEMA_VERSION,
@@ -276,12 +280,15 @@ export async function createLearningExternalEvidenceIngestFixture(): Promise<
   let runtimeClosed = false;
   let succeeded = false;
   let evidenceRepositoryRoot: string | null = null;
+  let externalRunAuthoritySession: LearningExternalRunAuthoritySession | null = null;
   try {
     evidenceRepositoryRoot = mkdtempSync(
       join(realpathSync.native(tmpdir()), "aionis-external-evidence-repository-"));
     chmodSync(evidenceRepositoryRoot, 0o700);
     const evidenceRepositoryPath = realpathSync.native(evidenceRepositoryRoot);
     const ledger = createLiteLearningEpisodeLedgerAccess(runtime.database);
+    externalRunAuthoritySession = openLearningExternalRunAuthoritySession(databasePath);
+    const externalRunAuthority = externalRunAuthoritySession.authority;
     const databaseInstanceId = await ledger.databaseInstanceId();
     const brokerKeys = generateKeyPairSync("ed25519");
     const launcherKeys = generateKeyPairSync("ed25519");
@@ -580,12 +587,10 @@ export async function createLearningExternalEvidenceIngestFixture(): Promise<
       authorized_at: operationAt,
       authorization_expires_at: addSeconds(operationAt, 60),
     }, brokerKeys.privateKey);
-    await runtime.database.transaction.run(async () => {
-      await ledger.reserveExternalRun({
-        reservation,
-        runnerTicket,
-        authorization: reservationAuthorization,
-      });
+    await externalRunAuthority.reserveExternalRun({
+      reservation,
+      runnerTicket,
+      authorization: reservationAuthorization,
     });
 
     const consumptionBase = authorityRow("lite_learning_external_ticket_consumptions", {
@@ -633,12 +638,10 @@ export async function createLearningExternalEvidenceIngestFixture(): Promise<
       authorized_at: operationAt,
       authorization_expires_at: addSeconds(operationAt, 60),
     }, brokerKeys.privateKey);
-    await runtime.database.transaction.run(async () => {
-      await ledger.consumeExternalTicket({
-        consumption,
-        runnerTicket,
-        authorization: consumptionAuthorization,
-      });
+    await externalRunAuthority.consumeExternalTicket({
+      consumption,
+      runnerTicket,
+      authorization: consumptionAuthorization,
     });
 
     const claimBody = {
@@ -670,9 +673,7 @@ export async function createLearningExternalEvidenceIngestFixture(): Promise<
       claimed_at: operationAt,
     };
     const claimReceipt = signReceipt(claimBody, brokerKeys.privateKey);
-    await runtime.database.transaction.run(async () => {
-      await ledger.claimExternalRun({ receipt: claimReceipt });
-    });
+    await externalRunAuthority.claimExternalRun({ receipt: claimReceipt });
 
     const launcherBody = {
       contract_version: "aionis_learning_external_launcher_spawn_receipt_v1" as const,
@@ -730,9 +731,7 @@ export async function createLearningExternalEvidenceIngestFixture(): Promise<
       bound_at: operationAt,
     };
     const bindingReceipt = signReceipt(bindingBody, brokerKeys.privateKey);
-    await runtime.database.transaction.run(async () => {
-      await ledger.bindExternalSupervisor({ receipt: bindingReceipt });
-    });
+    await externalRunAuthority.bindExternalSupervisor({ receipt: bindingReceipt });
 
     const sourceBundleBytes = Buffer.from("source-bundle:external-evidence-concurrency", "utf8");
     const sourceBundleSha256 = sha256(sourceBundleBytes);
@@ -907,9 +906,7 @@ export async function createLearningExternalEvidenceIngestFixture(): Promise<
       ...brokerAuthority,
       terminated_at: operationAt,
     }, brokerKeys.privateKey);
-    await runtime.database.transaction.run(async () => {
-      await ledger.terminateExternalSession({ receipt: terminationReceipt });
-    });
+    await externalRunAuthority.terminateExternalSession({ receipt: terminationReceipt });
 
     const lifecycle = resolveLiteLearningExternalNormalLifecycleSnapshot(
       runtime.database.db,
@@ -1199,6 +1196,8 @@ export async function createLearningExternalEvidenceIngestFixture(): Promise<
     }
     await ledger.verifyIntegrity();
     assertCurrentDatabase(runtime.database);
+    await externalRunAuthoritySession.close();
+    externalRunAuthoritySession = null;
     runtime.database.db.exec("PRAGMA wal_checkpoint(TRUNCATE)");
     await runtime.close();
     runtimeClosed = true;
@@ -1226,7 +1225,12 @@ export async function createLearningExternalEvidenceIngestFixture(): Promise<
         | "termination_hold_no_binding"
         | "termination_hold_with_binding";
     }>): Promise<LearningExternalProjectorToolBranchResult> => {
+      const branchAuthoritySession = openLearningExternalRunAuthoritySession(
+        args.database.path,
+      );
+      try {
       const branchLedger = createLiteLearningEpisodeLedgerAccess(args.database);
+      const branchExternalRunAuthority = branchAuthoritySession.authority;
       if (await branchLedger.databaseInstanceId() !== databaseInstanceId) {
         throw new Error("projector tool branch fixture database identity mismatch");
       }
@@ -1323,12 +1327,10 @@ export async function createLearningExternalEvidenceIngestFixture(): Promise<
         authorized_at: operationAt,
         authorization_expires_at: addSeconds(operationAt, 60),
       }, brokerKeys.privateKey);
-      await args.database.transaction.run(async () => {
-        await branchLedger.reserveExternalRun({
-          reservation,
-          runnerTicket,
-          authorization: reservationAuthorization,
-        });
+      await branchExternalRunAuthority.reserveExternalRun({
+        reservation,
+        runnerTicket,
+        authorization: reservationAuthorization,
       });
 
       const consumptionBase = authorityRow("lite_learning_external_ticket_consumptions", {
@@ -1376,12 +1378,10 @@ export async function createLearningExternalEvidenceIngestFixture(): Promise<
         authorized_at: operationAt,
         authorization_expires_at: addSeconds(operationAt, 60),
       }, brokerKeys.privateKey);
-      await args.database.transaction.run(async () => {
-        await branchLedger.consumeExternalTicket({
-          consumption,
-          runnerTicket,
-          authorization: consumptionAuthorization,
-        });
+      await branchExternalRunAuthority.consumeExternalTicket({
+        consumption,
+        runnerTicket,
+        authorization: consumptionAuthorization,
       });
 
       if (args.branchKind === "preclaim_hold") {
@@ -1399,8 +1399,9 @@ export async function createLearningExternalEvidenceIngestFixture(): Promise<
           ...toolBrokerAuthority,
           held_at: operationAt,
         }, brokerKeys.privateKey);
-        const holdResult = await args.database.transaction.run(async () =>
-          await branchLedger.recordExternalPreclaimHold({ receipt: holdReceipt }));
+        const holdResult = await branchExternalRunAuthority.recordExternalPreclaimHold({
+          receipt: holdReceipt,
+        });
         return Object.freeze({
           branchKind: args.branchKind,
           recordedAt: operationAt,
@@ -1440,9 +1441,7 @@ export async function createLearningExternalEvidenceIngestFixture(): Promise<
         claimed_at: operationAt,
       };
       const claimReceipt = signReceipt(claimBody, brokerKeys.privateKey);
-      await args.database.transaction.run(async () => {
-        await branchLedger.claimExternalRun({ receipt: claimReceipt });
-      });
+      await branchExternalRunAuthority.claimExternalRun({ receipt: claimReceipt });
 
       let supervisorBindingId: string | null = null;
       if (args.branchKind === "termination_hold_with_binding") {
@@ -1504,9 +1503,7 @@ export async function createLearningExternalEvidenceIngestFixture(): Promise<
           ...toolBrokerAuthority,
           bound_at: operationAt,
         }, brokerKeys.privateKey);
-        await args.database.transaction.run(async () => {
-          await branchLedger.bindExternalSupervisor({ receipt: bindingReceipt });
-        });
+        await branchExternalRunAuthority.bindExternalSupervisor({ receipt: bindingReceipt });
       }
 
       const terminationReason = args.branchKind === "termination_hold_with_binding"
@@ -1531,8 +1528,9 @@ export async function createLearningExternalEvidenceIngestFixture(): Promise<
         ...toolBrokerAuthority,
         terminated_at: operationAt,
       }, brokerKeys.privateKey);
-      const terminationResult = await args.database.transaction.run(async () =>
-        await branchLedger.terminateExternalSession({ receipt: terminationReceipt }));
+      const terminationResult = await branchExternalRunAuthority.terminateExternalSession({
+        receipt: terminationReceipt,
+      });
       return Object.freeze({
         branchKind: args.branchKind,
         recordedAt: operationAt,
@@ -1544,6 +1542,9 @@ export async function createLearningExternalEvidenceIngestFixture(): Promise<
         sessionTerminationId: String(terminationResult.termination.termination_id),
         terminalFactSha256: String(terminationResult.termination.termination_sha256),
       });
+      } finally {
+        await branchAuthoritySession.close();
+      }
     };
     succeeded = true;
     return Object.freeze({
@@ -1557,6 +1558,13 @@ export async function createLearningExternalEvidenceIngestFixture(): Promise<
       appendRealProjectorToolBranch,
     });
   } finally {
+    if (externalRunAuthoritySession !== null) {
+      try {
+        await externalRunAuthoritySession.close();
+      } catch {
+        // Preserve the fixture construction error.
+      }
+    }
     if (!runtimeClosed) {
       try {
         await runtime.close();

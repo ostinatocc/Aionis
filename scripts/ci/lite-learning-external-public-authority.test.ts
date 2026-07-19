@@ -28,7 +28,7 @@ import {
   learningExternalRunnerOutputManifestDigest,
   learningExternalTerminalRunManifestDigest,
   type LearningExternalEvidenceStatus,
-} from "../../src/memory/learning-external-evidence.js";
+} from "../../packages/aionis-learning-authority/src/memory/learning-external-evidence.js";
 import {
   LearningExternalPublicRunAuthorityV1Schema,
   learningExternalBrokerServiceInstanceDigest,

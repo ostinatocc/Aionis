@@ -54,19 +54,37 @@ export type SandboxExecutorConfig = {
   recoveryBatchSize: number;
 };
 
+type ActiveRunTerminalCause = "timeout" | "request" | "shutdown";
+
 type ActiveRunState =
   | {
       kind: "local_process";
       child: ChildProcessWithoutNullStreams;
-      timedOut: boolean;
-      canceled: boolean;
+      terminalCause: ActiveRunTerminalCause | null;
     }
   | {
       kind: "http_remote";
       abort: AbortController;
-      timedOut: boolean;
-      canceled: boolean;
+      terminalCause: ActiveRunTerminalCause | null;
     };
+
+function stopActiveRun(state: ActiveRunState, cause: ActiveRunTerminalCause): void {
+  state.terminalCause ??= cause;
+  try {
+    if (state.kind === "local_process") state.child.kill("SIGKILL");
+    else state.abort.abort();
+  } catch {
+    // Cancellation is best-effort; shutdown still waits for terminal finalization.
+  }
+}
+
+function activeRunTerminalCause(state: ActiveRunState, run: SandboxRunRow): ActiveRunTerminalCause | null {
+  return state.terminalCause ?? (run.cancel_requested ? "request" : null);
+}
+
+function cancellationError(cause: "request" | "shutdown"): string {
+  return cause === "shutdown" ? "canceled_by_shutdown" : "canceled_by_request";
+}
 
 export class SandboxExecutor {
   private readonly queue: string[] = [];
@@ -147,20 +165,7 @@ export class SandboxExecutor {
     const id = String(runId ?? "").trim();
     const state = this.active.get(id);
     if (!state) return false;
-    state.canceled = true;
-    if (state.kind === "local_process") {
-      try {
-        state.child.kill("SIGKILL");
-      } catch {
-        // ignore best-effort cancel kill errors
-      }
-    } else {
-      try {
-        state.abort.abort();
-      } catch {
-        // ignore best-effort remote cancel errors
-      }
-    }
+    stopActiveRun(state, "request");
     return true;
   }
 
@@ -170,27 +175,21 @@ export class SandboxExecutor {
     if (this.recoveryTimer) clearInterval(this.recoveryTimer);
     for (const t of this.heartbeatTimers.values()) clearInterval(t);
     this.heartbeatTimers.clear();
-    for (const state of this.active.values()) {
-      state.canceled = true;
-      if (state.kind === "local_process") {
-        try {
-          state.child.kill("SIGKILL");
-        } catch {
-          // ignore best-effort shutdown kill errors
-        }
-      } else {
-        try {
-          state.abort.abort();
-        } catch {
-          // ignore best-effort remote shutdown errors
-        }
-      }
-    }
-    this.queue.length = 0;
+    for (const state of this.active.values()) stopActiveRun(state, "shutdown");
+    const queuedRunIds = this.queue.splice(0);
     this.queued.clear();
     const pending = [...this.inFlight];
-    this.shutdownPromise = Promise.allSettled(pending).then(() => {
+    this.shutdownPromise = Promise.allSettled([
+      ...pending,
+      this.cancelQueuedRunsBeforeShutdown(queuedRunIds),
+    ]).then((results) => {
       this.active.clear();
+      const failures = results
+        .filter((result): result is PromiseRejectedResult => result.status === "rejected")
+        .map((result) => result.reason);
+      if (failures.length > 0) {
+        throw new AggregateError(failures, "sandbox shutdown failed to durably terminalize every accepted run");
+      }
     });
     return this.shutdownPromise;
   }
@@ -238,9 +237,19 @@ export class SandboxExecutor {
         stderr: run.stderr_text ?? "",
         truncated: !!run.output_truncated,
         exitCode: run.exit_code,
-        error: run.error ?? "canceled_before_execution",
-        result: { canceled: true, stage: "pre_start" },
+        error: "canceled_before_execution",
+        result: {
+          ...(run.error ? { prior_error: run.error } : {}),
+          canceled: true,
+          canceled_by: "request",
+          stage: "pre_start",
+        },
       });
+      return;
+    }
+    const shutdownFinalization = this.shutdownBeforeActivation(run, this.config.mode);
+    if (shutdownFinalization) {
+      await shutdownFinalization;
       return;
     }
     if (this.config.mode === "local_process") {
@@ -368,6 +377,11 @@ export class SandboxExecutor {
     const { argv, file } = command;
 
     await mkdir(this.config.workdir, { recursive: true });
+    const shutdownFinalization = this.shutdownBeforeActivation(run, "local_process");
+    if (shutdownFinalization) {
+      await shutdownFinalization;
+      return;
+    }
     const args = argv.slice(1);
     let stdout = "";
     let stderr = "";
@@ -383,17 +397,12 @@ export class SandboxExecutor {
       stdio: ["pipe", "pipe", "pipe"],
     });
     child.stdin.end();
-    const state: ActiveRunState = { kind: "local_process", child, timedOut: false, canceled: false };
+    const state: ActiveRunState = { kind: "local_process", child, terminalCause: null };
     this.active.set(run.id, state);
 
     const timeoutMs = normalizeTimeoutMs(run.timeout_ms, this.config.defaultTimeoutMs);
     const timer = setTimeout(() => {
-      state.timedOut = true;
-      try {
-        child.kill("SIGKILL");
-      } catch {
-        // ignore best-effort timeout kill errors
-      }
+      stopActiveRun(state, "timeout");
     }, timeoutMs);
 
     child.stdout.on("data", (chunk: Buffer) => {
@@ -423,12 +432,13 @@ export class SandboxExecutor {
 
     let status: SandboxRunStatus = "failed";
     let error: string | null = null;
-    if (state.canceled || run.cancel_requested) {
-      status = "canceled";
-      error = "canceled_by_request";
-    } else if (state.timedOut) {
+    const terminalCause = activeRunTerminalCause(state, run);
+    if (terminalCause === "timeout") {
       status = "timeout";
       error = "execution_timeout";
+    } else if (terminalCause) {
+      status = "canceled";
+      error = cancellationError(terminalCause);
     } else if (spawnErr) {
       status = "failed";
       error = spawnErr;
@@ -452,8 +462,9 @@ export class SandboxExecutor {
         command: file,
         argv,
         signal,
-        timed_out: state.timedOut,
-        canceled: state.canceled,
+        timed_out: terminalCause === "timeout",
+        canceled: terminalCause === "request" || terminalCause === "shutdown",
+        canceled_by: terminalCause === "request" || terminalCause === "shutdown" ? terminalCause : null,
       },
     });
   }
@@ -589,6 +600,12 @@ export class SandboxExecutor {
       }
     }
 
+    const shutdownFinalization = this.shutdownBeforeActivation(run, "http_remote");
+    if (shutdownFinalization) {
+      await shutdownFinalization;
+      return;
+    }
+
     const timeoutMs = normalizeTimeoutMs(
       Math.min(run.timeout_ms, this.config.remote.timeoutMs),
       Math.min(this.config.defaultTimeoutMs, this.config.remote.timeoutMs),
@@ -597,15 +614,10 @@ export class SandboxExecutor {
     const maxRemoteResponseBytes = Math.max(this.config.stdioMaxBytes * 8, 256 * 1024);
     const startedAt = Date.now();
     const abort = new AbortController();
-    const state: ActiveRunState = { kind: "http_remote", abort, timedOut: false, canceled: false };
+    const state: ActiveRunState = { kind: "http_remote", abort, terminalCause: null };
     this.active.set(run.id, state);
     const timer = setTimeout(() => {
-      state.timedOut = true;
-      try {
-        abort.abort();
-      } catch {
-        // ignore best-effort timeout abort errors
-      }
+      stopActiveRun(state, "timeout");
     }, timeoutMs);
 
     let stdout = "";
@@ -724,12 +736,13 @@ export class SandboxExecutor {
         result: resultPayload,
       };
     } catch (err: any) {
-      if (state.canceled || run.cancel_requested) {
-        status = "canceled";
-        error = "canceled_by_request";
-      } else if (state.timedOut) {
+      const terminalCause = activeRunTerminalCause(state, run);
+      if (terminalCause === "timeout") {
         status = "timeout";
         error = "execution_timeout";
+      } else if (terminalCause) {
+        status = "canceled";
+        error = cancellationError(terminalCause);
       } else if (String(err?.message ?? err) === "response_too_large") {
         status = "failed";
         error = "remote_executor_response_too_large";
@@ -746,12 +759,15 @@ export class SandboxExecutor {
       this.active.delete(run.id);
     }
 
-    if (state.canceled || run.cancel_requested) {
-      status = "canceled";
-      error = "canceled_by_request";
-    } else if (state.timedOut) {
+    const terminalCause = activeRunTerminalCause(state, run);
+    if (terminalCause === "timeout") {
       status = "timeout";
       error = "execution_timeout";
+      result = { ...result, timed_out: true };
+    } else if (terminalCause) {
+      status = "canceled";
+      error = cancellationError(terminalCause);
+      result = { ...result, canceled: true, canceled_by: terminalCause };
     }
 
     await this.finalize(run.id, {
@@ -775,6 +791,44 @@ export class SandboxExecutor {
     return await this.store.withClient(async (access) => {
       return await access.getRunningRun({ id: runId });
     });
+  }
+
+  private shutdownBeforeActivation(
+    run: SandboxRunRow,
+    executor: SandboxExecutorConfig["mode"],
+  ): Promise<void> | null {
+    if (!this.shuttingDown) return null;
+    return this.finalizeIfRunning(run.id, {
+      status: "canceled",
+      stdout: run.stdout_text ?? "",
+      stderr: run.stderr_text ?? "",
+      truncated: !!run.output_truncated,
+      exitCode: run.exit_code,
+      error: "canceled_by_shutdown",
+      result: {
+        executor,
+        canceled: true,
+        canceled_by: "shutdown",
+        stage: "shutdown_before_activation",
+      },
+    });
+  }
+
+  private async cancelQueuedRunsBeforeShutdown(runIds: string[]): Promise<void> {
+    const failures: unknown[] = [];
+    for (const id of runIds) {
+      try {
+        await this.store.withTx(async (access) => {
+          const row = await access.cancelQueuedRun({ id, cause: "shutdown" });
+          if (row) await recordSandboxRunTelemetryRow(access, row);
+        });
+      } catch (error) {
+        failures.push(new Error(`failed to cancel queued sandbox run ${id} during shutdown`, { cause: error }));
+      }
+    }
+    if (failures.length > 0) {
+      throw new AggregateError(failures, "sandbox shutdown failed to cancel every queued run");
+    }
   }
 
   private async finalize(

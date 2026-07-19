@@ -46,8 +46,7 @@ import {
   learningEvidenceArtifactReportDigest, learningExternalRunReservationDigest,
   learningExternalTicketConsumptionDigest, learningRandomizationPairIdentityDigest,
   learningRandomizationPairManifestDigest, learningRandomizationPairRecordDigest,
-  scanConfirmatoryPreTreatmentLineage, type LiteLearningAuthorityRow, type LiteLearningSqlValue,
-  type LiteLearningConfirmatoryPreTreatmentLineageMember, type LiteLearningConfirmatoryPreTreatmentLineageMemberSnapshot, type LiteLearningConfirmatoryPreTreatmentLineageSnapshot,
+  type LiteLearningAuthorityRow, type LiteLearningSqlValue,
 } from "./lite-learning-confirmatory-authority.js";
 import { assertLiteTenantScopeEncodingAnchorSetIntegrity } from "./lite-tenant-scope-authority.js";
 import { assertLiteLearningExperimentCloseBundlesIntegrity } from "./lite-learning-experiment-close-integrity.js";
@@ -78,8 +77,6 @@ import { normalizeSqliteSchemaSql } from "./sqlite-schema-sql.js";
 import type { AuthorityReceiptResolvedKeyring } from "../util/authority-receipt-keys.js";
 import {
   assertLiteLearningExternalAuthorityIntegrity,
-  createLiteLearningExternalAuthorityAccess,
-  type LiteLearningExternalAuthorityAccess,
 } from "./lite-learning-external-authority.js";
 import {
   assertLiteMemoryCommitAuthorityIntegrity,
@@ -92,8 +89,6 @@ export {
   learningExternalRunReservationDigest, learningExternalTicketConsumptionDigest,
   learningRandomizationPairIdentityDigest, learningRandomizationPairManifestDigest,
   learningRandomizationPairRecordDigest, type LiteLearningAuthorityRow, type LiteLearningSqlValue,
-  type LiteLearningConfirmatoryPreTreatmentLineageMember, type LiteLearningConfirmatoryPreTreatmentLineageMemberSnapshot,
-  type LiteLearningConfirmatoryPreTreatmentLineageSnapshot,
 };
 export type { LiteLearningMeasurementEffectAuthorityResolution, LiteLearningMeasurementEpisodeExposure,
   LiteLearningMeasurementEpisodePairAvailable, LiteLearningMeasurementEpisodePairResolution,
@@ -596,7 +591,7 @@ function assertLiteLearningNamespaceReleaseReferences(
   }
 }
 
-type LiteLearningEpisodeLedgerIntegrityOptions = Readonly<{
+export type LiteLearningEpisodeLedgerIntegrityOptions = Readonly<{
   authorityReceiptKeyring?: AuthorityReceiptResolvedKeyring;
 }>;
 
@@ -919,17 +914,7 @@ const AUTHORITY_FACT_REPLAY_KEYS: Readonly<Record<string, readonly string[]>> = 
   lite_learning_gate_artifact_memberships: ["tenant_id", "decision_id", "artifact_id"],
 };
 
-export type LiteLearningAuthorityFactTable = keyof typeof AUTHORITY_FACT_REPLAY_KEYS;
-
-const TASK_8_PROTECTED_EXTERNAL_FACT_TABLES = new Set<LiteLearningAuthorityFactTable>([
-  "lite_learning_external_run_reservations",
-  "lite_learning_external_holdout_members",
-  "lite_learning_external_ticket_consumptions",
-  "lite_learning_external_preclaim_holds",
-  "lite_learning_external_run_claims",
-  "lite_learning_external_supervisor_bindings",
-  "lite_learning_external_session_terminations",
-]);
+type LiteLearningAuthorityFactTable = keyof typeof AUTHORITY_FACT_REPLAY_KEYS;
 
 function sha256Bytes(value: Uint8Array): string {
   return createHash("sha256").update(value).digest("hex");
@@ -4065,13 +4050,36 @@ export function replayLiteLearningEpisodeLedger(
   };
 }
 
+/**
+ * Canonical read/validation contract consumed by the private fixed-experiment
+ * authority package. It intentionally exposes no transaction runner and no
+ * INSERT/UPDATE primitive: the Runtime can verify persisted authority facts,
+ * while only the protected operator package composes their mutation surface.
+ */
+export const liteLearningFixedExperimentAuthorityCanonicalContract = Object.freeze({
+  assertCanonicalJsonDigest,
+  assertExactRowShape,
+  assertExperimentRevisionOpenForFreshWrite,
+  assertLiteLearningEpisodeLedgerIntegrity,
+  parseFrozenHostVerifierPolicy,
+  requiredInteger,
+  requiredString,
+  validateAuthorityFactReferences,
+  validateConfirmatoryAttempt,
+  validateExperimentRevision,
+  validateGateEvidenceEvaluation,
+  validateNamespaceLeaseSet,
+  validatePolicyVersion,
+  validateRandomizationManifest,
+});
+
 const liteLearningMeasurementAuthority = createLiteLearningMeasurementAuthority({
   eventColumns: LITE_LEARNING_LEDGER_REQUIRED_COLUMNS.lite_learning_episode_events,
   assertEventRowShape: (row) => { assertExactRowShape("lite_learning_episode_events", row); },
 });
 const validateEffectMeasurement = liteLearningMeasurementAuthority.validateEffectMeasurement;
 export const buildLiteMeasurementEffectEventRow = liteLearningMeasurementAuthority.buildEffectEventRow;
-export type LiteLearningEpisodeLedgerAccess = LiteLearningExternalAuthorityAccess & {
+export type LiteLearningEpisodeLedgerAccess = Readonly<{
   transactionRunner(): SqliteTransactionRunner;
   resolveFeedbackSource(args: { tenantId: string; scope: string; guideTraceId: string }): Promise<ReturnType<typeof resolveLiteLearningFeedbackSource>>;
   resolveMeasurementEpisodePair(args: {
@@ -4093,12 +4101,6 @@ export type LiteLearningEpisodeLedgerAccess = LiteLearningExternalAuthorityAcces
   }): Promise<void>;
   databaseInstanceId(): Promise<string>;
   verifyIntegrity(): Promise<void>;
-  scanConfirmatoryPreTreatmentLineage(args: {
-    tenantId: string;
-    experimentId: string;
-    experimentRevision: number;
-    members: readonly LiteLearningConfirmatoryPreTreatmentLineageMember[];
-  }): Promise<LiteLearningConfirmatoryPreTreatmentLineageSnapshot>;
   resolveGuideExperimentAuthority(args: {
     tenantId: string;
     experimentId: string;
@@ -4108,24 +4110,6 @@ export type LiteLearningEpisodeLedgerAccess = LiteLearningExternalAuthorityAcces
     memoryNamespaceSha256: string;
     assignmentUnitSha256: string;
   }): Promise<LiteLearningExperimentAuthorityResolution>;
-  insertPolicyVersion(row: LiteLearningAuthorityRow): Promise<{ row: Record<string, unknown>; replayed: boolean }>;
-  insertCollectionPrincipalBinding(row: LiteLearningAuthorityRow): Promise<{ row: Record<string, unknown>; replayed: boolean }>;
-  insertExperimentRevision(row: LiteLearningAuthorityRow): Promise<{ row: Record<string, unknown>; replayed: boolean }>;
-  provisionConfirmatorySet(args: {
-    revision: LiteLearningAuthorityRow;
-    attempt: LiteLearningAuthorityRow;
-    pairs: readonly LiteLearningAuthorityRow[];
-    leases: readonly LiteLearningAuthorityRow[];
-  }): Promise<{ replayed: boolean }>;
-  releaseNamespaceLeaseSet(args: {
-    tenantId: string;
-    confirmatoryAttemptId: string;
-    releaseOperationId: string;
-    releaseRefKind: "terminal_authority_adjudication";
-    releaseRefId: string;
-    releasedAt: string;
-    expectedLeaseIds: readonly string[];
-  }): Promise<number>;
   appendEpisodeEvent(args: {
     row: LiteLearningAuthorityRow;
     event: EventWithoutDigest;
@@ -4134,23 +4118,10 @@ export type LiteLearningEpisodeLedgerAccess = LiteLearningExternalAuthorityAcces
     feedbackAttributions?: readonly LiteLearningAuthorityRow[];
     hostUseReceipt?: LiteLearningAuthorityRow | null;
   }): Promise<{ row: Record<string, unknown>; replayed: boolean }>;
-  reserveGateLook(args: {
-    artifact: LiteLearningAuthorityRow;
-    reservation: LiteLearningAuthorityRow;
-  }): Promise<{
-    artifact: Record<string, unknown>;
-    reservation: Record<string, unknown>;
-    replayed: boolean;
-  }>;
-  insertGateEvidenceEvaluation(args: {
-    decision: LiteLearningAuthorityRow;
-    memberships: readonly LiteLearningAuthorityRow[];
-  }): Promise<{ row: Record<string, unknown>; replayed: boolean }>;
-  insertAuthorityFact(
-    table: LiteLearningAuthorityFactTable,
+  insertAutomaticSafetyStopDecision(
     row: LiteLearningAuthorityRow,
   ): Promise<{ row: Record<string, unknown>; replayed: boolean }>;
-};
+}>;
 
 export type LiteLearningExperimentAuthorityResolution = Readonly<{
   revision: Readonly<{
@@ -4231,10 +4202,8 @@ export function createLiteLearningEpisodeLedgerAccess(
 ): LiteLearningEpisodeLedgerAccess {
   const { db, readDb, transaction } = database;
   assertLiteLearningEpisodeLedgerIntegrity(db, new Date().toISOString(), options);
-  const externalAuthority = createLiteLearningExternalAuthorityAccess({ db, transaction });
 
   return {
-    ...externalAuthority,
     transactionRunner() {
       return transaction;
     },
@@ -4257,11 +4226,6 @@ export function createLiteLearningEpisodeLedgerAccess(
         new Date().toISOString(),
         options,
       ));
-    },
-
-    async scanConfirmatoryPreTreatmentLineage(args) {
-      assertStoreTransaction(transaction);
-      return scanConfirmatoryPreTreatmentLineage(db, args);
     },
 
     async resolveGuideExperimentAuthority(args) {
@@ -4576,182 +4540,6 @@ export function createLiteLearningEpisodeLedgerAccess(
       });
     },
 
-    async insertPolicyVersion(row) {
-      assertStoreTransaction(transaction);
-      validatePolicyVersion(row);
-      return insertExactImmutableRow(db, "lite_learning_policy_versions", row, [
-        "tenant_id", "policy_kind", "policy_id", "policy_version",
-      ]);
-    },
-
-    async insertCollectionPrincipalBinding(row) {
-      assertStoreTransaction(transaction);
-      assertCanonicalJsonDigest(row, "verifier_policy_json", "verifier_policy_sha256");
-      parseFrozenHostVerifierPolicy(requiredString(row, "verifier_policy_json"));
-      if (row.binding_sha256 !== learningCollectionPrincipalBindingDigest(row)) {
-        throw new Error("collection principal binding digest mismatch");
-      }
-      return insertExactImmutableRow(db, "lite_learning_collection_principal_bindings", row, [
-        "tenant_id", "collection_principal_sha256",
-      ]);
-    },
-
-    async insertExperimentRevision(row) {
-      assertStoreTransaction(transaction);
-      const existingRevision = selectExactRow(db, "lite_learning_experiment_revisions", [
-        "tenant_id", "experiment_id", "experiment_revision",
-      ], row);
-      validateExperimentRevision(db, row, existingRevision === null ? "fresh_write" : "stored_replay");
-      if (row.evidence_intent === "confirmatory") {
-        throw new Error("confirmatory revisions must use atomic provisionConfirmatorySet");
-      }
-      return insertExactImmutableRow(db, "lite_learning_experiment_revisions", row, [
-        "tenant_id", "experiment_id", "experiment_revision",
-      ]);
-    },
-
-    async provisionConfirmatorySet(args) {
-      assertStoreTransaction(transaction);
-      const existingRevision = selectExactRow(db, "lite_learning_experiment_revisions", [
-        "tenant_id", "experiment_id", "experiment_revision",
-      ], args.revision);
-      validateExperimentRevision(
-        db,
-        args.revision,
-        existingRevision === null ? "fresh_write" : "stored_replay",
-      );
-      if (args.revision.evidence_intent !== "confirmatory") {
-        throw new Error("atomic confirmatory provisioning requires evidence_intent=confirmatory");
-      }
-      const manifest = validateRandomizationManifest(args.pairs, args.attempt);
-      for (const owner of [args.revision, args.attempt]) {
-        if (owner.randomization_pair_manifest_sha256 !== manifest.pairManifestSha256) {
-          throw new Error("confirmatory pair-manifest digest mismatch");
-        }
-        if (owner.activation_schedule_sha256 !== manifest.activationScheduleSha256) {
-          throw new Error("confirmatory activation-schedule digest mismatch");
-        }
-      }
-      const revisionResult = insertExactImmutableRow(db, "lite_learning_experiment_revisions", args.revision, [
-        "tenant_id", "experiment_id", "experiment_revision",
-      ]);
-      const existingAttempt = selectExactRow(db, "lite_learning_confirmatory_attempts", [
-        "tenant_id", "confirmatory_attempt_id",
-      ], args.attempt);
-      if (existingAttempt) assertExactReplay(
-        "lite_learning_confirmatory_attempts",
-        existingAttempt,
-        args.attempt,
-      );
-      validateConfirmatoryAttempt(db, args.attempt, { exactReplay: existingAttempt !== null });
-      const attemptResult = insertExactImmutableRow(db, "lite_learning_confirmatory_attempts", args.attempt, [
-        "tenant_id", "confirmatory_attempt_id",
-      ]);
-      validateNamespaceLeaseSet(db, args.revision, args.attempt, args.pairs, args.leases);
-      for (const pair of args.pairs) {
-        if (pair.tenant_id !== args.attempt.tenant_id
-          || pair.confirmatory_attempt_id !== args.attempt.confirmatory_attempt_id) {
-          throw new Error("randomization pair attempt identity mismatch");
-        }
-        insertExactImmutableRow(db, "lite_learning_randomization_pairs", pair, [
-          "tenant_id", "confirmatory_attempt_id", "randomization_pair_sha256",
-        ]);
-      }
-      for (const lease of args.leases) {
-        insertExactImmutableRow(db, "lite_learning_namespace_leases", lease, [
-          "tenant_id", "namespace_lease_id",
-        ]);
-      }
-      assertLiteLearningEpisodeLedgerIntegrity(db, new Date().toISOString(), options);
-      return {
-        replayed: existingRevision !== null && revisionResult.replayed && attemptResult.replayed,
-      };
-    },
-
-    async releaseNamespaceLeaseSet(args) {
-      assertStoreTransaction(transaction);
-      if (args.releaseRefKind !== "terminal_authority_adjudication") {
-        throw new Error("experiment-close lease release requires the protected Task 3.0C close workflow");
-      }
-      if (!isCanonicalUtcMillis(args.releasedAt)) throw new Error("releasedAt must be canonical UTC milliseconds");
-      const leases = db.prepare(
-        `SELECT namespace_lease_id, status
-         FROM lite_learning_namespace_leases
-         WHERE tenant_id = ? AND confirmatory_attempt_id = ?
-         ORDER BY namespace_lease_id`,
-      ).all(args.tenantId, args.confirmatoryAttemptId) as Array<{ namespace_lease_id: string; status: string }>;
-      const expected = [...args.expectedLeaseIds].sort();
-      const actual = leases.map((row) => row.namespace_lease_id);
-      if (actual.length !== 768 || stableStringify(actual) !== stableStringify(expected)) {
-        throw new Error("namespace lease release requires the exact complete 768-member set");
-      }
-      const allReleased = leases.every((row) => row.status === "released");
-      if (allReleased) {
-        const rows = db.prepare(
-          `SELECT DISTINCT release_operation_id, release_ref_kind, release_ref_id, released_at
-           FROM lite_learning_namespace_leases
-           WHERE tenant_id = ? AND confirmatory_attempt_id = ?`,
-        ).all(args.tenantId, args.confirmatoryAttemptId) as Array<Record<string, unknown>>;
-        if (rows.length === 1
-          && rows[0]?.release_operation_id === args.releaseOperationId
-          && rows[0]?.release_ref_kind === args.releaseRefKind
-          && rows[0]?.release_ref_id === args.releaseRefId
-          && rows[0]?.released_at === args.releasedAt) return 0;
-        throw new Error("namespace lease release replay conflict");
-      }
-      if (leases.some((row) => row.status !== "active")) {
-        throw new Error("namespace lease set is partially released or corrupt");
-      }
-      const attempt = db.prepare(
-        `SELECT task_family, candidate_policy_id, candidate_policy_version,
-                candidate_policy_implementation_sha256, experiment_id,
-                experiment_revision, gate_policy_id, gate_policy_version,
-                gate_policy_config_sha256, eligible_memory_namespace_set_sha256
-         FROM lite_learning_confirmatory_attempts
-         WHERE tenant_id = ? AND confirmatory_attempt_id = ?`,
-      ).get(args.tenantId, args.confirmatoryAttemptId) as Record<string, unknown> | undefined;
-      if (!attempt) throw new Error("namespace lease release confirmatory attempt is unresolved");
-      const referenceExists = !!db.prepare(
-        `SELECT 1 FROM lite_learning_gate_decisions
-         WHERE tenant_id = ? AND decision_id = ? AND decision_kind = 'authority_adjudication'
-           AND authority_action IN ('promote', 'demote', 'retire')
-           AND task_family = ?
-           AND candidate_policy_id = ? AND candidate_policy_version = ?
-           AND candidate_policy_implementation_sha256 = ?
-           AND experiment_id = ? AND experiment_revision = ?
-           AND gate_policy_id = ? AND gate_policy_version = ?`,
-      ).get(
-        args.tenantId,
-        args.releaseRefId,
-        attempt.task_family,
-        attempt.candidate_policy_id,
-        attempt.candidate_policy_version,
-        attempt.candidate_policy_implementation_sha256,
-        attempt.experiment_id,
-        attempt.experiment_revision,
-        attempt.gate_policy_id,
-        attempt.gate_policy_version,
-      );
-      if (!referenceExists) throw new Error("namespace lease release authority reference is unresolved");
-      const result = db.prepare(
-        `UPDATE lite_learning_namespace_leases
-         SET status = 'released', release_operation_id = ?, release_ref_kind = ?,
-             release_ref_id = ?, released_at = ?
-         WHERE tenant_id = ? AND confirmatory_attempt_id = ? AND status = 'active'`,
-      ).run(
-        args.releaseOperationId,
-        args.releaseRefKind,
-        args.releaseRefId,
-        args.releasedAt,
-        args.tenantId,
-        args.confirmatoryAttemptId,
-      ) as { changes?: number };
-      const changed = Number(result.changes ?? 0);
-      if (changed !== 768) throw new Error(`namespace lease release changed ${changed} rows instead of 768`);
-      assertLiteLearningEpisodeLedgerIntegrity(db, new Date().toISOString(), options);
-      return changed;
-    },
-
     async appendEpisodeEvent(args) {
       assertStoreTransaction(transaction);
       const event = LearningEpisodeEventWithoutDigestSchema.parse(args.event);
@@ -4930,149 +4718,41 @@ export function createLiteLearningEpisodeLedgerAccess(
       return result;
     },
 
-    async reserveGateLook(args) {
+    async insertAutomaticSafetyStopDecision(row) {
       assertStoreTransaction(transaction);
-      assertExactRowShape("lite_learning_evidence_artifacts", args.artifact);
-      assertExactRowShape("lite_learning_gate_look_reservations", args.reservation);
-      if (args.artifact.artifact_kind !== "runtime_integrity_gate") {
-        throw new Error("reserveGateLook accepts a Runtime-integrity artifact only");
+      assertExactRowShape("lite_learning_gate_decisions", row);
+      if (row.decision_kind !== "safety_stop"
+        || row.evidence_verdict !== "pause_required"
+        || row.authority_action !== "pause"
+        || row.authorization_kind !== "safety_automatic") {
+        throw new Error("Runtime learning authority accepts automatic safety-stop decisions only");
       }
-      const existingArtifact = selectExactRow(db, "lite_learning_evidence_artifacts", [
-        "tenant_id", "artifact_id",
-      ], args.artifact);
-      const existingReservation = selectExactRow(db, "lite_learning_gate_look_reservations", [
-        "tenant_id", "reservation_id",
-      ], args.reservation);
-      if (Boolean(existingArtifact) !== Boolean(existingReservation)) {
-        throw new Error("gate look artifact/reservation atomic prefix is incomplete");
-      }
-      if (existingArtifact && existingReservation) {
-        assertExactReplay("lite_learning_evidence_artifacts", existingArtifact, args.artifact);
-        assertExactReplay("lite_learning_gate_look_reservations", existingReservation, args.reservation);
-        validateAuthorityFactReferences(db, "lite_learning_evidence_artifacts", args.artifact);
-        validateAuthorityFactReferences(db, "lite_learning_gate_look_reservations", args.reservation);
-        return {
-          artifact: existingArtifact,
-          reservation: existingReservation,
-          replayed: true,
-        };
-      }
-      assertExperimentRevisionOpenForFreshWrite(db, {
-        tenantId: requiredString(args.reservation, "tenant_id"),
-        experimentId: requiredString(args.reservation, "experiment_id"),
-        experimentRevision: requiredInteger(args.reservation, "experiment_revision"),
-        operation: "gate_look_reservation",
-      });
-      const liveReplay = assertLiteLearningEpisodeLedgerIntegrity(
-        db,
-        new Date().toISOString(),
-        options,
-      );
-      if (liveReplay.control_job_dead_letter_count > 0) {
-        throw new Error("learning control dead letters block a new gate look reservation");
-      }
-      const savepoint = "lite_learning_reserve_gate_look";
-      db.exec(`SAVEPOINT ${savepoint}`);
-      try {
-        validateAuthorityFactReferences(db, "lite_learning_evidence_artifacts", args.artifact);
-        const artifact = insertExactImmutableRow(db, "lite_learning_evidence_artifacts", args.artifact, [
-          "tenant_id", "artifact_id",
-        ]);
-        validateAuthorityFactReferences(db, "lite_learning_gate_look_reservations", args.reservation);
-        const reservation = insertExactImmutableRow(
-          db,
-          "lite_learning_gate_look_reservations",
-          args.reservation,
-          ["tenant_id", "reservation_id"],
-        );
-        db.exec(`RELEASE SAVEPOINT ${savepoint}`);
-        return {
-          artifact: artifact.row,
-          reservation: reservation.row,
-          replayed: false,
-        };
-      } catch (error) {
-        db.exec(`ROLLBACK TO SAVEPOINT ${savepoint}`);
-        db.exec(`RELEASE SAVEPOINT ${savepoint}`);
-        throw error;
-      }
-    },
-
-    async insertGateEvidenceEvaluation(args) {
-      assertStoreTransaction(transaction);
-      const existingDecision = selectExactRow(db, "lite_learning_gate_decisions", [
-        "tenant_id", "decision_id",
-      ], args.decision);
-      if (existingDecision) {
-        assertExactReplay("lite_learning_gate_decisions", existingDecision, args.decision);
-        const existingMemberships = db.prepare(
-          `SELECT * FROM lite_learning_gate_artifact_memberships
-           WHERE tenant_id = ? AND decision_id = ?
-           ORDER BY artifact_role, role_ordinal, artifact_id`,
-        ).all(args.decision.tenant_id, args.decision.decision_id) as Array<Record<string, unknown>>;
-        const expected = [...args.memberships].sort((left, right) => {
-          const leftKey = `${String(left.artifact_role)}\u0000${String(left.role_ordinal).padStart(12, "0")}\u0000${String(left.artifact_id)}`;
-          const rightKey = `${String(right.artifact_role)}\u0000${String(right.role_ordinal).padStart(12, "0")}\u0000${String(right.artifact_id)}`;
-          return Buffer.compare(Buffer.from(leftKey, "utf8"), Buffer.from(rightKey, "utf8"));
-        });
-        if (existingMemberships.length !== expected.length) {
-          throw new Error("gate evidence evaluation replay membership count conflict");
+      for (const field of [
+        "look_index",
+        "look_reservation_id",
+        "look_reservation_sha256",
+        "authorization_mac",
+        "authorization_nonce",
+        "authorization_expires_at",
+        "authorization_key_id",
+        "approved_by",
+      ] as const) {
+        if (row[field] !== null) {
+          throw new Error(`automatic safety-stop decision requires ${field}=null`);
         }
-        for (const [index, membership] of expected.entries()) {
-          assertExactReplay(
-            "lite_learning_gate_artifact_memberships",
-            existingMemberships[index]!,
-            membership,
-          );
-        }
-        validateGateEvidenceEvaluation(db, args.decision, args.memberships);
-        return { row: existingDecision, replayed: true };
       }
-      assertExperimentRevisionOpenForFreshWrite(db, {
-        tenantId: requiredString(args.decision, "tenant_id"),
-        experimentId: requiredString(args.decision, "experiment_id"),
-        experimentRevision: requiredInteger(args.decision, "experiment_revision"),
-        operation: "gate_evidence_evaluation",
-      });
-      validateGateEvidenceEvaluation(db, args.decision, args.memberships);
-      const inserted = insertExactImmutableRow(db, "lite_learning_gate_decisions", args.decision, [
+      if (row.evidence_artifact_count !== 0) {
+        throw new Error("automatic safety-stop decision cannot claim gate evidence artifacts");
+      }
+      assertCanonicalJsonDigest(row, "evidence_summary_json", "evidence_summary_sha256");
+      assertCanonicalJsonDigest(row, "authorization_payload_json", "authorization_sha256");
+      if (row.decision_sha256 !== learningGateDecisionDigest(row)) {
+        throw new Error("automatic safety-stop decision digest mismatch");
+      }
+      validateAuthorityFactReferences(db, "lite_learning_gate_decisions", row);
+      return insertExactImmutableRow(db, "lite_learning_gate_decisions", row, [
         "tenant_id", "decision_id",
       ]);
-      for (const membership of args.memberships) {
-        insertExactImmutableRow(db, "lite_learning_gate_artifact_memberships", membership, [
-          "tenant_id", "decision_id", "artifact_id",
-        ]);
-      }
-      return inserted;
-    },
-
-    async insertAuthorityFact(table, row) {
-      assertStoreTransaction(transaction);
-      if (table === "lite_learning_experiment_closures") {
-        throw new Error("experiment closures require the protected Task 3.0C close workflow");
-      }
-      if (table === "lite_learning_authorization_nonces") {
-        throw new Error("learning authorization nonces require a protected signed-authority workflow");
-      }
-      if (table === "lite_learning_evidence_artifacts") {
-        throw new Error(row.artifact_kind === "runtime_integrity_gate"
-          ? "Runtime-integrity artifacts and look reservations require atomic reserveGateLook"
-          : "external evidence artifacts require the protected Task 8 ingestion verifier");
-      }
-      if (table === "lite_learning_gate_look_reservations") {
-        throw new Error("Runtime-integrity artifacts and look reservations require atomic reserveGateLook");
-      }
-      if (TASK_8_PROTECTED_EXTERNAL_FACT_TABLES.has(table)) {
-        throw new Error("external authority facts require the protected Task 8 lifecycle workflow");
-      }
-      if (table === "lite_learning_gate_artifact_memberships"
-        || (table === "lite_learning_gate_decisions" && row.decision_kind === "evidence_evaluation")) {
-        throw new Error("gate evidence evaluations and memberships require atomic insertGateEvidenceEvaluation");
-      }
-      const replayKeys = AUTHORITY_FACT_REPLAY_KEYS[table];
-      if (!replayKeys) throw new Error(`Unsupported learning authority fact table: ${table}`);
-      validateAuthorityFactReferences(db, table, row);
-      return insertExactImmutableRow(db, table, row, replayKeys);
     },
   };
 }

@@ -6,7 +6,7 @@ import {
   LearningExternalEvidenceArtifactKindSchema,
   LearningExternalEvidenceIngestRequestV1Schema,
   type LearningExternalEvidenceArtifactKind,
-} from "../../../../src/memory/learning-external-evidence.js";
+} from "../memory/learning-external-evidence.js";
 import {
   closePreparedLiteLearningExternalEvidenceArchive,
   assertPreparedLiteLearningExternalEvidenceArchivePinned,

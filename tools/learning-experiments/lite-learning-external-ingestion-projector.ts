@@ -29,7 +29,8 @@ import {
   LiteLearningExternalEvidenceIngestOperationReceiptV1Schema,
   type LiteLearningExternalEvidenceIngestOperationReceiptV1,
 } from "../../packages/aionis-learning-authority/src/store/lite-learning-external-evidence-ingestion.js";
-import { resolveLiteLearningExternalNormalLifecycleSnapshot } from "../../src/store/lite-learning-external-authority.js";
+import { resolveLiteLearningExternalNormalLifecycleSnapshot } from
+  "../../packages/aionis-learning-authority/src/store/lite-learning-external-lifecycle-reader.js";
 import {
   assertLiteLearningEpisodeLedgerIntegrity,
   assertLiteRuntimeAuthorityIdentity,

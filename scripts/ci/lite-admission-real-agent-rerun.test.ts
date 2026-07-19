@@ -25,7 +25,6 @@ import {
   prepareAdmissionRealAgentGroups,
   scoreAdmissionRealAgentDecision,
 } from "../../src/memory/admission-real-agent-rerun.js";
-import { createLiteLearningEpisodeLedgerAccess } from "../../src/store/lite-learning-episode-ledger.js";
 import {
   backupLiteRuntimeDatabase,
   verifyLiteRuntimeDatabase,
@@ -745,7 +744,6 @@ test("fresh Runtime pairs restore, mutate, destroy, and start the next unit with
           annProjectionEnabled: false,
           closeDatabaseOnClose: false,
         });
-        const ledger = createLiteLearningEpisodeLedgerAccess(runtimeDatabase);
         try {
           const beforeNode = await store.findNodes({ scope, id: carriedNodeId, limit: 10, offset: 0 });
           const beforeJobs = await store.listProjectionJobs({ limit: 10 });
@@ -755,13 +753,9 @@ test("fresh Runtime pairs restore, mutate, destroy, and start the next unit with
             operationKind: "finite_holdout_safety_authority_v1",
             operationId: carriedOperationId,
           });
-          const beforeAuthority = runtimeDatabase.readDb.prepare(
-            "SELECT COUNT(*) AS count FROM lite_learning_policy_versions WHERE policy_id = ?",
-          ).get<{ count: number }>("finite-holdout-isolation-policy");
           assert.equal(beforeNode.rows.length, 0);
           assert.equal(beforeJobs.length, 0);
           assert.equal(beforeReceipt, null);
-          assert.equal(beforeAuthority.count, 0);
           const prepared = await prepareMemoryWrite({
             scope,
             actor: "finite-holdout-test",
@@ -805,22 +799,6 @@ test("fresh Runtime pairs restore, mutate, destroy, and start the next unit with
               receiptJson: JSON.stringify({ arm, status: "recorded" }),
               commitId: written.commit_id,
             });
-            const policyConfigJson = JSON.stringify({
-              behavior: "isolation-marker",
-              contract_version: "finite-holdout-isolation-policy-v1",
-            });
-            await ledger.insertPolicyVersion({
-              tenant_id: "default",
-              policy_kind: "candidate",
-              policy_id: "finite-holdout-isolation-policy",
-              policy_version: "v1",
-              policy_config_sha256: digest(policyConfigJson),
-              policy_config_json: policyConfigJson,
-              implementation_contract_sha256: digest("finite-holdout-isolation-implementation"),
-              prospective_calibration_sha256: null,
-              prospective_calibration_json: null,
-              created_at: "2026-07-16T00:00:00.000Z",
-            });
           });
           const committedNode = await store.findNodes({ scope, id: carriedNodeId, limit: 10, offset: 0 });
           const committedJobs = await store.listProjectionJobs({ limit: 10 });
@@ -830,13 +808,9 @@ test("fresh Runtime pairs restore, mutate, destroy, and start the next unit with
             operationKind: "finite_holdout_safety_authority_v1",
             operationId: carriedOperationId,
           });
-          const committedAuthority = runtimeDatabase.readDb.prepare(
-            "SELECT COUNT(*) AS count FROM lite_learning_policy_versions WHERE policy_id = ?",
-          ).get<{ count: number }>("finite-holdout-isolation-policy");
           assert.equal(committedNode.rows.length, 1);
           assert.equal(committedJobs.length, 1);
           assert.ok(committedReceipt);
-          assert.equal(committedAuthority.count, 1);
         } finally {
           await store.close();
         }
@@ -887,13 +861,9 @@ test("fresh Runtime pairs restore, mutate, destroy, and start the next unit with
             operationKind: "finite_holdout_safety_authority_v1",
             operationId: carriedOperationId,
           });
-          const authority = runtimeDatabase.readDb.prepare(
-            "SELECT COUNT(*) AS count FROM lite_learning_policy_versions WHERE policy_id = ?",
-          ).get<{ count: number }>("finite-holdout-isolation-policy");
           assert.equal(node.rows.length, 0);
           assert.equal(jobs.length, 0);
           assert.equal(receipt, null);
-          assert.equal(authority.count, 0);
         } finally {
           await store.close();
         }

@@ -3,7 +3,7 @@ import {
   learningExternalEvidenceLifecycleAuthorityProjectionDigest,
   learningExternalEvidenceRunBundleDigest,
   type LearningExternalEvidenceRunBundleV1,
-} from "../../src/memory/learning-external-evidence.js";
+} from "../../packages/aionis-learning-authority/src/memory/learning-external-evidence.js";
 import {
   LEARNING_EXTERNAL_EVIDENCE_ARCHIVE_V1_MAGIC,
   readLearningExternalEvidenceArchiveProofV1,
@@ -41,7 +41,7 @@ import {
   learningExternalRunnerOutputManifestDigest,
   learningExternalTerminalRunManifestDigest,
   type LearningExternalEvidenceStatus,
-} from "../../src/memory/learning-external-evidence.js";
+} from "../../packages/aionis-learning-authority/src/memory/learning-external-evidence.js";
 import {
   LearningExternalPublicRunAuthorityV1Schema,
   learningExternalBrokerServiceInstanceDigest,

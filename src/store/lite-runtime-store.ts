@@ -195,7 +195,7 @@ function createLiteRuntimeStoreSession(db: SqliteDatabase): LiteRuntimeStoreSess
     UPDATE memory_sandbox_runs
     SET status = 'canceled',
         finished_at = ?,
-        error = COALESCE(error, 'canceled_before_execution'),
+        error = ?,
         result_json = ?,
         updated_at = ?
     WHERE id = ? AND status = 'queued'
@@ -441,9 +441,12 @@ function createLiteRuntimeStoreSession(db: SqliteDatabase): LiteRuntimeStoreSess
       const existing = getRunningOrQueuedRunById(db, args.id);
       const nextResult = JSON.stringify({
         ...parseJsonObject(existing?.result_json),
+        ...(existing?.error ? { prior_error: existing.error } : {}),
         canceled: true,
+        canceled_by: args.cause,
       });
-      const updateResult = cancelQueuedRunStmt.run(finishedAt, nextResult, finishedAt, args.id);
+      const error = args.cause === "shutdown" ? "canceled_by_shutdown" : "canceled_before_execution";
+      const updateResult = cancelQueuedRunStmt.run(finishedAt, error, nextResult, finishedAt, args.id);
       if (sqliteChangeCount(updateResult) < 1) return null;
       const run = getRunById(db, args.id);
       return run ? (toRunPayloadRow(run) as any) : null;

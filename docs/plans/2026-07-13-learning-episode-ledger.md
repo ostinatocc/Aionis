@@ -2352,7 +2352,9 @@ one. Gate replay never depends on a mutable path alone.
 
 **Implementation checkpoint (2026-07-17, Task 8.2C-1):** The first external-
 result batch intentionally stops before CLI or database mutation. It adds the
-strict pure contracts in `src/memory/learning-external-evidence.ts` for the
+strict pure contracts now owned by
+`packages/aionis-learning-authority/src/memory/learning-external-evidence.ts`
+for the
 three formal report kinds, exact offline missingness contingencies with
 deterministic fixed-risk and pair-coverage derivation, production-shadow and
 exact-40 tool facts, attempt chain, runner-output manifest, terminal manifest,

@@ -88,7 +88,7 @@ export interface SandboxStoreAccess {
   getRun(args: { id: string; tenantId: string; scope: string }): Promise<SandboxRunRow | null>;
   getRunLogs(args: { id: string; tenantId: string; scope: string }): Promise<SandboxRunLogRow | null>;
   requestCancel(args: { id: string; tenantId: string; scope: string; reason: string | null }): Promise<SandboxCancelStateRow | null>;
-  cancelQueuedRun(args: { id: string }): Promise<SandboxRunRow | null>;
+  cancelQueuedRun(args: { id: string; cause: "request" | "shutdown" }): Promise<SandboxRunRow | null>;
   touchRunningRun(args: { id: string }): Promise<void>;
   listStaleRunningRuns(args: { staleAfterSeconds: number; limit: number }): Promise<SandboxRunRow[]>;
   claimQueuedRun(args: { id: string }): Promise<SandboxRunRow | null>;

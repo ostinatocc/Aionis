@@ -358,7 +358,7 @@ export async function cancelSandboxRun(access: SandboxStoreAccess, body: unknown
   }
 
   if (row.status === "queued") {
-    const canceledRow = await access.cancelQueuedRun({ id: parsed.run_id });
+    const canceledRow = await access.cancelQueuedRun({ id: parsed.run_id, cause: "request" });
     if (canceledRow) {
       row.status = "canceled";
       await recordSandboxRunTelemetryRow(access, canceledRow);

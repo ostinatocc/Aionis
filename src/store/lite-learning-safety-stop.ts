@@ -165,7 +165,7 @@ async function appendLearningSafetyStop(args: Readonly<{
     created_at: args.recordedAt,
   });
   decision.decision_sha256 = learningGateDecisionDigest(decision);
-  const inserted = await args.ledger.insertAuthorityFact("lite_learning_gate_decisions", decision);
+  const inserted = await args.ledger.insertAutomaticSafetyStopDecision(decision);
   const operationReceipt = LearningSafetyStopOperationReceiptV1Schema.parse({
     contract_version: "learning_safety_stop_operation_receipt_v1",
     status: "pause_applied",

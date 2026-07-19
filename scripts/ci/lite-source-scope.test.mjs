@@ -190,6 +190,137 @@ test("focused repo keeps Runtime source plus one private learning-authority exte
   assert.equal(fs.existsSync(path.join(ROOT, ".claude-plugin")), false, "Claude plugin marketplace metadata belongs in the split plugin repo");
 });
 
+test("external run lifecycle mutation authority stays outside Runtime source", () => {
+  const sourceRoot = path.join(ROOT, "src");
+  const writerPath = path.join(
+    ROOT,
+    "packages",
+    "aionis-learning-authority",
+    "src",
+    "store",
+    "lite-learning-external-run-authority.ts",
+  );
+  const writer = fs.readFileSync(writerPath, "utf8");
+  const mutationSymbols = [
+    "createLiteLearningExternalRunAuthorityAccess",
+    "LiteLearningExternalRunAuthorityAccess",
+    "reserveExternalRun",
+    "consumeExternalTicket",
+    "closeReservedExternalRun",
+    "recordExternalPreclaimHold",
+    "claimExternalRun",
+    "bindExternalSupervisor",
+    "terminateExternalSession",
+  ];
+
+  for (const file of listSourceFiles(sourceRoot)) {
+    const source = fs.readFileSync(file, "utf8");
+    for (const symbol of mutationSymbols) {
+      assert.equal(
+        source.includes(symbol),
+        false,
+        `${path.relative(ROOT, file)} must not define or compose private external run mutation ${symbol}`,
+      );
+    }
+  }
+  for (const symbol of mutationSymbols) assert.equal(writer.includes(symbol), true, `${symbol} must live in the private authority writer`);
+  assert.match(writer, /assertLiteRuntimeProtectedAuthorityTransactionCapability/);
+  assert.match(writer, /capability: LiteRuntimeProtectedAuthorityTransactionCapability/);
+});
+
+test("fixed experiment mutation authority stays outside Runtime source", () => {
+  const sourceRoot = path.join(ROOT, "src");
+  const writerPath = path.join(
+    ROOT,
+    "packages",
+    "aionis-learning-authority",
+    "src",
+    "store",
+    "lite-learning-fixed-experiment-authority.ts",
+  );
+  const writer = fs.readFileSync(writerPath, "utf8");
+  const mutationSymbols = [
+    "createLiteLearningFixedExperimentAuthorityAccess",
+    "LiteLearningFixedExperimentAuthorityAccess",
+    "scanConfirmatoryPreTreatmentLineage",
+    "insertPolicyVersion",
+    "insertCollectionPrincipalBinding",
+    "insertExperimentRevision",
+    "provisionConfirmatorySet",
+    "reserveGateLook",
+    "insertGateEvidenceEvaluation",
+    "insertExperimentAuthorityFact",
+  ];
+
+  for (const file of listSourceFiles(sourceRoot)) {
+    const source = fs.readFileSync(file, "utf8");
+    for (const symbol of mutationSymbols) {
+      assert.equal(
+        source.includes(symbol),
+        false,
+        `${path.relative(ROOT, file)} must not define or compose fixed experiment authority ${symbol}`,
+      );
+    }
+  }
+  for (const symbol of mutationSymbols) {
+    assert.equal(writer.includes(symbol), true, `${symbol} must live in the private fixed experiment writer`);
+  }
+  assert.match(writer, /assertLiteRuntimeProtectedAuthorityTransactionCapability/);
+  assert.match(writer, /capability: LiteRuntimeProtectedAuthorityTransactionCapability/);
+  assert.doesNotMatch(writer, /insertAutomaticSafetyStopDecision/);
+  assert.doesNotMatch(
+    writer,
+    /releaseNamespaceLeaseSet/,
+    "the superseded terminal-adjudication lease release must be deleted, not migrated",
+  );
+});
+
+test("external evidence contracts and lifecycle assembly stay outside Runtime source", () => {
+  const sourceRoot = path.join(ROOT, "src");
+  const retiredRuntimeContract = path.join(
+    sourceRoot,
+    "memory",
+    "learning-external-evidence.ts",
+  );
+  const authorityRoot = path.join(ROOT, "packages", "aionis-learning-authority", "src");
+  const contractPath = path.join(authorityRoot, "memory", "learning-external-evidence.ts");
+  const readerPath = path.join(
+    authorityRoot,
+    "store",
+    "lite-learning-external-lifecycle-reader.ts",
+  );
+  const reader = fs.readFileSync(readerPath, "utf8");
+  const runtimeVerifier = fs.readFileSync(
+    path.join(sourceRoot, "store", "lite-learning-external-authority.ts"),
+    "utf8",
+  );
+
+  assert.equal(
+    fs.existsSync(retiredRuntimeContract),
+    false,
+    "external evidence archive/eval contracts must not live in Runtime source",
+  );
+  assert.equal(fs.existsSync(contractPath), true, "private authority must own external evidence contracts");
+  assert.match(reader, /resolveLiteLearningExternalNormalLifecycleSnapshot/);
+  assert.match(reader, /liteLearningExternalAuthorityCanonicalContract/);
+  assert.doesNotMatch(reader, /LiteRuntimeProtectedAuthorityTransactionCapability/);
+  assert.doesNotMatch(reader, /\b(?:INSERT INTO|UPDATE|DELETE FROM)\b/iu);
+  assert.doesNotMatch(
+    runtimeVerifier,
+    /SqliteTransactionRunner|appendLiteRuntimeWriteOperationAuthorityInCurrentTransaction/,
+  );
+
+  for (const file of listSourceFiles(sourceRoot)) {
+    const source = fs.readFileSync(file, "utf8");
+    assert.equal(
+      source.includes("LiteLearningExternalNormalLifecycleSnapshot")
+        || source.includes("resolveLiteLearningExternalNormalLifecycleSnapshot"),
+      false,
+      `${path.relative(ROOT, file)} must not compose private external evidence lifecycle assembly`,
+    );
+  }
+});
+
 test("root package stays Runtime-only and delegates adapters to external packages", () => {
   const packageJson = readJson("package.json");
   assert.equal(packageJson.workspaces, undefined);

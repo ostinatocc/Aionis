@@ -21,7 +21,7 @@ import {
   validateLearningExternalEvidenceContractSetV1,
   type LearningExternalEvidenceIngestRequestV1,
   type LearningExternalEvidenceRunBundleV1,
-} from "../../../../src/memory/learning-external-evidence.js";
+} from "../memory/learning-external-evidence.js";
 import {
   LearningExternalPublicRunAuthorityV1Schema,
   learningExternalPublicRunAuthorityDigest,
@@ -38,7 +38,7 @@ import {
 import {
   resolveLiteLearningExternalNormalLifecycleSnapshot,
   type LiteLearningExternalNormalLifecycleSnapshot,
-} from "../../../../src/store/lite-learning-external-authority.js";
+} from "./lite-learning-external-lifecycle-reader.js";
 import type { LiteRuntimeDatabase } from "../../../../src/store/lite-runtime-database.js";
 import {
   assertLiteRuntimeProtectedAuthorityTransactionCapability,

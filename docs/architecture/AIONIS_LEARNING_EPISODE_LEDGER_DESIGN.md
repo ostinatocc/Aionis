@@ -3435,7 +3435,8 @@ these persisted reports plus the cutoff-bounded online cohort.
 
 The first implemented pre-ingestion contract checkpoint is
 `aionis_learning_external_*_v1` in
-`src/memory/learning-external-evidence.ts`. It freezes an acyclic content graph:
+`packages/aionis-learning-authority/src/memory/learning-external-evidence.ts`.
+It freezes an acyclic content graph:
 strict kind-specific report plus source/attempt facts, pre-terminal payload-set,
 runner-output manifest, terminal run-manifest, signed normal termination,
 live-DB lifecycle comparison projection, and finally the run-bundle manifest.

@@ -13,6 +13,15 @@ import { fileURLToPath } from "node:url";
 import test from "node:test";
 import stableStringify from "fast-json-stable-stringify";
 import { stableUuid } from "../../src/util/uuid.ts";
+import {
+  openLearningExternalRunAuthoritySession,
+  type LearningExternalRunAuthoritySession,
+} from "./support/learning-external-run-authority.ts";
+import {
+  openLearningFixedExperimentAuthoritySession,
+} from "./support/learning-fixed-experiment-authority.ts";
+import type { LiteLearningFixedExperimentAuthorityAccess } from
+  "../../packages/aionis-learning-authority/src/store/lite-learning-fixed-experiment-authority.ts";
 
 import {
   assertLiteLearningEpisodeLedgerSchemaIntegrity,
@@ -105,9 +114,9 @@ import {
   learningExternalPreterminalPayloadSetDigest,
   learningExternalRunnerOutputManifestDigest,
   learningExternalTerminalRunManifestDigest,
-} from "../../src/memory/learning-external-evidence.ts";
+} from "../../packages/aionis-learning-authority/src/memory/learning-external-evidence.ts";
 import { resolveLiteLearningExternalNormalLifecycleSnapshot } from
-  "../../src/store/lite-learning-external-authority.ts";
+  "../../packages/aionis-learning-authority/src/store/lite-learning-external-lifecycle-reader.ts";
 import {
   createLiteLearningExternalEvidenceIngestionAccess,
   LiteLearningExternalEvidenceIngestOperationReceiptV1Schema,
@@ -115,6 +124,8 @@ import {
   "../../packages/aionis-learning-authority/src/store/lite-learning-external-evidence-ingestion.ts";
 import { ingestLiteLearningExternalEvidence } from
   "../../packages/aionis-learning-authority/src/store/lite-learning-external-evidence-service.ts";
+import { createLiteLearningExternalRunAuthorityAccess } from
+  "../../packages/aionis-learning-authority/src/store/lite-learning-external-run-authority.ts";
 import {
   closePreparedLiteLearningExternalEvidenceArchive,
   inspectPreparedLiteLearningExternalEvidenceArchive,
@@ -212,6 +223,20 @@ function storeCloseKeyring() {
     ephemeral: false,
     source: "keyring" as const,
   };
+}
+
+async function withFixedExperimentAuthority<T>(
+  database: ReturnType<typeof createLiteRuntimeDatabase>,
+  fn: (authority: LiteLearningFixedExperimentAuthorityAccess) => Promise<T>,
+): Promise<T> {
+  const session = openLearningFixedExperimentAuthoritySession(database.path, {
+    authorityReceiptKeyring: storeCloseKeyring(),
+  });
+  try {
+    return await session.withTransaction(fn);
+  } finally {
+    await session.close();
+  }
 }
 
 function runMigrationChild(dbPath: string): Promise<string> {
@@ -2562,24 +2587,40 @@ test("policy-version store is transaction-bound, canonical, immutable, and confl
     const ledger = createLiteLearningEpisodeLedgerAccess(database);
     const candidate = policyRow({ kind: "candidate", id: "candidate-a", version: "v1" });
 
-    await assert.rejects(
-      ledger.insertPolicyVersion(candidate),
-      /require the shared Runtime transaction/,
+    for (const method of [
+      "scanConfirmatoryPreTreatmentLineage",
+      "insertPolicyVersion",
+      "insertCollectionPrincipalBinding",
+      "insertExperimentRevision",
+      "provisionConfirmatorySet",
+      "releaseNamespaceLeaseSet",
+      "reserveGateLook",
+      "insertGateEvidenceEvaluation",
+      "insertAuthorityFact",
+      "insertExperimentAuthorityFact",
+    ]) {
+      assert.equal(method in ledger, false, `Runtime ledger leaked fixed authority method ${method}`);
+    }
+    const first = await withFixedExperimentAuthority(
+      database,
+      async (authority) => await authority.insertPolicyVersion(candidate),
     );
-    const first = await database.transaction.run(async () => await ledger.insertPolicyVersion(candidate));
-    const replay = await database.transaction.run(async () => await ledger.insertPolicyVersion(candidate));
+    const replay = await withFixedExperimentAuthority(
+      database,
+      async (authority) => await authority.insertPolicyVersion(candidate),
+    );
     assert.equal(first.replayed, false);
     assert.equal(replay.replayed, true);
 
     await assert.rejects(
-      database.transaction.run(async () => await ledger.insertPolicyVersion({
+      withFixedExperimentAuthority(database, async (authority) => await authority.insertPolicyVersion({
         ...candidate,
         implementation_contract_sha256: "b".repeat(64),
       })),
       /replay_conflict/,
     );
     await assert.rejects(
-      database.transaction.run(async () => await ledger.insertPolicyVersion({
+      withFixedExperimentAuthority(database, async (authority) => await authority.insertPolicyVersion({
         ...candidate,
         prospective_calibration_sha256: "c".repeat(64),
         prospective_calibration_json: stableStringify({ status: "passed" }),
@@ -2594,7 +2635,10 @@ test("policy-version store is transaction-bound, canonical, immutable, and confl
       calibration: { contract_version: "gate-calibration-v1", status: "failed", scenario_count: 96 },
     });
     await assert.rejects(
-      database.transaction.run(async () => await ledger.insertPolicyVersion(failedCalibration)),
+      withFixedExperimentAuthority(
+        database,
+        async (authority) => await authority.insertPolicyVersion(failedCalibration),
+      ),
       /requires a passing prospective calibration artifact/,
     );
     const gate = policyRow({
@@ -2603,8 +2647,8 @@ test("policy-version store is transaction-bound, canonical, immutable, and confl
       version: "v1",
       calibration: { contract_version: "gate-calibration-v1", status: "passed", scenario_count: 96 },
     });
-    await database.transaction.run(async () => {
-      const result = await ledger.insertPolicyVersion(gate);
+    await withFixedExperimentAuthority(database, async (authority) => {
+      const result = await authority.insertPolicyVersion(gate);
       assert.equal(result.replayed, false);
     });
 
@@ -2644,17 +2688,52 @@ test("confirmatory provisioning freezes its cohort while protected close authori
       authorityReceiptKeyring: storeCloseKeyring(),
     });
     const fixture = confirmatoryFixture(await ledger.databaseInstanceId());
-    await database.transaction.run(async () => {
-      await ledger.insertPolicyVersion(fixture.candidate);
-      await ledger.insertPolicyVersion(fixture.gate);
+    await withFixedExperimentAuthority(database, async (authority) => {
+      await authority.insertPolicyVersion(fixture.candidate);
+      await authority.insertPolicyVersion(fixture.gate);
     });
+
+    database.db.exec(`
+      CREATE TRIGGER inject_confirmatory_partial_write_failure
+      BEFORE INSERT ON lite_learning_namespace_leases
+      WHEN NEW.namespace_lease_id = 'lease-192-0'
+      BEGIN
+        SELECT RAISE(ABORT, 'injected fixed confirmatory partial write failure');
+      END;
+    `);
+    let caughtConfirmatoryPartialWrite = false;
+    try {
+      await withFixedExperimentAuthority(database, async (authority) => {
+        try {
+          await authority.provisionConfirmatorySet(fixture);
+        } catch (error) {
+          caughtConfirmatoryPartialWrite = true;
+          assert.match(String(error), /injected fixed confirmatory partial write failure/);
+        }
+      });
+    } finally {
+      database.db.exec("DROP TRIGGER inject_confirmatory_partial_write_failure");
+    }
+    assert.equal(caughtConfirmatoryPartialWrite, true);
+    for (const table of [
+      "lite_learning_experiment_revisions",
+      "lite_learning_confirmatory_attempts",
+      "lite_learning_randomization_pairs",
+      "lite_learning_namespace_leases",
+    ]) {
+      assert.equal(
+        (database.db.prepare(`SELECT COUNT(*) AS count FROM ${table}`).get() as { count: number }).count,
+        0,
+        `${table} must not retain a partial fixed-authority write after a swallowed error`,
+      );
+    }
 
     const legacySeriesArray = canonicalJson({
       contract_version: "legacy-series-array-v0",
       series_ids: ["offline", "host", "tool", "runtime-integrity"],
     });
     await assert.rejects(
-      database.transaction.run(async () => await ledger.provisionConfirmatorySet({
+      withFixedExperimentAuthority(database, async (authority) => await authority.provisionConfirmatorySet({
         ...fixture,
         revision: {
           ...fixture.revision,
@@ -2675,7 +2754,7 @@ test("confirmatory provisioning freezes its cohort while protected close authori
       pair_record_sha256: learningRandomizationPairRecordDigest(forgedIdentityPairBase),
     } satisfies LiteLearningAuthorityRow;
     await assert.rejects(
-      database.transaction.run(async () => await ledger.provisionConfirmatorySet({
+      withFixedExperimentAuthority(database, async (authority) => await authority.provisionConfirmatorySet({
         ...fixture,
         pairs: [forgedIdentityPair, ...fixture.pairs.slice(1)],
       })),
@@ -2687,7 +2766,7 @@ test("confirmatory provisioning freezes its cohort while protected close authori
       pair_record_sha256: sha256("forged-pair-record"),
     } satisfies LiteLearningAuthorityRow;
     await assert.rejects(
-      database.transaction.run(async () => await ledger.provisionConfirmatorySet({
+      withFixedExperimentAuthority(database, async (authority) => await authority.provisionConfirmatorySet({
         ...fixture,
         pairs: [forgedPair, ...fixture.pairs.slice(1)],
       })),
@@ -2715,7 +2794,7 @@ test("confirmatory provisioning freezes its cohort while protected close authori
       attempt_sha256: learningConfirmatoryAttemptDigest(forgedAttemptBase),
     } satisfies LiteLearningAuthorityRow;
     await assert.rejects(
-      database.transaction.run(async () => await ledger.provisionConfirmatorySet({
+      withFixedExperimentAuthority(database, async (authority) => await authority.provisionConfirmatorySet({
         ...fixture,
         revision: forgedRevision,
         attempt: forgedAttempt,
@@ -2724,7 +2803,7 @@ test("confirmatory provisioning freezes its cohort while protected close authori
     );
 
     await assert.rejects(
-      database.transaction.run(async () => await ledger.provisionConfirmatorySet({
+      withFixedExperimentAuthority(database, async (authority) => await authority.provisionConfirmatorySet({
         ...fixture,
         leases: fixture.leases.slice(0, -1),
       })),
@@ -2740,7 +2819,7 @@ test("confirmatory provisioning freezes its cohort while protected close authori
       experiment_id: "wrong-experiment",
     } satisfies LiteLearningAuthorityRow;
     await assert.rejects(
-      database.transaction.run(async () => await ledger.provisionConfirmatorySet({
+      withFixedExperimentAuthority(database, async (authority) => await authority.provisionConfirmatorySet({
         ...fixture,
         leases: [wrongRevisionLease, ...fixture.leases.slice(1)],
       })),
@@ -2756,7 +2835,7 @@ test("confirmatory provisioning freezes its cohort while protected close authori
       provision_operation_id_sha256: sha256("different-provision-operation"),
     });
     await assert.rejects(
-      database.transaction.run(async () => await ledger.provisionConfirmatorySet({
+      withFixedExperimentAuthority(database, async (authority) => await authority.provisionConfirmatorySet({
         ...fixture,
         revision: {
           ...fixture.revision,
@@ -2773,7 +2852,7 @@ test("confirmatory provisioning freezes its cohort while protected close authori
       attempt_sha256: "0".repeat(64),
     } satisfies LiteLearningAuthorityRow;
     await assert.rejects(
-      database.transaction.run(async () => await ledger.provisionConfirmatorySet({
+      withFixedExperimentAuthority(database, async (authority) => await authority.provisionConfirmatorySet({
         ...fixture,
         attempt: {
           ...wrongActorAttemptBase,
@@ -2784,7 +2863,7 @@ test("confirmatory provisioning freezes its cohort while protected close authori
     );
 
     await assert.rejects(
-      database.transaction.run(async () => await ledger.provisionConfirmatorySet({
+      withFixedExperimentAuthority(database, async (authority) => await authority.provisionConfirmatorySet({
         ...fixture,
         leases: fixture.leases.map((lease) => ({
           ...lease,
@@ -2795,7 +2874,7 @@ test("confirmatory provisioning freezes its cohort while protected close authori
     );
 
     await assert.rejects(
-      database.transaction.run(async () => await ledger.provisionConfirmatorySet({
+      withFixedExperimentAuthority(database, async (authority) => await authority.provisionConfirmatorySet({
         ...fixture,
         revision: {
           ...fixture.revision,
@@ -2805,8 +2884,9 @@ test("confirmatory provisioning freezes its cohort while protected close authori
       /one protected provision timestamp/,
     );
 
-    const inserted = await database.transaction.run(
-      async () => await ledger.provisionConfirmatorySet(fixture),
+    const inserted = await withFixedExperimentAuthority(
+      database,
+      async (authority) => await authority.provisionConfirmatorySet(fixture),
     );
     assert.equal(inserted.replayed, false);
     const leasedPreTreatmentMembers = Array.from({ length: 384 }, (_, index) => [0, 1].map((member) => {
@@ -2822,7 +2902,8 @@ test("confirmatory provisioning freezes its cohort while protected close authori
       };
     })).flat();
     await assert.rejects(
-      database.transaction.run(async () => await ledger.scanConfirmatoryPreTreatmentLineage({
+      withFixedExperimentAuthority(database, async (authority) =>
+        await authority.scanConfirmatoryPreTreatmentLineage({
         tenantId: "tenant-a",
         experimentId: "experiment-competing-confirmatory",
         experimentRevision: 1,
@@ -2844,8 +2925,9 @@ test("confirmatory provisioning freezes its cohort while protected close authori
         { assigned_arm: "control", count: 384 },
       ],
     );
-    const replayed = await database.transaction.run(
-      async () => await ledger.provisionConfirmatorySet(fixture),
+    const replayed = await withFixedExperimentAuthority(
+      database,
+      async (authority) => await authority.provisionConfirmatorySet(fixture),
     );
     assert.equal(replayed.replayed, true);
 
@@ -2872,7 +2954,10 @@ test("confirmatory provisioning freezes its cohort while protected close authori
       ...principalBindingBase,
       binding_sha256: learningCollectionPrincipalBindingDigest(principalBindingBase),
     } satisfies LiteLearningAuthorityRow;
-    await database.transaction.run(async () => await ledger.insertCollectionPrincipalBinding(principalBinding));
+    await withFixedExperimentAuthority(
+      database,
+      async (authority) => await authority.insertCollectionPrincipalBinding(principalBinding),
+    );
 
     const candidateLease = fixture.leases.find((lease) => lease.assigned_arm === "candidate")!;
     const pair = fixture.pairs.find(
@@ -4131,8 +4216,9 @@ test("confirmatory provisioning freezes its cohort while protected close authori
       exposureItems: [exposureItem],
     }));
     assert.equal(exposureReplay.replayed, true);
-    const replayAfterExposure = await database.transaction.run(
-      async () => await ledger.provisionConfirmatorySet(fixture),
+    const replayAfterExposure = await withFixedExperimentAuthority(
+      database,
+      async (authority) => await authority.provisionConfirmatorySet(fixture),
     );
     assert.equal(replayAfterExposure.replayed, true);
     const feedbackOperationReceipt = stableStringify({
@@ -4369,31 +4455,22 @@ test("confirmatory provisioning freezes its cohort while protected close authori
       createdAt: closedAt,
     });
     await assert.rejects(
-      database.transaction.run(async () => await ledger.insertAuthorityFact(
-        "lite_learning_authorization_nonces",
-        {} as LiteLearningAuthorityRow,
-      )),
+      withFixedExperimentAuthority(database, async (authority) =>
+        await authority.insertExperimentAuthorityFact(
+          "lite_learning_authorization_nonces",
+          {} as LiteLearningAuthorityRow,
+        )),
       /authorization nonces require a protected signed-authority workflow/,
     );
     await assert.rejects(
-      database.transaction.run(async () => await ledger.insertAuthorityFact(
-        "lite_learning_experiment_closures",
-        {} as LiteLearningAuthorityRow,
-      )),
+      withFixedExperimentAuthority(database, async (authority) =>
+        await authority.insertExperimentAuthorityFact(
+          "lite_learning_experiment_closures",
+          {} as LiteLearningAuthorityRow,
+        )),
       /experiment closures require the protected Task 3\.0C close workflow/,
     );
-    await assert.rejects(
-      database.transaction.run(async () => await ledger.releaseNamespaceLeaseSet({
-        tenantId: "tenant-a",
-        confirmatoryAttemptId: String(fixture.attempt.confirmatory_attempt_id),
-        releaseOperationId: "operation-close-confirmatory",
-        releaseRefKind: "experiment_close" as never,
-        releaseRefId: "close-confirmatory",
-        releasedAt: closedAt,
-        expectedLeaseIds: [],
-      })),
-      /experiment-close lease release requires the protected Task 3\.0C close workflow/,
-    );
+    assert.equal("releaseNamespaceLeaseSet" in ledger, false);
     assert.equal(
       (database.db.prepare(
         "SELECT COUNT(*) AS count FROM lite_learning_authorization_nonces",
@@ -4607,7 +4684,10 @@ test("confirmatory provisioning freezes its cohort while protected close authori
       version: "v2",
       implementation: fixture.candidate.implementation_contract_sha256,
     });
-    await database.transaction.run(async () => await ledger.insertPolicyVersion(alias));
+    await withFixedExperimentAuthority(
+      database,
+      async (authority) => await authority.insertPolicyVersion(alias),
+    );
     const aliasAttemptId = "attempt-confirmatory-alias";
     const aliasPairs = fixture.pairs.map((pair) => {
       const base = {
@@ -4649,7 +4729,7 @@ test("confirmatory provisioning freezes its cohort while protected close authori
       attempt_sha256: learningConfirmatoryAttemptDigest(aliasAttemptBase),
     } satisfies LiteLearningAuthorityRow;
     await assert.rejects(
-      database.transaction.run(async () => await ledger.provisionConfirmatorySet({
+      withFixedExperimentAuthority(database, async (authority) => await authority.provisionConfirmatorySet({
         revision: aliasRevision,
         attempt: aliasAttempt,
         pairs: aliasPairs,
@@ -4717,16 +4797,14 @@ test("confirmatory pre-treatment lineage scan is transaction-only, canonical, bo
       experimentRevision: 1,
       members,
     } as const;
+    assert.equal("scanConfirmatoryPreTreatmentLineage" in ledger, false);
     await assert.rejects(
-      ledger.scanConfirmatoryPreTreatmentLineage(scanArgs),
-      /shared Runtime transaction/,
+      withFixedExperimentAuthority(database, async (authority) =>
+        await authority.scanConfirmatoryPreTreatmentLineage(scanArgs)),
+      /learning_confirmatory_pre_treatment_lineage_conflict:unknown_existing_scope/,
     );
 
-    const snapshot = await database.transaction.run(async () => {
-      await assert.rejects(
-        ledger.scanConfirmatoryPreTreatmentLineage(scanArgs),
-        /learning_confirmatory_pre_treatment_lineage_conflict:unknown_existing_scope/,
-      );
+    await database.transaction.run(async () => {
       for (const [index, member] of members.entries()) {
         seedPriorCommit(database.db, {
           id: `commit-ordinary-prior-${index}`,
@@ -4738,8 +4816,10 @@ test("confirmatory pre-treatment lineage scan is transaction-only, canonical, bo
         scope: members[0]!.storeScopeKey,
         commitId: "commit-ordinary-prior-0",
       });
-      const first = await ledger.scanConfirmatoryPreTreatmentLineage(scanArgs);
-      const replay = await ledger.scanConfirmatoryPreTreatmentLineage({
+    });
+    const snapshot = await withFixedExperimentAuthority(database, async (authority) => {
+      const first = await authority.scanConfirmatoryPreTreatmentLineage(scanArgs);
+      const replay = await authority.scanConfirmatoryPreTreatmentLineage({
         ...scanArgs,
         members: [...members].reverse(),
       });
@@ -4763,9 +4843,9 @@ test("confirmatory pre-treatment lineage scan is transaction-only, canonical, bo
       "DELETE FROM lite_memory_nodes WHERE scope = ? AND id = ?",
     ).run(members[0]!.storeScopeKey, "memory-ordinary-prior");
 
-    await database.transaction.run(async () => {
+    await withFixedExperimentAuthority(database, async (authority) => {
       await assert.rejects(
-        ledger.scanConfirmatoryPreTreatmentLineage({
+        authority.scanConfirmatoryPreTreatmentLineage({
           ...scanArgs,
           members: [
             { ...members[0]!, memoryNamespaceSha256: sha256("wrong-memory-namespace") },
@@ -4777,7 +4857,7 @@ test("confirmatory pre-treatment lineage scan is transaction-only, canonical, bo
       const crossTenantScope = "tenant:tenant-b::scope:cross-tenant";
       const crossTenantNamespace = sha256(crossTenantScope);
       await assert.rejects(
-        ledger.scanConfirmatoryPreTreatmentLineage({
+        authority.scanConfirmatoryPreTreatmentLineage({
           ...scanArgs,
           members: [
             {
@@ -4796,7 +4876,7 @@ test("confirmatory pre-treatment lineage scan is transaction-only, canonical, bo
       const oversizedScope = "x".repeat(257);
       const oversizedNamespace = sha256(oversizedScope);
       await assert.rejects(
-        ledger.scanConfirmatoryPreTreatmentLineage({
+        authority.scanConfirmatoryPreTreatmentLineage({
           ...scanArgs,
           members: [
             {
@@ -4903,12 +4983,13 @@ test("confirmatory pre-treatment lineage scan rejects every historical experimen
         });
 
         await assert.rejects(
-          database.transaction.run(async () => await ledger.scanConfirmatoryPreTreatmentLineage({
-            tenantId: "tenant-a",
-            experimentId: "experiment-pre-treatment",
-            experimentRevision: 1,
-            members,
-          })),
+          withFixedExperimentAuthority(database, async (authority) =>
+            await authority.scanConfirmatoryPreTreatmentLineage({
+              tenantId: "tenant-a",
+              experimentId: "experiment-pre-treatment",
+              experimentRevision: 1,
+              members,
+            })),
           new RegExp(`learning_confirmatory_pre_treatment_lineage_conflict:${conflictKind}`),
         );
         // The node rows are transient lineage probes, not durable authority
@@ -4931,9 +5012,9 @@ test("experiment revisions require evidence-intent-specific external inputs", as
     writeStore = createLiteWriteStoreFromDatabase(database, { annProjectionEnabled: false });
     const ledger = createLiteLearningEpisodeLedgerAccess(database);
     const fixture = confirmatoryFixture(await ledger.databaseInstanceId());
-    await database.transaction.run(async () => {
-      await ledger.insertPolicyVersion(fixture.candidate);
-      await ledger.insertPolicyVersion(fixture.gate);
+    await withFixedExperimentAuthority(database, async (authority) => {
+      await authority.insertPolicyVersion(fixture.candidate);
+      await authority.insertPolicyVersion(fixture.gate);
     });
 
     const emptyInputs = canonicalJson({});
@@ -4961,8 +5042,9 @@ test("experiment revisions require evidence-intent-specific external inputs", as
       config_json: integrityConfig.json,
     } satisfies LiteLearningAuthorityRow;
 
-    const inserted = await database.transaction.run(
-      async () => await ledger.insertExperimentRevision(integrityRevision),
+    const inserted = await withFixedExperimentAuthority(
+      database,
+      async (authority) => await authority.insertExperimentRevision(integrityRevision),
     );
     assert.equal(inserted.replayed, false);
 
@@ -4971,7 +5053,7 @@ test("experiment revisions require evidence-intent-specific external inputs", as
       required_external_inputs_sha256: fixture.revision.required_external_inputs_sha256,
     });
     await assert.rejects(
-      database.transaction.run(async () => await ledger.insertExperimentRevision({
+      withFixedExperimentAuthority(database, async (authority) => await authority.insertExperimentRevision({
         ...integrityRevision,
         experiment_id: "experiment-integrity-with-external-inputs",
         required_external_inputs_sha256: fixture.revision.required_external_inputs_sha256,
@@ -4987,7 +5069,7 @@ test("experiment revisions require evidence-intent-specific external inputs", as
       required_external_inputs_sha256: emptyInputs.sha256,
     });
     await assert.rejects(
-      database.transaction.run(async () => await ledger.provisionConfirmatorySet({
+      withFixedExperimentAuthority(database, async (authority) => await authority.provisionConfirmatorySet({
         ...fixture,
         revision: {
           ...fixture.revision,
@@ -5015,9 +5097,9 @@ test("pre-strict source-policy revisions reopen while fresh writes require stric
     try {
       const ledger = createLiteLearningEpisodeLedgerAccess(database);
       const fixture = confirmatoryFixture(await ledger.databaseInstanceId());
-      await database.transaction.run(async () => {
-        await ledger.insertPolicyVersion(fixture.candidate);
-        await ledger.insertPolicyVersion(fixture.gate);
+      await withFixedExperimentAuthority(database, async (authority) => {
+        await authority.insertPolicyVersion(fixture.candidate);
+        await authority.insertPolicyVersion(fixture.gate);
       });
 
       const historicalSourcePolicy = canonicalJson({
@@ -5070,9 +5152,8 @@ test("pre-strict source-policy revisions reopen while fresh writes require stric
       } satisfies LiteLearningAuthorityRow;
 
       await assert.rejects(
-        database.transaction.run(async () => await ledger.insertExperimentRevision(
-          historicalRevision!,
-        )),
+        withFixedExperimentAuthority(database, async (authority) =>
+          await authority.insertExperimentRevision(historicalRevision!)),
         /requires the strict collection source policy validation contract/,
       );
 
@@ -5082,7 +5163,7 @@ test("pre-strict source-policy revisions reopen while fresh writes require stric
           LEARNING_COLLECTION_SOURCE_POLICY_STRICT_VALIDATION_CONTRACT,
       });
       await assert.rejects(
-        database.transaction.run(async () => await ledger.insertExperimentRevision({
+        withFixedExperimentAuthority(database, async (authority) => await authority.insertExperimentRevision({
           ...historicalRevision!,
           experiment_id: "experiment-fresh-unsorted-source-policy",
           config_sha256: strictConfig.sha256,
@@ -5112,9 +5193,9 @@ test("pre-strict source-policy revisions reopen while fresh writes require stric
       { annProjectionEnabled: false },
     );
     try {
-      const reopenedLedger = createLiteLearningEpisodeLedgerAccess(reopenedDatabase);
-      const replay = await reopenedDatabase.transaction.run(
-        async () => await reopenedLedger.insertExperimentRevision(historicalRevision!),
+      const replay = await withFixedExperimentAuthority(
+        reopenedDatabase,
+        async (authority) => await authority.insertExperimentRevision(historicalRevision!),
       );
       assert.equal(replay.replayed, true);
       await reopenedStore.close();
@@ -5572,10 +5653,10 @@ test("feedback and effect rows stay atomic while legal control blockers fail lea
     writeStore = createLiteWriteStoreFromDatabase(database, { annProjectionEnabled: false });
     const ledger = createLiteLearningEpisodeLedgerAccess(database);
     const gateFixture = confirmatoryFixture(await ledger.databaseInstanceId());
-    await database.transaction.run(async () => {
-      await ledger.insertPolicyVersion(gateFixture.candidate);
-      await ledger.insertPolicyVersion(gateFixture.gate);
-      await ledger.provisionConfirmatorySet(gateFixture);
+    await withFixedExperimentAuthority(database, async (authority) => {
+      await authority.insertPolicyVersion(gateFixture.candidate);
+      await authority.insertPolicyVersion(gateFixture.gate);
+      await authority.provisionConfirmatorySet(gateFixture);
     });
     await database.transaction.run(async () => await ledger.appendEpisodeEvent({
       row: baselineExposure.row,
@@ -6214,6 +6295,7 @@ test("protected external lifecycle verifies frozen Ed25519 authority and survive
   let reopenedWriteStore: ReturnType<typeof createLiteWriteStoreFromDatabase> | null = null;
   let preparedEvidence: PreparedLiteLearningExternalEvidenceArchive | null = null;
   let evidenceRepositoryRoot: string | null = null;
+  let externalRunAuthoritySession: LearningExternalRunAuthoritySession | null = null;
   try {
     const keyring = storeCloseKeyring();
     writeStore = createLiteWriteStoreFromDatabase(database, {
@@ -6223,6 +6305,23 @@ test("protected external lifecycle verifies frozen Ed25519 authority and survive
     let ledger = createLiteLearningEpisodeLedgerAccess(database, {
       authorityReceiptKeyring: keyring,
     });
+    externalRunAuthoritySession = openLearningExternalRunAuthoritySession(temp.path);
+    let externalRunAuthority = externalRunAuthoritySession.authority;
+    for (const mutation of [
+      "reserveExternalRun",
+      "consumeExternalTicket",
+      "closeReservedExternalRun",
+      "recordExternalPreclaimHold",
+      "claimExternalRun",
+      "bindExternalSupervisor",
+      "terminateExternalSession",
+    ] as const) {
+      assert.equal(
+        mutation in ledger,
+        false,
+        `Runtime ledger must not expose private external authority mutation: ${mutation}`,
+      );
+    }
     const brokerKeys = generateKeyPairSync("ed25519");
     const launcherKeys = generateKeyPairSync("ed25519");
     const attestorKeys = generateKeyPairSync("ed25519");
@@ -6409,10 +6508,10 @@ test("protected external lifecycle verifies frozen Ed25519 authority and survive
       config_sha256: revisionConfig.sha256,
       config_json: revisionConfig.json,
     } satisfies LiteLearningAuthorityRow;
-    await database.transaction.run(async () => {
-      await ledger.insertPolicyVersion(fixture.candidate);
-      await ledger.insertPolicyVersion(fixture.gate);
-      await ledger.provisionConfirmatorySet({
+    await withFixedExperimentAuthority(database, async (authority) => {
+      await authority.insertPolicyVersion(fixture.candidate);
+      await authority.insertPolicyVersion(fixture.gate);
+      await authority.provisionConfirmatorySet({
         revision,
         attempt: fixture.attempt,
         pairs: fixture.pairs,
@@ -6503,31 +6602,16 @@ test("protected external lifecycle verifies frozen Ed25519 authority and survive
       });
     });
 
-    for (const table of [
-      "lite_learning_external_run_reservations",
-      "lite_learning_external_holdout_members",
-      "lite_learning_external_ticket_consumptions",
-      "lite_learning_external_preclaim_holds",
-      "lite_learning_external_run_claims",
-      "lite_learning_external_supervisor_bindings",
-      "lite_learning_external_session_terminations",
-    ] as const) {
-      await assert.rejects(
-        database.transaction.run(async () => await ledger.insertAuthorityFact(
-          table,
-          authorityRow(table, { tenant_id: "tenant-a" }),
-        )),
-        /protected Task 8 lifecycle workflow/,
-      );
-    }
+    assert.equal("insertAuthorityFact" in ledger, false);
     await assert.rejects(
-      database.transaction.run(async () => await ledger.insertAuthorityFact(
-        "lite_learning_evidence_artifacts",
-        authorityRow("lite_learning_evidence_artifacts", {
-          tenant_id: "tenant-a",
-          artifact_kind: "production_shadow_gate",
-        }),
-      )),
+      withFixedExperimentAuthority(database, async (authority) =>
+        await authority.insertExperimentAuthorityFact(
+          "lite_learning_evidence_artifacts",
+          authorityRow("lite_learning_evidence_artifacts", {
+            tenant_id: "tenant-a",
+            artifact_kind: "production_shadow_gate",
+          }),
+        )),
       /protected Task 8 ingestion verifier/,
     );
 
@@ -6769,11 +6853,11 @@ test("protected external lifecycle verifies frozen Ed25519 authority and survive
     );
     assert.equal(Number(deletedProvisionOperation.changes ?? 0), 1);
     await assert.rejects(
-      database.transaction.run(async () => await ledger.reserveExternalRun({
+      externalRunAuthority.reserveExternalRun({
         reservation,
         runnerTicket: productionTicket,
         authorization: reserveAuthorization,
-      })),
+      }),
       /protected provisioning authority is missing or ambiguous/,
     );
     assert.equal(Number((database.db.prepare(
@@ -6925,11 +7009,11 @@ test("protected external lifecycle verifies frozen Ed25519 authority and survive
     ];
     for (const authCase of reservationAuthorizationCases) {
       await assert.rejects(
-        database.transaction.run(async () => await ledger.reserveExternalRun({
+        externalRunAuthority.reserveExternalRun({
           reservation: authCase.inputReservation,
           runnerTicket: authCase.runnerTicket,
           authorization: authCase.authorization,
-        })),
+        }),
         authCase.error,
         authCase.name,
       );
@@ -6958,11 +7042,11 @@ test("protected external lifecycle verifies frozen Ed25519 authority and survive
       artifactKind: "production_shadow_gate",
     });
     await assert.rejects(
-      database.transaction.run(async () => await ledger.reserveExternalRun({
+      externalRunAuthority.reserveExternalRun({
         reservation: wrongApplicabilityReservation,
         runnerTicket: productionTicket,
         authorization: wrongApplicabilityAuthorization,
-      })),
+      }),
       /applicability manifest binding mismatch/,
     );
     assert.equal(Number((database.db.prepare(
@@ -6973,19 +7057,17 @@ test("protected external lifecycle verifies frozen Ed25519 authority and survive
        WHERE scope = 'learning_external_authority_v1'
          AND operation_kind = 'learning_external_run_reservation_v1'`,
     ).get() as { count: number }).count), 0);
-    const reserveResult = await database.transaction.run(async () =>
-      await ledger.reserveExternalRun({
-        reservation,
-        runnerTicket: productionTicket,
-        authorization: reserveAuthorization,
-      }));
+    const reserveResult = await externalRunAuthority.reserveExternalRun({
+      reservation,
+      runnerTicket: productionTicket,
+      authorization: reserveAuthorization,
+    });
     assert.equal(reserveResult.replayed, false);
-    const reserveReplay = await database.transaction.run(async () =>
-      await ledger.reserveExternalRun({
-        reservation,
-        runnerTicket: productionTicket,
-        authorization: reserveAuthorization,
-      }));
+    const reserveReplay = await externalRunAuthority.reserveExternalRun({
+      reservation,
+      runnerTicket: productionTicket,
+      authorization: reserveAuthorization,
+    });
     assert.equal(reserveReplay.replayed, true);
 
     const consumption = buildConsumption({
@@ -7071,11 +7153,11 @@ test("protected external lifecycle verifies frozen Ed25519 authority and survive
     ];
     for (const authCase of consumptionAuthorizationCases) {
       await assert.rejects(
-        database.transaction.run(async () => await ledger.consumeExternalTicket({
+        externalRunAuthority.consumeExternalTicket({
           consumption: authCase.inputConsumption,
           runnerTicket: productionTicket,
           authorization: authCase.authorization,
-        })),
+        }),
         authCase.error,
         authCase.name,
       );
@@ -7088,19 +7170,18 @@ test("protected external lifecycle verifies frozen Ed25519 authority and survive
            AND operation_kind = 'learning_external_ticket_consumption_v1'`,
       ).get() as { count: number }).count), 0, authCase.name);
     }
-    const consumeResult = await database.transaction.run(async () =>
-      await ledger.consumeExternalTicket({
-        consumption,
-        runnerTicket: productionTicket,
-        authorization: consumeAuthorization,
-      }));
+    const consumeResult = await externalRunAuthority.consumeExternalTicket({
+      consumption,
+      runnerTicket: productionTicket,
+      authorization: consumeAuthorization,
+    });
     assert.equal(consumeResult.replayed, false);
     await assert.rejects(
-      database.transaction.run(async () => await ledger.consumeExternalTicket({
+      externalRunAuthority.consumeExternalTicket({
         consumption,
         runnerTicket: productionTicket,
         authorization: consumeAuthorization,
-      })),
+      }),
       /raw-ticket replay is forbidden/,
     );
 
@@ -7135,9 +7216,9 @@ test("protected external lifecycle verifies frozen Ed25519 authority and survive
     const claimReceipt = signReceipt(claimBody, brokerKeys.privateKey);
     const invalidClaimReceipt = signReceipt(claimBody, launcherKeys.privateKey);
     await assert.rejects(
-      database.transaction.run(async () => await ledger.claimExternalRun({
+      externalRunAuthority.claimExternalRun({
         receipt: invalidClaimReceipt,
-      })),
+      }),
       /signature_invalid/,
     );
     assert.equal(Number((database.db.prepare(
@@ -7148,15 +7229,13 @@ test("protected external lifecycle verifies frozen Ed25519 authority and survive
        WHERE scope = 'learning_external_authority_v1'
          AND operation_kind = 'learning_external_run_claim_v1'`,
     ).get() as { count: number }).count), 0);
-    const claimResult = await database.transaction.run(async () =>
-      await ledger.claimExternalRun({
-        receipt: claimReceipt,
-      }));
+    const claimResult = await externalRunAuthority.claimExternalRun({
+      receipt: claimReceipt,
+    });
     assert.equal(claimResult.replayed, false);
-    const claimReplay = await database.transaction.run(async () =>
-      await ledger.claimExternalRun({
-        receipt: claimReceipt,
-      }));
+    const claimReplay = await externalRunAuthority.claimExternalRun({
+      receipt: claimReceipt,
+    });
     assert.equal(claimReplay.replayed, true);
 
     const launcherBody = {
@@ -7214,11 +7293,13 @@ test("protected external lifecycle verifies frozen Ed25519 authority and survive
       bound_at: operationAt,
     };
     const bindingReceipt = signReceipt(bindingBody, brokerKeys.privateKey);
-    const bindingResult = await database.transaction.run(async () =>
-      await ledger.bindExternalSupervisor({ receipt: bindingReceipt }));
+    const bindingResult = await externalRunAuthority.bindExternalSupervisor({
+      receipt: bindingReceipt,
+    });
     assert.equal(bindingResult.replayed, false);
-    const bindingReplay = await database.transaction.run(async () =>
-      await ledger.bindExternalSupervisor({ receipt: bindingReceipt }));
+    const bindingReplay = await externalRunAuthority.bindExternalSupervisor({
+      receipt: bindingReceipt,
+    });
     assert.equal(bindingReplay.replayed, true);
 
     const evidenceScopeSetSha256 = sha256("evidence-scope-set:normal");
@@ -7443,9 +7524,9 @@ test("protected external lifecycle verifies frozen Ed25519 authority and survive
       brokerKeys.privateKey,
     );
     await assert.rejects(
-      database.transaction.run(async () => await ledger.terminateExternalSession({
+      externalRunAuthority.terminateExternalSession({
         receipt: preBindingTerminationReceipt,
-      })),
+      }),
       /committed claim prefix|committed supervisor binding/,
     );
     assert.equal(Number((database.db.prepare(
@@ -7456,14 +7537,16 @@ test("protected external lifecycle verifies frozen Ed25519 authority and survive
        WHERE scope = 'learning_external_authority_v1'
          AND operation_kind = 'learning_external_session_termination_v1'`,
     ).get() as { count: number }).count), 0);
-    const terminationResult = await database.transaction.run(async () =>
-      await ledger.terminateExternalSession({ receipt: terminationReceipt }));
+    const terminationResult = await externalRunAuthority.terminateExternalSession({
+      receipt: terminationReceipt,
+    });
     assert.equal(terminationResult.replayed, false);
     const productionTerminationSha256 = String(
       terminationResult.termination.termination_sha256,
     );
-    const terminationReplay = await database.transaction.run(async () =>
-      await ledger.terminateExternalSession({ receipt: terminationReceipt }));
+    const terminationReplay = await externalRunAuthority.terminateExternalSession({
+      receipt: terminationReceipt,
+    });
     assert.equal(terminationReplay.replayed, true);
 
     const normalLifecycle = resolveLiteLearningExternalNormalLifecycleSnapshot(database.db, {
@@ -7790,6 +7873,13 @@ test("protected external lifecycle verifies frozen Ed25519 authority and survive
     });
     const forgedTransactionCapability = Object.freeze(Object.create(null)) as
       LiteRuntimeProtectedAuthorityTransactionCapability;
+    assert.throws(
+      () => createLiteLearningExternalRunAuthorityAccess({
+        database,
+        capability: forgedTransactionCapability,
+      }),
+      /transaction capability is invalid/u,
+    );
     await assert.rejects(
       database.transaction.run(async () =>
         await unprotectedIngestion.ingestExternalEvidence({
@@ -7824,6 +7914,8 @@ test("protected external lifecycle verifies frozen Ed25519 authority and survive
 
     closePreparedLiteLearningExternalEvidenceArchive(preparedEvidence);
     preparedEvidence = null;
+    await externalRunAuthoritySession.close();
+    externalRunAuthoritySession = null;
     await writeStore.close();
     writeStore = null;
     await database.close();
@@ -7862,6 +7954,8 @@ test("protected external lifecycle verifies frozen Ed25519 authority and survive
     ledger = createLiteLearningEpisodeLedgerAccess(database, {
       authorityReceiptKeyring: keyring,
     });
+    externalRunAuthoritySession = openLearningExternalRunAuthoritySession(temp.path);
+    externalRunAuthority = externalRunAuthoritySession.authority;
     const mismatchedProjection = {
       ...evidenceIngest.receipt.post_transaction_projection,
       reservation_id: "reservation-external-projection-tamper",
@@ -7925,18 +8019,16 @@ test("protected external lifecycle verifies frozen Ed25519 authority and survive
       externalRole: "tool_e2e",
       artifactKind: "tool_e2e_gate",
     });
-    assert.equal((await database.transaction.run(async () =>
-      await ledger.reserveExternalRun({
-        reservation: heldReservation,
-        runnerTicket: toolTicket,
-        authorization: heldReserveAuthorization,
-      }))).replayed, false);
-    assert.equal((await database.transaction.run(async () =>
-      await ledger.reserveExternalRun({
-        reservation: heldReservation,
-        runnerTicket: toolTicket,
-        authorization: heldReserveAuthorization,
-      }))).replayed, true);
+    assert.equal((await externalRunAuthority.reserveExternalRun({
+      reservation: heldReservation,
+      runnerTicket: toolTicket,
+      authorization: heldReserveAuthorization,
+    })).replayed, false);
+    assert.equal((await externalRunAuthority.reserveExternalRun({
+      reservation: heldReservation,
+      runnerTicket: toolTicket,
+      authorization: heldReserveAuthorization,
+    })).replayed, true);
     const holdBody = {
       contract_version: "aionis_learning_external_preclaim_hold_receipt_v1" as const,
       tenant_id: "tenant-a",
@@ -8002,13 +8094,13 @@ test("protected external lifecycle verifies frozen Ed25519 authority and survive
       );
     });
     await assert.rejects(
-      database.transaction.run(async () => await ledger.closeReservedExternalRun({
+      externalRunAuthority.closeReservedExternalRun({
         consumption: heldConsumption,
         runnerTicket: toolTicket,
         consumptionAuthorization: heldConsumeAuthorization,
         holdReceipt,
         triggeringTerminalFactSha256: productionTerminationSha256,
-      })),
+      }),
       /protected operation receipt is missing/,
     );
     assertCloseTargetUnwritten();
@@ -8040,13 +8132,13 @@ test("protected external lifecycle verifies frozen Ed25519 authority and survive
       );
     });
     await assert.rejects(
-      database.transaction.run(async () => await ledger.closeReservedExternalRun({
+      externalRunAuthority.closeReservedExternalRun({
         consumption: heldConsumption,
         runnerTicket: toolTicket,
         consumptionAuthorization: heldConsumeAuthorization,
         holdReceipt,
         triggeringTerminalFactSha256: productionTerminationSha256,
-      })),
+      }),
       /learning_external_authority_operation_conflict/,
     );
     assertCloseTargetUnwritten();
@@ -8063,24 +8155,23 @@ test("protected external lifecycle verifies frozen Ed25519 authority and survive
       );
     });
     await assert.rejects(
-      database.transaction.run(async () => await ledger.closeReservedExternalRun({
+      externalRunAuthority.closeReservedExternalRun({
         consumption: heldConsumption,
         runnerTicket: toolTicket,
         consumptionAuthorization: heldConsumeAuthorization,
         holdReceipt: invalidHoldReceipt,
         triggeringTerminalFactSha256: productionTerminationSha256,
-      })),
+      }),
       /signature_invalid/,
     );
     assertCloseTargetUnwritten();
-    const closeReservedResult = await database.transaction.run(async () =>
-      await ledger.closeReservedExternalRun({
-        consumption: heldConsumption,
-        runnerTicket: toolTicket,
-        consumptionAuthorization: heldConsumeAuthorization,
-        holdReceipt,
-        triggeringTerminalFactSha256: productionTerminationSha256,
-      }));
+    const closeReservedResult = await externalRunAuthority.closeReservedExternalRun({
+      consumption: heldConsumption,
+      runnerTicket: toolTicket,
+      consumptionAuthorization: heldConsumeAuthorization,
+      holdReceipt,
+      triggeringTerminalFactSha256: productionTerminationSha256,
+    });
     assert.equal(closeReservedResult.replayed, false);
     assert.equal(Number((database.db.prepare(
       `SELECT COUNT(*) AS count FROM lite_learning_evidence_artifacts
@@ -8090,11 +8181,11 @@ test("protected external lifecycle verifies frozen Ed25519 authority and survive
       "SELECT COUNT(*) AS count FROM lite_learning_evidence_artifacts",
     ).get() as { count: number }).count), 1);
     await assert.rejects(
-      database.transaction.run(async () => await ledger.consumeExternalTicket({
+      externalRunAuthority.consumeExternalTicket({
         consumption: heldConsumption,
         runnerTicket: toolTicket,
         authorization: heldConsumeAuthorization,
-      })),
+      }),
       /raw-ticket replay is forbidden/,
     );
 
@@ -8184,6 +8275,8 @@ test("protected external lifecycle verifies frozen Ed25519 authority and survive
     });
     await ledger.verifyIntegrity();
 
+    await externalRunAuthoritySession.close();
+    externalRunAuthoritySession = null;
     await writeStore.close();
     writeStore = null;
     await database.close();
@@ -8213,6 +8306,7 @@ test("protected external lifecycle verifies frozen Ed25519 authority and survive
     });
     await reopenedLedger.verifyIntegrity();
   } finally {
+    await externalRunAuthoritySession?.close();
     if (preparedEvidence !== null) {
       closePreparedLiteLearningExternalEvidenceArchive(preparedEvidence);
     }
@@ -8238,10 +8332,10 @@ test("gate evaluation supersession is immediate and cannot cross an experiment s
       authorityReceiptKeyring: storeCloseKeyring(),
     });
     const fixture = confirmatoryFixture(await ledger.databaseInstanceId());
-    await database.transaction.run(async () => {
-      await ledger.insertPolicyVersion(fixture.candidate);
-      await ledger.insertPolicyVersion(fixture.gate);
-      await ledger.provisionConfirmatorySet(fixture);
+    await withFixedExperimentAuthority(database, async (authority) => {
+      await authority.insertPolicyVersion(fixture.candidate);
+      await authority.insertPolicyVersion(fixture.gate);
+      await authority.provisionConfirmatorySet(fixture);
     });
     const firstCutoff = legacyExposureFixture();
     await database.transaction.run(async () => await ledger.appendEpisodeEvent({
@@ -8501,21 +8595,23 @@ test("gate evaluation supersession is immediate and cannot cross an experiment s
       } satisfies LiteLearningAuthorityRow;
       if (args.lookIndex === 1) {
         await assert.rejects(
-          database.transaction.run(async () => await ledger.insertAuthorityFact(
-            "lite_learning_evidence_artifacts",
-            artifact,
-          )),
+          withFixedExperimentAuthority(database, async (authority) =>
+            await authority.insertExperimentAuthorityFact(
+              "lite_learning_evidence_artifacts",
+              artifact,
+            )),
           /atomic reserveGateLook/,
         );
         await assert.rejects(
-          database.transaction.run(async () => await ledger.insertAuthorityFact(
-            "lite_learning_gate_look_reservations",
-            reservation,
-          )),
+          withFixedExperimentAuthority(database, async (authority) =>
+            await authority.insertExperimentAuthorityFact(
+              "lite_learning_gate_look_reservations",
+              reservation,
+            )),
           /atomic reserveGateLook/,
         );
         await assert.rejects(
-          database.transaction.run(async () => await ledger.reserveGateLook({
+          withFixedExperimentAuthority(database, async (authority) => await authority.reserveGateLook({
             artifact: { ...artifact, artifact_status: "failed" },
             reservation,
           })),
@@ -8534,7 +8630,7 @@ test("gate evaluation supersession is immediate and cannot cross an experiment s
             : finding),
         });
         await assert.rejects(
-          database.transaction.run(async () => await ledger.reserveGateLook({
+          withFixedExperimentAuthority(database, async (authority) => await authority.reserveGateLook({
             artifact: {
               ...artifact,
               report_sha256: failedReport.sha256,
@@ -8585,7 +8681,7 @@ test("gate evaluation supersession is immediate and cannot cross an experiment s
           reservation_sha256: learningGateLookReservationDigest(wrongTaskReservationBase),
         } satisfies LiteLearningAuthorityRow;
         await assert.rejects(
-          database.transaction.run(async () => await ledger.reserveGateLook({
+          withFixedExperimentAuthority(database, async (authority) => await authority.reserveGateLook({
             artifact: wrongTaskArtifact,
             reservation: wrongTaskReservation,
           })),
@@ -8613,7 +8709,7 @@ test("gate evaluation supersession is immediate and cannot cross an experiment s
           reservation_sha256: learningGateLookReservationDigest(wrongReservationTaskBase),
         } satisfies LiteLearningAuthorityRow;
         await assert.rejects(
-          database.transaction.run(async () => await ledger.reserveGateLook({
+          withFixedExperimentAuthority(database, async (authority) => await authority.reserveGateLook({
             artifact,
             reservation: wrongReservationTask,
           })),
@@ -8685,7 +8781,7 @@ test("gate evaluation supersession is immediate and cannot cross an experiment s
           reservation_sha256: learningGateLookReservationDigest(futureCutoffReservationBase),
         } satisfies LiteLearningAuthorityRow;
         await assert.rejects(
-          database.transaction.run(async () => await ledger.reserveGateLook({
+          withFixedExperimentAuthority(database, async (authority) => await authority.reserveGateLook({
             artifact: futureCutoffArtifact,
             reservation: futureCutoffReservation,
           })),
@@ -8756,7 +8852,7 @@ test("gate evaluation supersession is immediate and cannot cross an experiment s
           reservation_sha256: learningGateLookReservationDigest(staleCutoffReservationBase),
         } satisfies LiteLearningAuthorityRow;
         await assert.rejects(
-          database.transaction.run(async () => await ledger.reserveGateLook({
+          withFixedExperimentAuthority(database, async (authority) => await authority.reserveGateLook({
             artifact: staleCutoffArtifact,
             reservation: staleCutoffReservation,
           })),
@@ -8784,7 +8880,7 @@ test("gate evaluation supersession is immediate and cannot cross an experiment s
           findings: generated.report.findings,
         });
         await assert.rejects(
-          database.transaction.run(async () => await ledger.reserveGateLook({
+          withFixedExperimentAuthority(database, async (authority) => await authority.reserveGateLook({
             artifact: {
               ...artifact,
               look_proposal_sha256: forgedProposalSha256,
@@ -8815,7 +8911,7 @@ test("gate evaluation supersession is immediate and cannot cross an experiment s
           [{ analysis_at: "2026-08-04T00:00:00.000Z" }, /analysis time/],
         ] as const) {
           await assert.rejects(
-            database.transaction.run(async () => await ledger.reserveGateLook({
+            withFixedExperimentAuthority(database, async (authority) => await authority.reserveGateLook({
               artifact,
               reservation: rebindReservation(values),
             })),
@@ -8832,16 +8928,16 @@ test("gate evaluation supersession is immediate and cannot cross an experiment s
           reservation_sha256: learningGateLookReservationDigest(invalidReservationBase),
         } satisfies LiteLearningAuthorityRow;
         await assert.rejects(
-          database.transaction.run(async () => await ledger.reserveGateLook({
+          withFixedExperimentAuthority(database, async (authority) => await authority.reserveGateLook({
             artifact,
             reservation: invalidReservation,
           })),
           /artifact binding mismatch/,
         );
-        await database.transaction.run(async () => {
+        await withFixedExperimentAuthority(database, async (authority) => {
           let caught = false;
           try {
-            await ledger.reserveGateLook({ artifact, reservation: invalidReservation });
+            await authority.reserveGateLook({ artifact, reservation: invalidReservation });
           } catch (error) {
             caught = true;
             assert.match(String(error), /artifact binding mismatch/);
@@ -8855,7 +8951,10 @@ test("gate evaluation supersession is immediate and cannot cross an experiment s
           0,
         );
       }
-      await database.transaction.run(async () => await ledger.reserveGateLook({ artifact, reservation }));
+      await withFixedExperimentAuthority(
+        database,
+        async (authority) => await authority.reserveGateLook({ artifact, reservation }),
+      );
 
       const membershipBase = authorityRow("lite_learning_gate_artifact_memberships", {
         tenant_id: "tenant-a",
@@ -9157,14 +9256,16 @@ test("gate evaluation supersession is immediate and cannot cross an experiment s
       1,
     );
     await assert.rejects(
-      database.transaction.run(async () => await ledger.insertAuthorityFact(
-        "lite_learning_gate_decisions",
-        look1.decision,
-      )),
+      withFixedExperimentAuthority(database, async (authority) =>
+        await authority.insertExperimentAuthorityFact(
+          "lite_learning_gate_decisions",
+          look1.decision,
+        )),
       /require atomic insertGateEvidenceEvaluation/,
     );
     await assert.rejects(
-      database.transaction.run(async () => await ledger.insertGateEvidenceEvaluation({
+      withFixedExperimentAuthority(database, async (authority) =>
+        await authority.insertGateEvidenceEvaluation({
         decision: look1.decision,
         memberships: [],
       })),
@@ -9180,7 +9281,8 @@ test("gate evaluation supersession is immediate and cannot cross an experiment s
       membership_sha256: learningGateArtifactMembershipDigest(wrongRoleBase),
     } satisfies LiteLearningAuthorityRow;
     await assert.rejects(
-      database.transaction.run(async () => await ledger.insertGateEvidenceEvaluation({
+      withFixedExperimentAuthority(database, async (authority) =>
+        await authority.insertGateEvidenceEvaluation({
         decision: look1.decision,
         memberships: [wrongRole],
       })),
@@ -9196,7 +9298,8 @@ test("gate evaluation supersession is immediate and cannot cross an experiment s
       decision_sha256: learningGateDecisionDigest(wrongSetBase),
     } satisfies LiteLearningAuthorityRow;
     await assert.rejects(
-      database.transaction.run(async () => await ledger.insertGateEvidenceEvaluation({
+      withFixedExperimentAuthority(database, async (authority) =>
+        await authority.insertGateEvidenceEvaluation({
         decision: wrongSetDecision,
         memberships: look1.memberships,
       })),
@@ -9212,20 +9315,60 @@ test("gate evaluation supersession is immediate and cannot cross an experiment s
       decision_sha256: learningGateDecisionDigest(actionableBase),
     } satisfies LiteLearningAuthorityRow;
     await assert.rejects(
-      database.transaction.run(async () => await ledger.insertGateEvidenceEvaluation({
+      withFixedExperimentAuthority(database, async (authority) =>
+        await authority.insertGateEvidenceEvaluation({
         decision: actionableDecision,
         memberships: look1.memberships,
       })),
       /requires all four preregistered artifact heads/,
     );
-    const look1ReservationReplay = await database.transaction.run(
-      async () => await ledger.reserveGateLook({
+    const look1ReservationReplay = await withFixedExperimentAuthority(
+      database,
+      async (authority) => await authority.reserveGateLook({
         artifact: look1.artifact,
         reservation: look1.reservation,
       }),
     );
     assert.equal(look1ReservationReplay.replayed, true);
-    await database.transaction.run(async () => await ledger.insertGateEvidenceEvaluation(look1));
+    database.db.exec(`
+      CREATE TRIGGER inject_gate_membership_partial_write_failure
+      BEFORE INSERT ON lite_learning_gate_artifact_memberships
+      BEGIN
+        SELECT RAISE(ABORT, 'injected gate membership partial write failure');
+      END;
+    `);
+    let caughtGateMembershipPartialWrite = false;
+    try {
+      await withFixedExperimentAuthority(database, async (authority) => {
+        try {
+          await authority.insertGateEvidenceEvaluation(look1);
+        } catch (error) {
+          caughtGateMembershipPartialWrite = true;
+          assert.match(String(error), /injected gate membership partial write failure/);
+        }
+      });
+    } finally {
+      database.db.exec("DROP TRIGGER inject_gate_membership_partial_write_failure");
+    }
+    assert.equal(caughtGateMembershipPartialWrite, true);
+    assert.equal(
+      (database.db.prepare(
+        "SELECT COUNT(*) AS count FROM lite_learning_gate_decisions WHERE tenant_id = ? AND decision_id = ?",
+      ).get(look1.decision.tenant_id, look1.decision.decision_id) as { count: number }).count,
+      0,
+      "a swallowed membership failure must roll the gate decision back",
+    );
+    assert.equal(
+      (database.db.prepare(
+        "SELECT COUNT(*) AS count FROM lite_learning_gate_artifact_memberships WHERE tenant_id = ? AND decision_id = ?",
+      ).get(look1.decision.tenant_id, look1.decision.decision_id) as { count: number }).count,
+      0,
+      "a swallowed membership failure must not retain a membership prefix",
+    );
+    await withFixedExperimentAuthority(
+      database,
+      async (authority) => await authority.insertGateEvidenceEvaluation(look1),
+    );
 
     const look2 = await buildGateBundle({
       decisionId: "decision-look-2",
@@ -9275,15 +9418,20 @@ test("gate evaluation supersession is immediate and cannot cross an experiment s
       };
     };
     await assert.rejects(
-      database.transaction.run(async () => await ledger.insertGateEvidenceEvaluation(rebindDecision(look2, {
+      withFixedExperimentAuthority(database, async (authority) =>
+        await authority.insertGateEvidenceEvaluation(rebindDecision(look2, {
         decision_id: "decision-look-2-cross-experiment",
         experiment_id: "experiment-gate-b",
       }))),
       /immediate prior look/,
     );
-    await database.transaction.run(async () => await ledger.insertGateEvidenceEvaluation(look2));
+    await withFixedExperimentAuthority(
+      database,
+      async (authority) => await authority.insertGateEvidenceEvaluation(look2),
+    );
     await assert.rejects(
-      database.transaction.run(async () => await ledger.insertGateEvidenceEvaluation(rebindDecision(look2, {
+      withFixedExperimentAuthority(database, async (authority) =>
+        await authority.insertGateEvidenceEvaluation(rebindDecision(look2, {
         decision_id: "decision-look-3-skips",
         look_index: 3,
         supersedes_decision_id: "decision-look-1",
@@ -9335,28 +9483,31 @@ test("gate evaluation supersession is immediate and cannot cross an experiment s
       reservation_sha256: learningGateLookReservationDigest(closedReservationBase),
     } satisfies LiteLearningAuthorityRow;
     await assert.rejects(
-      database.transaction.run(async () => await ledger.reserveGateLook({
+      withFixedExperimentAuthority(database, async (authority) => await authority.reserveGateLook({
         artifact: closedArtifact,
         reservation: closedReservation,
       })),
       /learning_experiment_closed:gate_look_reservation/,
     );
     await assert.rejects(
-      database.transaction.run(async () => await ledger.insertGateEvidenceEvaluation(
-        rebindDecision(look2, { decision_id: "decision-after-close" }),
-      )),
+      withFixedExperimentAuthority(database, async (authority) =>
+        await authority.insertGateEvidenceEvaluation(
+          rebindDecision(look2, { decision_id: "decision-after-close" }),
+        )),
       /learning_experiment_closed:gate_evidence_evaluation/,
     );
 
-    const look2ReservationReplay = await database.transaction.run(
-      async () => await ledger.reserveGateLook({
+    const look2ReservationReplay = await withFixedExperimentAuthority(
+      database,
+      async (authority) => await authority.reserveGateLook({
         artifact: look2.artifact,
         reservation: look2.reservation,
       }),
     );
     assert.equal(look2ReservationReplay.replayed, true);
-    const look2Replay = await database.transaction.run(
-      async () => await ledger.insertGateEvidenceEvaluation(look2),
+    const look2Replay = await withFixedExperimentAuthority(
+      database,
+      async (authority) => await authority.insertGateEvidenceEvaluation(look2),
     );
     assert.equal(look2Replay.replayed, true);
     await ledger.verifyIntegrity();

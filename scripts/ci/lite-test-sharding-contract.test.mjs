@@ -224,6 +224,7 @@ test("default CI separates static, core, Manifest, and recovery gates", () => {
   const runtime = workflowJob(workflow, "runtime");
   const core = workflowJob(workflow, "runtime-core");
   const recovery = workflowJob(workflow, "runtime-recovery");
+  const sandboxShutdownMacos = workflowJob(workflow, "sandbox-shutdown-macos");
   const required = workflowJob(workflow, "required");
 
   assert.match(runtime, /^\s+run: npm run -s lite:test:static$/m);
@@ -275,15 +276,33 @@ test("default CI separates static, core, Manifest, and recovery gates", () => {
   );
   assert.doesNotMatch(recovery, /^\s+run: npm run -s lite:test(?:\s|$)/m);
 
+  assert.match(sandboxShutdownMacos, /^    name: Sandbox shutdown \(macOS\)$/m);
+  assert.match(sandboxShutdownMacos, /^    runs-on: macos-latest$/m);
+  assert.match(sandboxShutdownMacos, /^    timeout-minutes: 15$/m);
+  assert.match(sandboxShutdownMacos, /^          node-version: "24"$/m);
+  assert.match(sandboxShutdownMacos, /^        run: npm ci$/m);
+  assert.match(
+    sandboxShutdownMacos,
+    /^        run: node --import tsx --test scripts\/ci\/lite-runtime-security-shutdown\.test\.ts$/m,
+  );
+
   assert.match(required, /^    name: Required CI gates$/m);
   assert.match(required, /^    if: always\(\)$/m);
-  assert.match(required, /^    needs: \[runtime, runtime-core, runtime-recovery, minimum-node\]$/m);
+  assert.match(
+    required,
+    /^    needs: \[runtime, runtime-core, runtime-recovery, minimum-node, sandbox-shutdown-macos\]$/m,
+  );
   assert.match(required, /RUNTIME_RESULT: \$\{\{ needs\.runtime\.result \}\}/);
   assert.match(required, /CORE_RESULT: \$\{\{ needs\['runtime-core'\]\.result \}\}/);
   assert.match(required, /RECOVERY_RESULT: \$\{\{ needs\['runtime-recovery'\]\.result \}\}/);
   assert.match(required, /MINIMUM_NODE_RESULT: \$\{\{ needs\.minimum-node\.result \}\}/);
+  assert.match(
+    required,
+    /SANDBOX_SHUTDOWN_MACOS_RESULT: \$\{\{ needs\.sandbox-shutdown-macos\.result \}\}/,
+  );
   assert.match(required, /test "\$RUNTIME_RESULT" = success/);
   assert.match(required, /test "\$CORE_RESULT" = success/);
   assert.match(required, /test "\$RECOVERY_RESULT" = success/);
   assert.match(required, /test "\$MINIMUM_NODE_RESULT" = success/);
+  assert.match(required, /test "\$SANDBOX_SHUTDOWN_MACOS_RESULT" = success/);
 });

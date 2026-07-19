@@ -4,8 +4,10 @@ import { TextDecoder } from "node:util";
 import stableStringify from "fast-json-stable-stringify";
 import { z } from "zod";
 
-import { LearningExternalCanonicalUtcMillisSchema } from "./learning-external-authority.js";
-import { resolveLearningGatePolicy } from "./learning-gate-policy.js";
+import { LearningExternalCanonicalUtcMillisSchema } from
+  "../../../../src/memory/learning-external-authority.js";
+import { resolveLearningGatePolicy } from
+  "../../../../src/memory/learning-gate-policy.js";
 
 const MAX_REPORT_BYTES = 512 * 1024;
 const MAX_AUTHORITY_PROJECTION_BYTES = 4 * 1024 * 1024;

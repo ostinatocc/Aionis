@@ -12,7 +12,7 @@ import {
   parseCanonicalLearningExternalTerminalRunManifestJson,
   validateLearningExternalEvidenceContractSetV1,
   type LearningExternalEvidenceValidatedContractSetV1,
-} from "../../../../src/memory/learning-external-evidence.js";
+} from "./learning-external-evidence.js";
 import {
   learningExternalPublicRunAuthorityDigest,
   parseCanonicalLearningExternalPublicRunAuthorityJson,
