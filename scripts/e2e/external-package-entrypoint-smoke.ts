@@ -30,6 +30,8 @@ const MCP_MARKER = "EXTERNAL_PACKAGE_SMOKE_MCP_MEMORY";
 const DEFAULT_SDK_SPEC = "@aionis/sdk@latest";
 const DEFAULT_MCP_SPEC = "@aionis/mcp@latest";
 const DEFAULT_CREATE_SPEC = "@aionis/create@latest";
+const DEFAULT_SYNC_COMMAND_TIMEOUT_MS = 5 * 60_000;
+const DEFAULT_RUNTIME_SHUTDOWN_TIMEOUT_MS = 15_000;
 const EXTERNAL_PACKAGE_SECRET_ENV_KEYS = new Set([
   "AIONIS_AGENT_E2E_API_KEY",
   "DASHSCOPE_API_KEY",
@@ -44,18 +46,55 @@ function run(command: string, args: string[], options: {
   env?: NodeJS.ProcessEnv;
   label: string;
   maxOutputChars?: number;
+  timeoutMs?: number;
 }): string {
+  const timeoutMs = options.timeoutMs ?? DEFAULT_SYNC_COMMAND_TIMEOUT_MS;
   const result = spawnSync(command, args, {
     cwd: options.cwd,
     env: options.env ?? process.env,
     encoding: "utf8",
+    timeout: timeoutMs,
+    killSignal: "SIGKILL",
   });
   const output = `${result.stdout ?? ""}${result.stderr ?? ""}`;
+  if ((result.error as NodeJS.ErrnoException | undefined)?.code === "ETIMEDOUT") {
+    throw new Error(
+      `${options.label} timed out after ${timeoutMs}ms\n${output.slice(-(options.maxOutputChars ?? 6_000))}`,
+    );
+  }
   if (result.error) throw result.error;
   if (result.status !== 0) {
     throw new Error(`${options.label} failed with exit code ${result.status ?? "unknown"}\n${output.slice(-(options.maxOutputChars ?? 6_000))}`);
   }
   return output;
+}
+
+async function waitForRuntimeExit(
+  session: RuntimeSession,
+  timeoutMs: number,
+): Promise<boolean> {
+  const child = session.handle?.child;
+  if (!child || child.exitCode !== null || child.signalCode !== null) return true;
+  return await new Promise((resolve) => {
+    const onExit = () => {
+      clearTimeout(timer);
+      resolve(true);
+    };
+    const timer = setTimeout(() => {
+      child.off("exit", onExit);
+      resolve(false);
+    }, timeoutMs);
+    child.once("exit", onExit);
+  });
+}
+
+async function closeRuntimeAndWait(session: RuntimeSession): Promise<void> {
+  if (!session.handle) return;
+  closeRuntime(session);
+  if (await waitForRuntimeExit(session, DEFAULT_RUNTIME_SHUTDOWN_TIMEOUT_MS)) return;
+  session.handle.child.kill("SIGKILL");
+  if (await waitForRuntimeExit(session, 5_000)) return;
+  throw new Error("spawned Runtime did not exit after SIGTERM and SIGKILL");
 }
 
 function npmCommand(): string {
@@ -777,7 +816,7 @@ async function main() {
 
     process.stdout.write(`${JSON.stringify(result, null, 2)}\n`);
   } finally {
-    closeRuntime(session);
+    await closeRuntimeAndWait(session);
   }
 }
 

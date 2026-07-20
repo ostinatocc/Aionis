@@ -18,6 +18,8 @@ const EXPECTED_BASELINE_COMMIT = "f15cb3054ed3a909f4946c69bfe724450f578780";
 const CODE_EXTENSIONS = ["ts", "tsx", "mts", "cts", "js", "mjs", "cjs"];
 const RESOURCE_EXTENSIONS = ["sql", "json"];
 const SCRIPT_ARTIFACT_EXTENSIONS = [...CODE_EXTENSIONS, "sh", "json"];
+const WORKFLOW_ARTIFACT_EXTENSIONS = ["yml", "yaml"];
+const ACTION_ARTIFACT_EXTENSIONS = [...SCRIPT_ARTIFACT_EXTENSIONS, ...WORKFLOW_ARTIFACT_EXTENSIONS];
 const EXPECTED_THRESHOLDS = {
   source_files: 339,
   source_lines: 171316,
@@ -38,10 +40,13 @@ const EXPECTED_THRESHOLDS = {
   authority_package_import_cycles: 0,
   authority_package_largest_file_lines: 1704,
   ci_artifact_files: 231,
-  ci_artifact_lines: 140235,
+  ci_artifact_lines: 140395,
   ci_largest_file_lines: 10285,
+  workflow_artifact_files: 4,
+  workflow_artifact_lines: 1252,
+  workflow_largest_file_lines: 674,
   e2e_source_files: 50,
-  e2e_source_lines: 22074,
+  e2e_source_lines: 22112,
   e2e_largest_file_lines: 1547,
   operational_script_files: 8,
   operational_script_lines: 2448,
@@ -127,6 +132,9 @@ function assertReportShape(report) {
     "source_lines",
     "tool_source_files",
     "tool_source_lines",
+    "workflow_artifact_files",
+    "workflow_artifact_lines",
+    "workflow_largest_file_lines",
   ]);
   const zeroAllowed = new Set([
     "authority_package_resource_files",
@@ -153,6 +161,9 @@ function assertReportShape(report) {
     "ci_artifact_files",
     "ci_artifact_lines",
     "ci_largest_file_lines",
+    "workflow_artifact_files",
+    "workflow_artifact_lines",
+    "workflow_largest_file_lines",
     "e2e_source_files",
     "e2e_source_lines",
     "e2e_largest_file_lines",
@@ -199,7 +210,7 @@ function assertReportShape(report) {
 
 function assertBudgetMetadata(budget) {
   assert.deepEqual(Object.keys(budget).sort(), ["baseline_commit", "intent", "schema_version", "thresholds"]);
-  assert.equal(budget.schema_version, "aionis_runtime_complexity_budget_v3");
+  assert.equal(budget.schema_version, "aionis_runtime_complexity_budget_v4");
   assert.match(budget.baseline_commit, /^[0-9a-f]{40}$/);
   assert.equal(budget.baseline_commit, EXPECTED_BASELINE_COMMIT);
   assert.equal(typeof budget.intent, "string");
@@ -211,6 +222,7 @@ function assertBudgetMetadata(budget) {
   assert.match(budget.intent, /Runtime resources/);
   assert.match(budget.intent, /learning-authority package/);
   assert.match(budget.intent, /CI/);
+  assert.match(budget.intent, /workflow orchestration/);
   assert.match(budget.intent, /e2e laboratory/);
   assert.match(budget.intent, /operational-script/);
   assert.match(budget.intent, /no new route/);
@@ -262,6 +274,13 @@ test("runtime complexity collector emits deterministic workspace-source metrics"
     assert.equal(report[lineMetric], inventoryLines(paths));
     assert.equal(report[largestMetric], largestInventoryFile(paths));
   }
+  const workflowArtifacts = [
+    ...gitInventory(...pathspecs(".github/workflows", WORKFLOW_ARTIFACT_EXTENSIONS)),
+    ...gitInventory(...pathspecs(".github/actions", ACTION_ARTIFACT_EXTENSIONS)),
+  ].sort();
+  assert.equal(report.workflow_artifact_files, workflowArtifacts.length);
+  assert.equal(report.workflow_artifact_lines, inventoryLines(workflowArtifacts));
+  assert.equal(report.workflow_largest_file_lines, largestInventoryFile(workflowArtifacts));
   assert.equal(
     report.focused_runtime_artifact_lines,
     report.source_lines + report.runtime_resource_lines,

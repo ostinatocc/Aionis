@@ -92,9 +92,28 @@ test("Docker image is built once, smoked by digest, and only then promoted", () 
   assert.match(publishJob, /needs\['release-core'\]\.result == 'success'/);
   assert.match(publishJob, /needs\['release-recovery'\]\.result == 'success'/);
   assert.match(workflow, /release_ref:[\s\S]*required: true[\s\S]*publish:[\s\S]*default: false/);
+  assert.match(workflow, /^  actions: read$/m);
   assert.match(workflow, /group: docker-release-/);
   assert.match(workflow, /ref: \$\{\{ github\.event_name == 'workflow_dispatch' && inputs\.release_ref \|\| github\.ref_name \}\}/);
   assert.match(workflow, /name: Verify release commit is on main first-parent history/);
+  assert.match(workflow, /name: Verify protected exact-main embedding evidence/);
+  assert.match(workflow, /actions\/workflows\/exact-main-embedding-smoke\.yml\/runs\?event=workflow_dispatch&status=success&head_sha=\$\{release_commit\}/);
+  assert.match(workflow, /run\?\.head_branch === "main"/);
+  assert.match(workflow, /run\?\.head_sha === commit/);
+  assert.match(workflow, /run\?\.path === "\.github\/workflows\/exact-main-embedding-smoke\.yml"/);
+  assert.match(workflow, /run\?\.event === "workflow_dispatch"/);
+  assert.match(workflow, /run\?\.status === "completed"/);
+  assert.match(workflow, /run\?\.conclusion === "success"/);
+  assert.match(workflow, /expectedTitle\.test\(String\(run\?\.display_title/);
+  assert.ok(workflow.includes("T\\\\d{6}Z-[0-9a-f]{16}$"));
+  assert.match(workflow, /actions\/runs\/\$\{GITHUB_RUN_ID\}/);
+  assert.match(workflow, /releaseRun\.created_at/);
+  assert.match(workflow, /run\?\.updated_at/);
+  assert.match(workflow, /Date\.parse\(String\(run\.updated_at\)\) <= releaseCreatedAt/);
+  assert.match(workflow, /const minimum = \[0, 3, 11\]/);
+  assert.match(workflow, /not required for legacy Runtime/);
+  assert.match(workflow, /protected embedding evidence requires candidate or stable status/);
+  assert.match(workflow, /no successful protected exact-main embedding evidence/);
   assert.match(workflow, /\+refs\/heads\/main:refs\/remotes\/origin\/main/);
   assert.match(workflow, /git rev-list --first-parent "\$\{main_commit\}"/);
   assert.match(workflow, /grep -F -x "\$\{release_commit\}"/);
@@ -240,7 +259,7 @@ test("Docker starts Runtime as PID 1 and proves named-volume recovery", () => {
   assert.match(recoverySmoke, /schema\?\.classification !== "current"/);
   assert.match(
     workflow,
-    /\.github\/workflows\/docker\.yml\|scripts\/ci\/release-workflow-contract\.test\.mjs\|scripts\/ci\/docker-recovery-smoke\.sh/,
+    /\.github\/workflows\/docker\.yml\|\.github\/workflows\/exact-main-embedding-smoke\.yml\|scripts\/ci\/release-workflow-contract\.test\.mjs\|scripts\/ci\/docker-recovery-smoke\.sh/,
   );
 
   const result = spawnSync("bash", ["scripts/ci/docker-recovery-smoke.sh", "aionis:mutable"], {
@@ -390,15 +409,116 @@ test("cross-package release gates install tarballs packed from exact checkouts",
     read("scripts/e2e/multi-agent-execution-memory-loop.ts"),
     /options\.allowEmbeddingUnavailable === true && embeddingProvider === "none"/,
   );
+  const runtimeAgentLoop = read("scripts/e2e/runtime-agent-loop.ts");
+  assert.match(
+    runtimeAgentLoop,
+    /spawn\(process\.execPath, \["--import", "tsx", "src\/index\.ts"\]/,
+  );
+  assert.doesNotMatch(runtimeAgentLoop, /spawn\(npx/);
   assert.match(smoke, /const measureOperationId = "external-package-sdk-measure:" \+ runId/);
   assert.match(smoke, /measure\.operation_id === measureOperationId/);
   assert.match(smoke, /measure\.measurement_persisted === true/);
   assert.match(smoke, /JSON\.stringify\(measureReplay\) === JSON\.stringify\(measure\)/);
+  assert.match(smoke, /timeout: timeoutMs/);
+  assert.match(smoke, /killSignal: "SIGKILL"/);
+  assert.match(smoke, /await closeRuntimeAndWait\(session\)/);
+  assert.match(smoke, /await waitForRuntimeExit\(session, DEFAULT_RUNTIME_SHUTDOWN_TIMEOUT_MS\)/);
   const freshInstallSmoke = read("scripts/e2e/fresh-install-smoke.ts");
   assert.match(freshInstallSmoke, /spawn\(process\.execPath, \["--import", "tsx", "src\/index\.ts"\]/);
   assert.match(freshInstallSmoke, /await closeRuntime\(runtime\)/);
   assert.match(freshInstallSmoke, /child\.once\("close"/);
   assert.match(freshInstallSmoke, /child\.kill\("SIGKILL"\)/);
+});
+
+test("exact-main embedding smoke is manual, read-only, protected, and fail-closed", () => {
+  const workflow = read(".github/workflows/exact-main-embedding-smoke.yml");
+  const releaseNotes = read("RELEASE_NOTES.md");
+  const patchNotes = read("docs/releases/v0.3.11.md");
+
+  assert.match(workflow, /^name: Exact Main Embedding Smoke$/m);
+  assert.match(workflow, /^on:\n  workflow_dispatch:\n    inputs:\n      expected_sha:/m);
+  assert.match(workflow, /expected_sha:[\s\S]*?required: true[\s\S]*?type: string/);
+  assert.match(workflow, /evidence_id:[\s\S]*?required: true[\s\S]*?type: string/);
+  assert.match(workflow, /run-name: Exact Main Embedding Smoke \$\{\{ inputs\.expected_sha \}\} \$\{\{ inputs\.evidence_id \}\}/);
+  assert.doesNotMatch(workflow, /^  (?:push|pull_request|schedule):/m);
+  assert.match(workflow, /^permissions:\n  contents: read$/m);
+  assert.doesNotMatch(workflow, /(?:contents|packages|id-token): write/);
+  assert.match(workflow, /^    environment: exact-main-embedding$/m);
+  assert.match(workflow, /^    timeout-minutes: 30$/m);
+  assert.match(workflow, /group: exact-main-embedding-smoke-/);
+  assert.match(workflow, /cancel-in-progress: false/);
+  assert.match(workflow, /actions\/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5/);
+  assert.match(workflow, /actions\/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020/);
+  assert.doesNotMatch(workflow, /uses: actions\/(?:checkout|setup-node)@v\d/);
+
+  assert.match(workflow, /name: Checkout expected Runtime commit[\s\S]*?ref: \$\{\{ inputs\.expected_sha \}\}/);
+  assert.match(workflow, /fetch-depth: 0/);
+  assert.match(workflow, /persist-credentials: false/);
+  assert.match(workflow, /\^\[0-9a-f\]\{40\}\$/);
+  assert.match(workflow, /test "\$\{actual_commit\}" = "\$\{EXPECTED_SHA\}"/);
+  assert.match(workflow, /test "\$\{dispatch_commit\}" = "\$\{EXPECTED_SHA\}"/);
+  assert.match(workflow, /test "\$\{dispatch_ref\}" = "refs\/heads\/main"/);
+  assert.match(workflow, /\+refs\/heads\/main:refs\/remotes\/origin\/main/);
+  assert.match(workflow, /test "\$\{main_commit\}" = "\$\{EXPECTED_SHA\}"/);
+  assert.match(workflow, /exact-main embedding release evidence requires candidate or stable status/);
+
+  for (const [key, repository, checkoutPath] of [
+    ["sdk", "ostinatocc/aionis-sdk", "external/aionis-sdk"],
+    ["mcp", "ostinatocc/aionis-mcp", "external/aionis-mcp"],
+    ["create", "ostinatocc/aionis-create", "external/aionis-create"],
+  ]) {
+    assert.ok(workflow.includes(`repository: ${repository}`));
+    assert.ok(workflow.includes(`ref: \${{ steps.package-coordinates.outputs.${key}_ref }}`));
+    assert.ok(workflow.includes(`path: ${checkoutPath}`));
+    assert.match(
+      workflow,
+      new RegExp(`test "\\$\\{${key}_commit\\}" = "\\$\\{EXPECTED_${key.toUpperCase()}_COMMIT\\}"`),
+    );
+    assert.match(
+      workflow,
+      new RegExp(`pack_exact ${key} "\\$\\{GITHUB_WORKSPACE\\}/${checkoutPath}"`),
+    );
+  }
+
+  assert.match(workflow, /npm ci --ignore-scripts/);
+  assert.match(workflow, /npm pack --silent --pack-destination "\$\{PACK_DIR\}"/);
+  assert.match(workflow, /AIONIS_RUNTIME_REPO="\$\{GITHUB_WORKSPACE\}"/);
+  assert.match(workflow, /^          DASHSCOPE_API_KEY: \$\{\{ secrets\.DASHSCOPE_API_KEY \}\}$/m);
+  assert.equal(
+    (workflow.match(/secrets\.DASHSCOPE_API_KEY/g) ?? []).length,
+    1,
+    "the provider credential must only enter the smoke step",
+  );
+  assert.match(workflow, /^          EMBEDDING_PROVIDER: dashscope$/m);
+  assert.match(workflow, /^          DASHSCOPE_EMBEDDING_MODEL: qwen3\.7-text-embedding$/m);
+  assert.match(workflow, /^          EMBEDDING_DIM: "1536"$/m);
+  assert.match(workflow, /^          AIONIS_EXTERNAL_SMOKE_EMBEDDING_EXPECTATION: available$/m);
+  assert.match(
+    workflow,
+    /^          AIONIS_EXTERNAL_SMOKE_EXPECTED_EMBEDDING_MODEL: dashscope:qwen3\.7-text-embedding$/m,
+  );
+  assert.match(workflow, /test -n "\$\{DASHSCOPE_API_KEY:-\}"/);
+  assert.match(workflow, /name: Verify immutable Runtime tag remains absent/);
+  assert.match(workflow, /git ls-remote --tags origin/);
+  assert.match(workflow, /test -z "\$\{tag_refs\}"/);
+  assert.match(workflow, /\[a-z0-9\._:-\]\{0,95\}/);
+  assert.doesNotMatch(workflow, /set -x/);
+  assert.doesNotMatch(workflow, /upload-artifact/);
+  assert.match(workflow, /aionis_external_package_entrypoint_smoke_v1/);
+  assert.match(workflow, /sdk_product_loop_ok/);
+  assert.match(workflow, /mcp_stdio_tool_loop_ok/);
+
+  for (const document of [releaseNotes, patchNotes]) {
+    assert.match(document, /exact-main-embedding-smoke\.yml/);
+    assert.match(document, /exact-main-embedding/);
+    assert.match(document, /qwen3\.7-text-embedding/);
+    assert.match(document, /evidence ID/i);
+  }
+  assert.match(releaseNotes, /gh run view[\s\S]*--json headSha[\s\S]*= "\$\{MAIN_COMMIT\}"/);
+  assert.match(releaseNotes, /--json headBranch[\s\S]*= "main"/);
+  assert.match(releaseNotes, /--json conclusion[\s\S]*= "success"/);
+  assert.match(releaseNotes, /randomBytes\(8\)/);
+  assert.match(releaseNotes, /EMBED_RUN_COUNT[\s\S]*-gt 1[\s\S]*refusing ambiguous embedding evidence title/);
 });
 
 test("Docker context excludes external release checkouts", () => {

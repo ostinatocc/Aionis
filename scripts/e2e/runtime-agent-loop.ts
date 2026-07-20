@@ -130,8 +130,7 @@ export async function startRuntime(embedding: EmbeddingConfig | null): Promise<R
   const port = await findFreePort();
   const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "aionis-runtime-agent-e2e-"));
   const logs: string[] = [];
-  const npx = process.platform === "win32" ? "npx.cmd" : "npx";
-  const child = spawn(npx, ["tsx", "src/index.ts"], {
+  const child = spawn(process.execPath, ["--import", "tsx", "src/index.ts"], {
     cwd: repoRoot,
     env: {
       ...process.env,

@@ -87,9 +87,18 @@ node --test \
 node scripts/ci/release-artifact-gate.mjs --check --expect-tag v0.3.11
 ```
 
-The exact remote-main commit must also pass the protected DashScope
-`qwen3.7-text-embedding` external-package smoke. Credentials are injected by
-the environment and never stored in source or release artifacts.
+The exact remote-main candidate commit must also pass
+`.github/workflows/exact-main-embedding-smoke.yml` through the main-only
+`exact-main-embedding` environment. That protected gate uses DashScope
+`qwen3.7-text-embedding`; credentials are injected by the environment and never
+stored in source or release artifacts. Its successful workflow name, unique
+evidence ID, `workflow_dispatch` event, head SHA, and conclusion must all be
+verified against the same `MAIN_COMMIT` before creating the tag. Candidate and
+stable commits require separate same-SHA evidence; a stable release cannot
+reuse evidence from its candidate predecessor. Each evidence ID carries a
+random nonce and the runbook rejects ambiguous title matches. The provider
+workflow checks that the immutable Runtime tag is still absent after the smoke
+completes.
 
 ## Promotion Checklist
 
@@ -110,6 +119,45 @@ test -z "$(git tag --list v0.3.11)"
 test -z "$(git ls-remote --tags origin refs/tags/v0.3.11 'refs/tags/v0.3.11^{}')"
 
 MAIN_COMMIT="$(git rev-parse origin/main)"
+EMBED_EVIDENCE_NONCE="$(node -p 'require("node:crypto").randomBytes(8).toString("hex")')"
+EMBED_EVIDENCE_ID="candidate-${MAIN_COMMIT}-$(date -u +%Y%m%dT%H%M%SZ)-${EMBED_EVIDENCE_NONCE}"
+EMBED_RUN_TITLE="Exact Main Embedding Smoke ${MAIN_COMMIT} ${EMBED_EVIDENCE_ID}"
+gh workflow run exact-main-embedding-smoke.yml \
+  --repo ostinatocc/Aionis \
+  --ref main \
+  -f expected_sha="${MAIN_COMMIT}" \
+  -f evidence_id="${EMBED_EVIDENCE_ID}"
+EMBED_RUN_ID=""
+for _ in $(seq 1 30); do
+  EMBED_RUN_MATCHES="$(gh run list \
+    --repo ostinatocc/Aionis \
+    --workflow exact-main-embedding-smoke.yml \
+    --commit "${MAIN_COMMIT}" \
+    --event workflow_dispatch \
+    --limit 20 \
+    --json databaseId,displayTitle \
+    --jq ".[] | select(.displayTitle == \"${EMBED_RUN_TITLE}\") | .databaseId")"
+  EMBED_RUN_COUNT="$(printf '%s\n' "${EMBED_RUN_MATCHES}" | \
+    awk 'NF { count += 1 } END { print count + 0 }')"
+  if [[ "${EMBED_RUN_COUNT}" -gt 1 ]]; then
+    echo "refusing ambiguous embedding evidence title: ${EMBED_RUN_TITLE}" >&2
+    exit 1
+  fi
+  if [[ "${EMBED_RUN_COUNT}" -eq 1 ]]; then
+    EMBED_RUN_ID="${EMBED_RUN_MATCHES}"
+    break
+  fi
+  sleep 2
+done
+test -n "${EMBED_RUN_ID}"
+gh run watch "${EMBED_RUN_ID}" --repo ostinatocc/Aionis --exit-status
+test "$(gh run view "${EMBED_RUN_ID}" --repo ostinatocc/Aionis --json workflowName --jq .workflowName)" = "Exact Main Embedding Smoke"
+test "$(gh run view "${EMBED_RUN_ID}" --repo ostinatocc/Aionis --json displayTitle --jq .displayTitle)" = "${EMBED_RUN_TITLE}"
+test "$(gh run view "${EMBED_RUN_ID}" --repo ostinatocc/Aionis --json event --jq .event)" = "workflow_dispatch"
+test "$(gh run view "${EMBED_RUN_ID}" --repo ostinatocc/Aionis --json headBranch --jq .headBranch)" = "main"
+test "$(gh run view "${EMBED_RUN_ID}" --repo ostinatocc/Aionis --json headSha --jq .headSha)" = "${MAIN_COMMIT}"
+test "$(gh run view "${EMBED_RUN_ID}" --repo ostinatocc/Aionis --json conclusion --jq .conclusion)" = "success"
+
 git tag -a v0.3.11 "$MAIN_COMMIT" -m "Aionis v0.3.11"
 test "$(git rev-parse 'v0.3.11^{}')" = "$MAIN_COMMIT"
 git push origin v0.3.11

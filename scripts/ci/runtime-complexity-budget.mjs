@@ -10,6 +10,8 @@ const LARGEST_FILE_LIMIT = 20;
 const CODE_EXTENSIONS = ["ts", "tsx", "mts", "cts", "js", "mjs", "cjs"];
 const RESOURCE_EXTENSIONS = ["sql", "json"];
 const SCRIPT_ARTIFACT_EXTENSIONS = [...CODE_EXTENSIONS, "sh", "json"];
+const WORKFLOW_ARTIFACT_EXTENSIONS = ["yml", "yaml"];
+const ACTION_ARTIFACT_EXTENSIONS = [...SCRIPT_ARTIFACT_EXTENSIONS, ...WORKFLOW_ARTIFACT_EXTENSIONS];
 
 function toPosix(value) {
   return value.split(path.sep).join("/");
@@ -281,6 +283,10 @@ export function collectRuntimeComplexity() {
   ));
   const scriptArtifactPaths = workspaceFiles(...pathspecs("scripts", SCRIPT_ARTIFACT_EXTENSIONS));
   const ciArtifactPaths = scriptArtifactPaths.filter((relativePath) => relativePath.startsWith("scripts/ci/"));
+  const workflowArtifactPaths = [
+    ...workspaceFiles(...pathspecs(".github/workflows", WORKFLOW_ARTIFACT_EXTENSIONS)),
+    ...workspaceFiles(...pathspecs(".github/actions", ACTION_ARTIFACT_EXTENSIONS)),
+  ].sort();
   const e2eSourcePaths = scriptArtifactPaths.filter((relativePath) => relativePath.startsWith("scripts/e2e/"));
   const operationalScriptPaths = scriptArtifactPaths.filter((relativePath) => (
     !relativePath.startsWith("scripts/ci/") && !relativePath.startsWith("scripts/e2e/")
@@ -294,6 +300,14 @@ export function collectRuntimeComplexity() {
     ...authorityPackageResourcePaths,
   ]);
   assertClosedArtifactInventory("scripts", scriptArtifactPaths);
+  assertClosedArtifactInventory(
+    ".github/workflows",
+    workflowArtifactPaths.filter((relativePath) => relativePath.startsWith(".github/workflows/")),
+  );
+  assertClosedArtifactInventory(
+    ".github/actions",
+    workflowArtifactPaths.filter((relativePath) => relativePath.startsWith(".github/actions/")),
+  );
   const sources = new Map();
   const parsed = new Map();
   const fileLines = [];
@@ -333,6 +347,7 @@ export function collectRuntimeComplexity() {
   const authorityPackageFileLines = inventoryLines(authorityPackagePaths);
   const authorityPackageResourceFileLines = inventoryLines(authorityPackageResourcePaths);
   const ciArtifactFileLines = inventoryLines(ciArtifactPaths);
+  const workflowArtifactFileLines = inventoryLines(workflowArtifactPaths);
   const e2eSourceFileLines = inventoryLines(e2eSourcePaths);
   const operationalScriptFileLines = inventoryLines(operationalScriptPaths);
   const runtimeResourceLines = sumInventoryLines(runtimeResourceFileLines);
@@ -361,6 +376,9 @@ export function collectRuntimeComplexity() {
     ci_artifact_files: ciArtifactPaths.length,
     ci_artifact_lines: sumInventoryLines(ciArtifactFileLines),
     ci_largest_file_lines: largestInventoryLines(ciArtifactFileLines),
+    workflow_artifact_files: workflowArtifactPaths.length,
+    workflow_artifact_lines: sumInventoryLines(workflowArtifactFileLines),
+    workflow_largest_file_lines: largestInventoryLines(workflowArtifactFileLines),
     e2e_source_files: e2eSourcePaths.length,
     e2e_source_lines: sumInventoryLines(e2eSourceFileLines),
     e2e_largest_file_lines: largestInventoryLines(e2eSourceFileLines),
@@ -410,6 +428,9 @@ function checkBudget(report, budgetPath) {
     ["ci_artifact_files", report.ci_artifact_files, positiveInteger(thresholds.ci_artifact_files, "thresholds.ci_artifact_files")],
     ["ci_artifact_lines", report.ci_artifact_lines, positiveInteger(thresholds.ci_artifact_lines, "thresholds.ci_artifact_lines")],
     ["ci_largest_file_lines", report.ci_largest_file_lines, positiveInteger(thresholds.ci_largest_file_lines, "thresholds.ci_largest_file_lines")],
+    ["workflow_artifact_files", report.workflow_artifact_files, positiveInteger(thresholds.workflow_artifact_files, "thresholds.workflow_artifact_files")],
+    ["workflow_artifact_lines", report.workflow_artifact_lines, positiveInteger(thresholds.workflow_artifact_lines, "thresholds.workflow_artifact_lines")],
+    ["workflow_largest_file_lines", report.workflow_largest_file_lines, positiveInteger(thresholds.workflow_largest_file_lines, "thresholds.workflow_largest_file_lines")],
     ["e2e_source_files", report.e2e_source_files, positiveInteger(thresholds.e2e_source_files, "thresholds.e2e_source_files")],
     ["e2e_source_lines", report.e2e_source_lines, positiveInteger(thresholds.e2e_source_lines, "thresholds.e2e_source_lines")],
     ["e2e_largest_file_lines", report.e2e_largest_file_lines, positiveInteger(thresholds.e2e_largest_file_lines, "thresholds.e2e_largest_file_lines")],
