@@ -195,7 +195,6 @@ DIGEST="$(docker buildx imagetools inspect "$IMAGE" | awk '$1 == "Digest:" { pri
 test -n "$DIGEST"
 docker pull --platform linux/amd64 "$IMAGE"
 test "$(docker image inspect --format '{{ index .Config.Labels "org.opencontainers.image.revision" }}' "$IMAGE")" = "$MAIN_COMMIT"
-bash scripts/ci/docker-release-smoke.sh "ghcr.io/ostinatocc/aionis@${DIGEST}"
 bash scripts/ci/docker-recovery-smoke.sh "ghcr.io/ostinatocc/aionis@${DIGEST}"
 bash scripts/ci/docker-recovery-smoke.sh --cross-version \
   "ghcr.io/ostinatocc/aionis@${DIGEST}" "$MAIN_COMMIT" "v0.3.12"

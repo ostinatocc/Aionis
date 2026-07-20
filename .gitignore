@@ -8,6 +8,7 @@
 tmp/
 node_modules
 **/node_modules
+/external/
 .vscode-test
 .artifacts
 .next
