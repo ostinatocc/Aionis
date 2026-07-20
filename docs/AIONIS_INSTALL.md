@@ -31,10 +31,11 @@ npx aionis setup
 
 The frozen installer currently selects Runtime v0.3.6. It is the default
 published-beta install path, not the v0.3.11 candidate test path. Runtime
-v0.3.10 remains the latest immutable release, but its default Docker command
-does not make Runtime the container's PID 1. Do not use that image as the
-durable-container release. Test v0.3.11 only from the reviewed source checkout
-until its immutable tag and image have passed the release gates.
+v0.3.11 is published separately as a non-latest GitHub prerelease and verified
+`linux/amd64` Docker image. It fixes the v0.3.10 PID 1 boundary, but it does not
+replace the frozen installer default. Publication evidence is recorded in
+[`v0.3.11-publication-evidence.json`](releases/v0.3.11-publication-evidence.json)
+at `docs/releases/v0.3.11-publication-evidence.json`.
 
 The setup command asks for the install directory, provider, optional
 AIFS/Zvec/Claude Code setup. If you choose OpenAI, DashScope, MiniMax, or another
@@ -68,15 +69,14 @@ prints Runtime start and integration next steps.
 
 ## Docker
 
-The checked-in candidate uses
-`ghcr.io/ostinatocc/aionis:v0.3.11`. It does not exist as a release artifact
-until the immutable tag workflow verifies and promotes its digest:
+The published candidate tag is `ghcr.io/ostinatocc/aionis:v0.3.11`. Pin its
+verified digest when evaluating the candidate:
 
 ```bash
 docker run --rm \
   -p 127.0.0.1:3001:3001 \
   -v aionis-data:/data \
-  ghcr.io/ostinatocc/aionis:v0.3.11
+  ghcr.io/ostinatocc/aionis@sha256:140603566945fccebbdb019c713e51578d5e14ca369ce88989b34768acbfba94
 ```
 
 Then check readiness:

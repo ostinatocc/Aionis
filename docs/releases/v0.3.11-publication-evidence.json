@@ -1,0 +1,87 @@
+{
+  "schema_version": "aionis_release_publication_evidence_v1",
+  "release_status": "candidate",
+  "runtime": {
+    "version": "0.3.11",
+    "tag": "v0.3.11",
+    "tag_object_oid": "f5e64f706712d937ac7339ee20a8ba4d62263e0b",
+    "commit": "5223221d914e7d6950ae9b75b15f36c3f11b1846"
+  },
+  "provider_evidence": {
+    "workflow_name": "Exact Main Embedding Smoke",
+    "run_id": 29716668207,
+    "run_attempt": 1,
+    "job_id": 88271199569,
+    "url": "https://github.com/ostinatocc/Aionis/actions/runs/29716668207",
+    "event": "workflow_dispatch",
+    "head_branch": "main",
+    "head_sha": "5223221d914e7d6950ae9b75b15f36c3f11b1846",
+    "evidence_id": "candidate-5223221d914e7d6950ae9b75b15f36c3f11b1846-20260720T042100Z-f46a7bc1d0d51abb",
+    "model": "qwen3.7-text-embedding",
+    "conclusion": "success",
+    "created_at": "2026-07-20T04:21:02Z",
+    "updated_at": "2026-07-20T06:09:10Z"
+  },
+  "docker": {
+    "image": "ghcr.io/ostinatocc/aionis",
+    "release_tag": "v0.3.11",
+    "digest": "sha256:140603566945fccebbdb019c713e51578d5e14ca369ce88989b34768acbfba94",
+    "platforms": [
+      "linux/amd64"
+    ],
+    "image_manifest_digest": "sha256:cb3cfd068f09ab9e3524dfae5b0c05c8401327d58f68a54ca2aeb6ce0068c4c1",
+    "attestation_manifest_digest": "sha256:354f1070b833f484be9e4dd60d4ad87834bee5c4c6dbb415fe1599c3ae4e5e76",
+    "immutable_subject": "ghcr.io/ostinatocc/aionis:build-v0.3.11-5223221d914e7d6950ae9b75b15f36c3f11b1846-29721413695-2",
+    "source_workflow": {
+      "workflow_name": "Docker",
+      "run_id": 29721413695,
+      "run_attempt": 2,
+      "url": "https://github.com/ostinatocc/Aionis/actions/runs/29721413695/attempts/2",
+      "event": "push",
+      "head_branch": "v0.3.11",
+      "head_sha": "5223221d914e7d6950ae9b75b15f36c3f11b1846",
+      "conclusion": "failure",
+      "publish_job_id": 88287465279,
+      "failed_step": "Promote the verified digest to release tags",
+      "completed_exact_digest_gates": {
+        "build": true,
+        "immutable_subject_verification": true,
+        "release_smoke": true,
+        "process_death_recovery": true
+      },
+      "created_at": "2026-07-20T06:36:22Z",
+      "updated_at": "2026-07-20T06:39:53Z"
+    },
+    "recovery_workflow": {
+      "workflow_name": "Docker",
+      "run_id": 29724213137,
+      "run_attempt": 1,
+      "job_id": 88295089499,
+      "url": "https://github.com/ostinatocc/Aionis/actions/runs/29724213137",
+      "event": "workflow_dispatch",
+      "head_branch": "main",
+      "head_sha": "2be69eaff5f389fa8ac9327d17285b4126e72d69",
+      "source_run_id": 29721413695,
+      "source_run_attempt": 2,
+      "expected_digest": "sha256:140603566945fccebbdb019c713e51578d5e14ca369ce88989b34768acbfba94",
+      "registry_writes": "none",
+      "release_smoke_succeeded": true,
+      "process_death_recovery_succeeded": true,
+      "conclusion": "success",
+      "created_at": "2026-07-20T07:18:31Z",
+      "updated_at": "2026-07-20T07:29:17Z"
+    }
+  },
+  "github_release": {
+    "id": 356559045,
+    "tag": "v0.3.11",
+    "url": "https://github.com/ostinatocc/Aionis/releases/tag/v0.3.11",
+    "created_at": "2026-07-20T06:20:44Z",
+    "published_at": "2026-07-20T07:37:20Z",
+    "updated_at": "2026-07-20T07:37:20Z",
+    "prerelease": true,
+    "latest": false,
+    "draft": false,
+    "immutable": false
+  }
+}

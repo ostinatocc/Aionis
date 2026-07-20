@@ -421,10 +421,14 @@ test("internal HTTP inventory distinguishes temporary adapters from completed re
   const required = rows.filter((row) => row.public_http === "required");
   const temporary = rows.filter((row) => row.public_http === "temporary");
   const removed = rows.filter((row) => row.public_http === "removed");
+  const markdown = fs.readFileSync(HTTP_SURFACE_INVENTORY_PATH, "utf8");
+  const exposureCount = (exposure: LiteRouteProductExposure) => required.filter((row) => row.exposure === exposure).length;
 
   assert.equal(required.length, 21);
   assert.equal(temporary.length, 0);
   assert.equal(removed.length, 57);
+  assert.match(markdown, new RegExp(`Scope: ${required.length} registered routes plus ${removed.length} removal records`));
+  assert.match(markdown, new RegExp(`registers ${required.length} inventoried HTTP routes: ${exposureCount("product_entry")} product entries,\\s+${exposureCount("product_support")} stable product-support contracts, and ${exposureCount("operator_support")} operator-support contracts`));
 
   assert.equal(
     LITE_ROUTE_CAPABILITY_MATRIX.some((entry) => INTERNAL_EXPOSURES.has(entry.exposure)),

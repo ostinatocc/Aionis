@@ -2,18 +2,23 @@
 
 Release status `candidate`.
 
-Runtime `v0.3.11` is the next Runtime-only Local Runtime Public Beta patch.
-It fixes the Docker process boundary discovered after v0.3.10: the published
+Runtime `v0.3.11` is a published Runtime-only Local Runtime Public Beta
+prerelease candidate.
+It fixes the Docker process boundary discovered after v0.3.10: the v0.3.10
 image starts through npm, so Docker SIGTERM can terminate the parent process
 without executing Runtime's awaited shutdown path. v0.3.11 launches the
 existing signal-aware startup script directly, whose final `exec` makes Node
 PID 1.
 
-Candidate status alone does not create or validate the v0.3.11 tag, image, or
-GitHub Release. Each becomes a release artifact only after the exact-commit
-gates below pass. Runtime v0.3.10 and its published digest stay immutable. The
-supported target remains one self-hosted `linux/amd64` Runtime process with
-SQLite authority; this is not a managed service or multi-instance HA release.
+The annotated tag, exact `linux/amd64` image digest, protected-provider run,
+read-only Docker recovery run, and non-latest GitHub prerelease are bound in
+`docs/releases/v0.3.11-publication-evidence.json`. The source Docker run is
+truthfully recorded as failed at its final promotion/readback step after all
+exact-digest gates had passed; the later successful recovery run performed no
+registry writes and revalidated that same digest. Runtime v0.3.10 and its
+published digest stay immutable. The supported target remains one self-hosted
+Runtime process with SQLite authority; this is not a managed service or
+multi-instance HA release.
 
 ## Candidate Coordinates
 
@@ -52,14 +57,20 @@ publish npm packages or change the installer default.
 Runtime routes, schema v6, learning posture, package contracts, and external
 package commits are unchanged. Global admission-candidate serving remains off.
 
-## Required Evidence
+## Published Evidence
 
 The implementation has passed a local `linux/amd64` image exercise covering
 Node PID 1, graceful drain/exit 0, SIGKILL exit 137 with `OOMKilled=false`, two
 fresh-container recoveries, exact replay, conflict rejection, memory resolve,
 worker health, mode-0600 SQLite files, and offline integrity verification.
-That engineering result is not final release evidence: the settled v0.3.11
-commit and rebuilt image must pass all exact-commit gates again.
+The published candidate additionally passed the same-SHA protected DashScope
+gate and the exact-digest release and process-death recovery gates. The
+machine-checkable receipt is
+[`docs/releases/v0.3.11-publication-evidence.json`](docs/releases/v0.3.11-publication-evidence.json).
+
+The commands below are retained as the historical release procedure and as the
+contract for a future release train; they are not instructions to recreate or
+move the existing v0.3.11 tag.
 
 ```bash
 npm run -s typecheck
@@ -94,10 +105,11 @@ credential in this repository, logs, release notes, artifacts, or a child
 package checkout. A successful run also proves the immutable Runtime tag is
 still absent after the provider smoke completes.
 
-## Promotion Checklist
+## Historical Promotion Checklist
 
-Do not create the tag until this exact candidate commit has passed all
-convergence checks, exact-main CI, and protected external embedding evidence.
+For a new, not-yet-tagged release, do not create the tag until the exact
+candidate commit has passed all convergence checks, exact-main CI, and
+protected external embedding evidence.
 
 ```bash
 set -euo pipefail
@@ -190,6 +202,11 @@ Do not republish `@aionis/create@0.3.8`; its default Runtime remains `v0.3.6`.
 Do not republish any other frozen package coordinate. Do not move, delete, or
 recreate the immutable v0.3.10 tag or image digest.
 
-No v0.3.11 announcement is complete until the immutable tag resolves to the
-verified main commit, the tag workflow is green, and both exact-digest Docker
-smokes pass.
+The normal release path requires a green tag workflow. If a post-promotion
+registry readback alone marks that run failed, publication is complete only
+when a checked evidence receipt binds the exact source run and attempt, commit,
+digest, already-completed exact-digest gates, a successful read-only recovery
+run with `registry_writes` equal to `none`, and the subsequent verified GitHub
+prerelease. That bounded recovery rule is the one documented for v0.3.11 in
+`docs/releases/v0.3.11-publication-evidence.json`; it does not authorize a
+rerun that rebuilds or overwrites the image.

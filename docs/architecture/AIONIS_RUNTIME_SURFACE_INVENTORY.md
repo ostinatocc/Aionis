@@ -1,16 +1,17 @@
 # Aionis Runtime HTTP Surface Inventory
 
-Updated: 2026-07-11
-Scope: 19 registered routes plus 53 removal records
+Updated: 2026-07-20
+Scope: 21 registered routes plus 57 removal records
 
 ## Decision
 
-The Runtime now registers 19 inventoried HTTP routes: 6 product entries,
-3 stable product-support contracts, and 10 operator-support contracts. Task 11
+The Runtime now registers 21 inventoried HTTP routes: 7 product entries,
+3 stable product-support contracts, and 11 operator-support contracts. Task 11
 removed 45 implementation-only HTTP adapters, and the temporary-transport
 phase removed the final 8 internal routes after migrating Manifest and Runtime
-eval consumers. Their capabilities remain behind product contracts, typed
-services, and domain functions.
+eval consumers. The focused route audit removed 4 operator-browser routes, for
+57 removal records in total. Their capabilities remain behind product
+contracts, typed services, and domain functions.
 
 This inventory remains the deletion gate and records completed removals.
 AionisManifest now uses `/v1/guide` and exposure-verified `/v1/feedback` for
@@ -32,7 +33,7 @@ composition through typed functions is recorded in the replacement column.
 
 Exposure meanings:
 
-- `product_entry`: the six focused product verbs.
+- `product_entry`: the seven focused product verbs.
 - `product_support`: a stable lower-level contract with a real external caller.
 - `operator_support`: an explicitly documented review, audit, or CLI contract.
 - `internal_guidance`: compiles or selects context behind `guide`.

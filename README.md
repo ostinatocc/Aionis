@@ -45,13 +45,13 @@ npx aionis setup
 
 Current candidate: **Runtime v0.3.11 / SDK v0.3.19 / Manifest v0.1.1**.
 The frozen `aionis` installer still installs Runtime v0.3.6; the command above
-does not install this candidate. Runtime v0.3.10 remains the latest
-immutable release, but its default Docker command does not make Runtime the
-container's PID 1, so it must not be treated as the durable-container release.
-v0.3.11 fixes that packaging boundary and adds exact-image graceful/crash
-recovery gates. Until a new immutable tag is published, test v0.3.11 only from
-the reviewed source checkout. The candidate is intended for a single
-self-hosted Runtime process with same-host Agent clients.
+does not install this candidate. Runtime v0.3.11 is published as a non-latest
+GitHub prerelease with one verified `linux/amd64` image digest. It fixes the
+v0.3.10 Docker PID 1 boundary and adds exact-image graceful/crash recovery
+gates. The tag-and-digest publication chain is recorded in
+[`docs/releases/v0.3.11-publication-evidence.json`](docs/releases/v0.3.11-publication-evidence.json).
+The candidate is intended for a single self-hosted Runtime process with
+same-host Agent clients.
 The TypeScript SDK, HTTP API, MCP bridge, AIFS file surface, Memory Firewall,
 Agent Flight Recorder, optional Zvec candidate retrieval, and Substrate
 evidence sidecar are available for beta integration and evaluation.
@@ -115,15 +115,15 @@ This enables Zvec as a persisted candidate index while keeping SQLite as the
 Runtime fact source. Aionis still performs final scope, lifecycle, authority,
 admission, and rehydrate governance after candidates are loaded.
 
-The candidate Docker coordinate is `ghcr.io/ostinatocc/aionis:v0.3.11`. It is
-not a published artifact before the immutable tag workflow verifies and
-promotes its digest. After that workflow succeeds, run it with:
+The published candidate tag is `ghcr.io/ostinatocc/aionis:v0.3.11`. For an
+exact candidate deployment, pin the verified digest recorded in
+`docs/releases/v0.3.11-publication-evidence.json`:
 
 ```bash
 docker run --rm \
   -p 127.0.0.1:3001:3001 \
   -v aionis-data:/data \
-  ghcr.io/ostinatocc/aionis:v0.3.11
+  ghcr.io/ostinatocc/aionis@sha256:140603566945fccebbdb019c713e51578d5e14ca369ce88989b34768acbfba94
 ```
 
 The container process listens on `0.0.0.0` inside its network namespace so

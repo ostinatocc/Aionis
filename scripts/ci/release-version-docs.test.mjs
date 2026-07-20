@@ -1,5 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
+import { createHash } from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
@@ -18,17 +19,11 @@ const PACKAGE_NAMES = {
 };
 const RELEASE_STATUSES = new Set(["stable", "candidate", "development"]);
 
-function read(rel) {
-  return fs.readFileSync(path.join(ROOT, rel), "utf8");
-}
+function read(rel) { return fs.readFileSync(path.join(ROOT, rel), "utf8"); }
 
-function readJson(rel) {
-  return JSON.parse(read(rel));
-}
+function readJson(rel) { return JSON.parse(read(rel)); }
 
-function releaseTrain() {
-  return readJson("release-train.json");
-}
+function releaseTrain() { return readJson("release-train.json"); }
 
 function workspaceRepository(name) {
   for (const candidate of [path.resolve(ROOT, "..", name), path.resolve(ROOT, "..", "..", name)]) {
@@ -37,9 +32,7 @@ function workspaceRepository(name) {
   return null;
 }
 
-function escapeRegExp(value) {
-  return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-}
+function escapeRegExp(value) { return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"); }
 
 function assertReleaseTableCell(source, artifact, expectedToken) {
   const pattern = new RegExp(`^\\|\\s*${escapeRegExp(artifact)}\\s*\\|\\s*([^|]+)\\|`, "m");
@@ -50,7 +43,6 @@ function assertReleaseTableCell(source, artifact, expectedToken) {
 
 test("release-train.json is the checked-in source for immutable release coordinates", () => {
   const train = releaseTrain();
-
   assert.equal(train.schema_version, "aionis_release_train_v1");
   assert.ok(RELEASE_STATUSES.has(train.status), "release status must be stable, candidate, or development");
   assert.match(train.runtime.version, /^\d+\.\d+\.\d+$/);
@@ -59,10 +51,7 @@ test("release-train.json is the checked-in source for immutable release coordina
   assert.deepEqual(train.runtime.docker_platforms, ["linux/amd64"]);
   assert.match(train.runtime.docker_image, /^ghcr\.io\//);
   assert.doesNotMatch(train.runtime.default_installer_ref, /^(main|master|latest|HEAD)$/i);
-  if (train.status === "stable") {
-    assert.equal(train.runtime.default_installer_ref, train.runtime.source_tag);
-  }
-
+  if (train.status === "stable") assert.equal(train.runtime.default_installer_ref, train.runtime.source_tag);
   assert.deepEqual(Object.keys(train.packages).sort(), Object.keys(PACKAGE_NAMES).sort());
   for (const [key, expectedName] of Object.entries(PACKAGE_NAMES)) {
     assert.equal(train.packages[key].name, expectedName);
@@ -79,7 +68,6 @@ test("release-train.json is the checked-in source for immutable release coordina
 test("runtime manifest and package metadata stay aligned with release-train.json", () => {
   const train = releaseTrain();
   const runtimeManifest = readJson("runtime-manifest.json");
-
   assert.equal(packageJson.version, train.runtime.version);
   assert.equal(runtimeManifest.release?.version, train.runtime.version);
   assert.equal(runtimeManifest.release?.status, train.status);
@@ -95,13 +83,11 @@ test("release docs derive all package and Runtime coordinates from release-train
   const releaseNotes = read("RELEASE_NOTES.md");
   const releaseDocs = read("docs/AIONIS_RELEASES.md");
   const patchNotesPath = `docs/releases/v${train.runtime.version}.md`;
-
   assert.ok(releaseNotes.includes(`# Aionis v${train.runtime.version}`));
   assert.ok(releaseDocs.includes(`Status: v${train.runtime.version}`));
   assert.ok(releaseDocs.includes(`./releases/v${train.runtime.version}.md`));
   assert.ok(fs.existsSync(path.join(ROOT, patchNotesPath)), `${patchNotesPath} must exist`);
   const patchNotes = read(patchNotesPath);
-
   for (const entry of Object.values(train.packages)) {
     const token = `${entry.name}@${entry.version}`;
     assert.ok(releaseNotes.includes(token), `RELEASE_NOTES.md should mention ${token}`);
@@ -117,6 +103,30 @@ test("release docs derive all package and Runtime coordinates from release-train
   assertReleaseTableCell(releaseDocs, "GitHub Runtime source", `\`${train.runtime.source_tag}\``);
   assertReleaseTableCell(releaseDocs, "Docker image", `\`${dockerArtifact}\``);
   assertReleaseTableCell(releaseDocs, "Default installer Runtime ref", `\`${train.runtime.default_installer_ref}\``);
+});
+
+test("published v0.3.11 evidence receipt binds the release chain", () => {
+  const receiptPath = "docs/releases/v0.3.11-publication-evidence.json";
+  const receiptSource = read(receiptPath);
+  const receipt = JSON.parse(receiptSource);
+  assert.equal(createHash("sha256").update(receiptSource).digest("hex"), "05d4bd13155413ae840310a99065b4cda0a6b54a711ddb144e074916aef96540", "published coordinates must not drift");
+  assert.deepEqual(
+    [receipt.schema_version, receipt.release_status, receipt.runtime.version, receipt.runtime.tag, receipt.provider_evidence.conclusion, receipt.provider_evidence.head_sha],
+    ["aionis_release_publication_evidence_v1", "candidate", "0.3.11", "v0.3.11", "success", receipt.runtime.commit],
+  );
+  assert.deepEqual(
+    [receipt.docker.image, receipt.docker.release_tag, receipt.docker.platforms, receipt.docker.source_workflow.head_sha, receipt.docker.source_workflow.conclusion, receipt.docker.source_workflow.failed_step, receipt.docker.source_workflow.completed_exact_digest_gates],
+    ["ghcr.io/ostinatocc/aionis", "v0.3.11", ["linux/amd64"], receipt.runtime.commit, "failure", "Promote the verified digest to release tags", { build: true, immutable_subject_verification: true, release_smoke: true, process_death_recovery: true }],
+  );
+  assert.deepEqual(
+    [receipt.docker.recovery_workflow.conclusion, receipt.docker.recovery_workflow.source_run_id, receipt.docker.recovery_workflow.source_run_attempt, receipt.docker.recovery_workflow.expected_digest, receipt.docker.recovery_workflow.registry_writes, receipt.github_release.prerelease, receipt.github_release.latest, receipt.github_release.draft, receipt.github_release.immutable],
+    ["success", receipt.docker.source_workflow.run_id, receipt.docker.source_workflow.run_attempt, receipt.docker.digest, "none", true, false, false, false],
+  );
+  assert.match(receipt.provider_evidence.evidence_id, new RegExp(`^candidate-${receipt.runtime.commit}-`));
+  assert.ok(Date.parse(receipt.github_release.published_at) > Date.parse(receipt.docker.recovery_workflow.updated_at));
+  const currentDocs = releaseTrain().runtime.version === receipt.runtime.version ? ["README.md", "RELEASE_NOTES.md", "docs/AIONIS_INSTALL.md", "docs/AIONIS_RELEASES.md"] : [];
+  for (const file of ["docs/AIONIS_RELEASES.md", "docs/releases/v0.3.11.md", ...currentDocs]) assert.ok(read(file).includes(receiptPath), `${file} must cite the publication evidence receipt`);
+  for (const file of ["docs/releases/v0.3.11.md", ...currentDocs.filter((file) => file !== "RELEASE_NOTES.md")]) assert.ok(read(file).includes(`${receipt.docker.image}@${receipt.docker.digest}`), `${file} must pin the published digest`);
 });
 
 test("public SDK version surfaces follow the frozen release-train coordinate", () => {
@@ -139,10 +149,7 @@ const createRepository = workspaceRepository("aionis-create");
 test("workspace @aionis/create default ref matches release-train.json", { skip: !createRepository }, () => {
   const train = releaseTrain();
   const createSource = fs.readFileSync(path.join(createRepository, "src/index.ts"), "utf8");
-  assert.ok(
-    createSource.includes(`export const DEFAULT_RUNTIME_REF = "${train.runtime.default_installer_ref}"`),
-    "@aionis/create default Runtime ref must match release-train.json",
-  );
+  assert.ok(createSource.includes(`export const DEFAULT_RUNTIME_REF = "${train.runtime.default_installer_ref}"`), "@aionis/create default Runtime ref must match release-train.json");
 });
 
 test("release docs preserve the Runtime tag, frozen installer, and candidate status", () => {
@@ -153,11 +160,7 @@ test("release docs preserve the Runtime tag, frozen installer, and candidate sta
   const remoteTagAbsenceGuard = `test -z "$(git ls-remote --tags origin refs/tags/${train.runtime.source_tag} 'refs/tags/${train.runtime.source_tag}^{}')"`;
   if (train.status === "candidate") {
     assert.match(read("RELEASE_NOTES.md"), /gh release create[\s\S]*?--verify-tag[\s\S]*?--prerelease[\s\S]*?--latest=false[\s\S]*?--notes-file/, "candidate GitHub Release must be a verified non-latest prerelease");
-    assert.doesNotMatch(
-      read(`docs/releases/v${train.runtime.version}.md`),
-      /not tagged or published yet|Future immutable tag|Future `linux\/amd64` artifact/,
-      "candidate release notes must not retain development-only publication claims",
-    );
+    assert.doesNotMatch(read(`docs/releases/v${train.runtime.version}.md`), /not tagged or published yet|Future immutable tag|Future `linux\/amd64` artifact/, "candidate release notes must not retain development-only publication claims");
   }
 
   for (const file of ["RELEASE_NOTES.md", "docs/AIONIS_RELEASES.md"]) {
@@ -166,10 +169,7 @@ test("release docs preserve the Runtime tag, frozen installer, and candidate sta
     assert.ok(source.includes(runtimeTagCommand), `${file} must include the Runtime tag command`);
     assert.ok(source.includes("git fetch origin main --tags"), `${file} must refresh origin/main before tagging`);
     assert.ok(source.includes("git switch main"), `${file} must leave the release branch before tagging`);
-    assert.ok(
-      source.includes(`${runtimeTagCommand} "$MAIN_COMMIT"`),
-      `${file} must tag the verified origin/main commit explicitly`,
-    );
+    assert.ok(source.includes(`${runtimeTagCommand} "$MAIN_COMMIT"`), `${file} must tag the verified origin/main commit explicitly`);
     for (const guard of ["set -euo pipefail", candidateStatusGuard, localTagAbsenceGuard, remoteTagAbsenceGuard]) {
       assert.ok(source.includes(guard), `${file} must include the pre-tag guard: ${guard}`);
       assert.ok(source.indexOf(guard) < tagIndex, `${file} must run the pre-tag guard before creating the tag: ${guard}`);
@@ -178,10 +178,6 @@ test("release docs preserve the Runtime tag, frozen installer, and candidate sta
     assert.ok(source.indexOf("docker-recovery-smoke.sh") > tagIndex, `${file} must run the recovery digest smoke after the tag workflow`);
     assert.ok(source.indexOf("gh release create") > tagIndex, `${file} must create the GitHub prerelease only after tag verification`);
     assert.ok(source.includes(`Do not republish \`${train.packages.create.name}@${train.packages.create.version}\``), `${file} must explicitly hold the frozen Create package`);
-    assert.doesNotMatch(
-      source,
-      /cd \/Volumes\/ziel\/new\.aionis\/aionis-create[\s\S]{0,160}npm publish/,
-      `${file} must not instruct operators to republish the frozen Create package`,
-    );
+    assert.doesNotMatch(source, /cd \/Volumes\/ziel\/new\.aionis\/aionis-create[\s\S]{0,160}npm publish/, `${file} must not instruct operators to republish the frozen Create package`);
   }
 });

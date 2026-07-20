@@ -3,12 +3,13 @@
 Status: v0.3.11 Local Runtime Public Beta candidate.
 
 v0.3.11 is the patch train for the Docker PID 1 and cross-process recovery
-boundary. Candidate status alone does not create or validate its tag, image,
-or GitHub Release; each becomes a release artifact only after all exact-commit
-gates pass. v0.3.10 remains the latest immutable stable release, but its
-default container command does not deliver Docker SIGTERM directly to Runtime,
-so it is not the durable-container target. The v0.3.10 tag and digest remain
-immutable.
+boundary. It is now published as a non-latest GitHub prerelease with one
+verified `linux/amd64` digest; it is still a candidate, not stable or GA. The
+complete tag-and-digest publication chain is recorded in
+[`v0.3.11-publication-evidence.json`](./releases/v0.3.11-publication-evidence.json)
+at `docs/releases/v0.3.11-publication-evidence.json`. v0.3.10's default
+container command does not deliver Docker SIGTERM directly to Runtime, so it
+is not the durable-container target. Its tag and digest remain immutable.
 
 The supported release posture is one self-hosted Runtime process with SQLite
 authority on `linux/amd64`. It is not GA, a managed multi-tenant service, or a
@@ -18,8 +19,8 @@ multi-instance HA release.
 
 | Artifact | Current channel | Immutable source ref | Purpose |
 |---|---:|---:|---|
-| GitHub Runtime source | `v0.3.11` candidate | `v0.3.11` | Becomes immutable only after all pre-tag gates pass and the tag is created. |
-| Docker image | `ghcr.io/ostinatocc/aionis:v0.3.11` candidate coordinate | Runtime `v0.3.11` | Published only after the tag workflow verifies and promotes one `linux/amd64` digest. |
+| GitHub Runtime source | `v0.3.11` published prerelease candidate | `v0.3.11` | Annotated tag at the receipt-bound Runtime commit. |
+| Docker image | `ghcr.io/ostinatocc/aionis:v0.3.11` published candidate | Runtime `v0.3.11` | Verified `linux/amd64` digest recorded in the publication receipt. |
 | Default installer Runtime ref | `v0.3.6` frozen | `v0.3.6` | Immutable Runtime selected by the frozen installer. |
 | `aionis` | `0.3.8` frozen | `v0.3.8` | Top-level setup and operator CLI. |
 | `@aionis/create` | `0.3.8` frozen | `v0.3.8` | One-command installer; its default remains Runtime v0.3.6. |
@@ -35,7 +36,8 @@ Runtime CI resolves SDK and Manifest from that authority; Docker release
 verification resolves all eight external repositories and fails closed on any
 checkout, tag, commit, package name, or version mismatch.
 
-Candidate notes: [v0.3.11 candidate notes](./releases/v0.3.11.md).
+Candidate notes: [v0.3.11 candidate notes](./releases/v0.3.11.md). Publication
+receipt: [v0.3.11 evidence](./releases/v0.3.11-publication-evidence.json).
 
 ## v0.3.11 Candidate Scope
 
@@ -55,22 +57,30 @@ The route matrix, schema v6, learning posture, complexity ratchet, external npm
 packages, and installer ref do not change in this patch. Global
 admission-candidate serving remains off.
 
-## Candidate Image
+## Published Candidate Image
 
-The candidate coordinate is:
+For an exact deployment, use the verified digest rather than resolving the tag
+again:
 
 ```bash
 docker run --rm \
   -p 127.0.0.1:3001:3001 \
   -v aionis-data:/data \
-  ghcr.io/ostinatocc/aionis:v0.3.11
+  ghcr.io/ostinatocc/aionis@sha256:140603566945fccebbdb019c713e51578d5e14ca369ce88989b34768acbfba94
 ```
 
-Do not pull or advertise that coordinate before the tag-triggered workflow
-builds one immutable digest, passes both exact-digest smokes, and promotes that
-digest.
+The source tag run passed build, immutable-subject verification, basic smoke,
+and cross-process recovery, then was marked failed by the final promotion
+readback. A subsequent successful read-only recovery run performed no registry
+writes and re-ran both exact-digest smokes against the promoted digest. Both
+runs and their relationship are preserved in
+`docs/releases/v0.3.11-publication-evidence.json`; the source run is not
+misreported as green.
 
-## Required Gate
+## Historical Required Gate
+
+The commands below remain the gate contract for a new release train. They are
+not instructions to recreate the already-published v0.3.11 artifacts.
 
 ```bash
 npm run -s typecheck
@@ -102,11 +112,12 @@ random nonce and the runbook rejects ambiguous title matches. The provider
 workflow checks that the immutable Runtime tag is still absent after the smoke
 completes.
 
-## Promotion Checklist
+## Historical Promotion Checklist
 
-Run this after the reviewed candidate commit is the exact `origin/main` SHA and
-its full Runtime CI is green. This procedure obtains the protected external
-evidence; create the tag only after that evidence succeeds:
+For a new, not-yet-tagged candidate, run this after the reviewed commit is the
+exact `origin/main` SHA and its full Runtime CI is green. This procedure obtains
+the protected external evidence; create the tag only after that evidence
+succeeds:
 
 ```bash
 set -euo pipefail
@@ -195,8 +206,14 @@ gh release create v0.3.11 \
   --notes-file docs/releases/v0.3.11.md
 ```
 
-The tag alone is not a release. The workflow, digest checks, both smoke gates,
-and verified GitHub prerelease above are all required.
+The tag alone is not a release. Normally the tag workflow, digest checks, both
+smoke gates, and verified GitHub prerelease above must all succeed. A bounded
+exception is allowed only when the failure happens after digest promotion and
+a checked receipt proves the exact source run/attempt and commit, the promoted
+digest, every completed exact-digest gate, a successful read-only recovery run
+with no registry writes, and the later GitHub prerelease. The v0.3.11 receipt is
+`docs/releases/v0.3.11-publication-evidence.json`; it preserves the original
+failed conclusion instead of turning it green after the fact.
 
 Do not republish `@aionis/create@0.3.8`; it is already frozen and continues to
 select Runtime v0.3.6. Do not republish any other frozen npm coordinate for
