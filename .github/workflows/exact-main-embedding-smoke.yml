@@ -26,6 +26,9 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 30
     environment: exact-main-embedding
+    env:
+      EXPECTED_SHA: ${{ inputs.expected_sha }}
+      EVIDENCE_ID: ${{ inputs.evidence_id }}
     steps:
       - name: Checkout expected Runtime commit
         uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
@@ -35,30 +38,26 @@ jobs:
           persist-credentials: false
 
       - name: Verify exact origin/main commit
-        env:
-          EXPECTED_SHA: ${{ inputs.expected_sha }}
-          EVIDENCE_ID: ${{ inputs.evidence_id }}
         run: |
           set -euo pipefail
           if [[ ! "${EXPECTED_SHA}" =~ ^[0-9a-f]{40}$ ]]; then
             echo "expected_sha must be a lowercase 40-character commit" >&2
             exit 1
           fi
-          if [[ ! "${EVIDENCE_ID}" =~ ^[a-z0-9][a-z0-9._:-]{0,95}$ ]]; then
-            echo "evidence_id must be a lowercase release evidence identifier" >&2
+          evidence_pattern="^(candidate|stable)-${EXPECTED_SHA}-[0-9]{8}T[0-9]{6}Z-[0-9a-f]{16}$"
+          if [[ ! "${EVIDENCE_ID}" =~ ${evidence_pattern} ]]; then
+            echo "evidence_id must match <candidate|stable>-${EXPECTED_SHA}-YYYYMMDDTHHMMSSZ-<16 lowercase hex>" >&2
             exit 1
           fi
           actual_commit="$(git rev-parse 'HEAD^{commit}')"
           dispatch_commit="${GITHUB_SHA}"
           dispatch_ref="${GITHUB_REF}"
-          git fetch --no-tags origin \
-            '+refs/heads/main:refs/remotes/origin/main'
+          git fetch --no-tags origin '+refs/heads/main:refs/remotes/origin/main'
           main_commit="$(git rev-parse 'refs/remotes/origin/main^{commit}')"
           test "${actual_commit}" = "${EXPECTED_SHA}"
           test "${dispatch_commit}" = "${EXPECTED_SHA}"
           test "${dispatch_ref}" = "refs/heads/main"
           test "${main_commit}" = "${EXPECTED_SHA}"
-
       - name: Set up Node.js
         uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
         with:
@@ -70,11 +69,12 @@ jobs:
         run: |
           node --input-type=module <<'NODE'
           import fs from "node:fs";
-
           const train = JSON.parse(fs.readFileSync("release-train.json", "utf8"));
           if (!["candidate", "stable"].includes(train.status)) {
             throw new Error(`exact-main embedding release evidence requires candidate or stable status; got ${train.status}`);
           }
+          const expectedEvidenceId = new RegExp(`^${train.status}-${process.env.EXPECTED_SHA}-\\d{8}T\\d{6}Z-[0-9a-f]{16}$`);
+          if (!expectedEvidenceId.test(process.env.EVIDENCE_ID)) throw new Error("evidence_id does not match the checked-out release status");
           for (const key of ["sdk", "mcp", "create"]) {
             const artifact = train.packages?.[key];
             if (!artifact || typeof artifact.source_ref !== "string" || !artifact.source_ref.trim()) {

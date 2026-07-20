@@ -105,7 +105,7 @@ test("Docker image is built once, smoked by digest, and only then promoted", () 
   assert.match(workflow, /run\?\.status === "completed"/);
   assert.match(workflow, /run\?\.conclusion === "success"/);
   assert.match(workflow, /expectedTitle\.test\(String\(run\?\.display_title/);
-  assert.ok(workflow.includes("T\\\\d{6}Z-[0-9a-f]{16}$"));
+  assert.ok(workflow.includes("${train.status}-${escapedCommit}-\\\\d{8}T\\\\d{6}Z-[0-9a-f]{16}$"));
   assert.match(workflow, /actions\/runs\/\$\{GITHUB_RUN_ID\}/);
   assert.match(workflow, /releaseRun\.created_at/);
   assert.match(workflow, /run\?\.updated_at/);
@@ -437,9 +437,8 @@ test("exact-main embedding smoke is manual, read-only, protected, and fail-close
 
   assert.match(workflow, /^name: Exact Main Embedding Smoke$/m);
   assert.match(workflow, /^on:\n  workflow_dispatch:\n    inputs:\n      expected_sha:/m);
-  assert.match(workflow, /expected_sha:[\s\S]*?required: true[\s\S]*?type: string/);
-  assert.match(workflow, /evidence_id:[\s\S]*?required: true[\s\S]*?type: string/);
-  assert.match(workflow, /run-name: Exact Main Embedding Smoke \$\{\{ inputs\.expected_sha \}\} \$\{\{ inputs\.evidence_id \}\}/);
+  assert.match(workflow, /expected_sha:[\s\S]*?required: true[\s\S]*?type: string[\s\S]*?evidence_id:[\s\S]*?required: true[\s\S]*?type: string/);
+  assert.match(workflow, /run-name: Exact Main Embedding Smoke \$\{\{ inputs\.expected_sha \}\} \$\{\{ inputs\.evidence_id \}\}[\s\S]*?^    env:\n      EXPECTED_SHA: \$\{\{ inputs\.expected_sha \}\}\n      EVIDENCE_ID: \$\{\{ inputs\.evidence_id \}\}$/m);
   assert.doesNotMatch(workflow, /^  (?:push|pull_request|schedule):/m);
   assert.match(workflow, /^permissions:\n  contents: read$/m);
   assert.doesNotMatch(workflow, /(?:contents|packages|id-token): write/);
@@ -460,7 +459,13 @@ test("exact-main embedding smoke is manual, read-only, protected, and fail-close
   assert.match(workflow, /test "\$\{dispatch_ref\}" = "refs\/heads\/main"/);
   assert.match(workflow, /\+refs\/heads\/main:refs\/remotes\/origin\/main/);
   assert.match(workflow, /test "\$\{main_commit\}" = "\$\{EXPECTED_SHA\}"/);
-  assert.match(workflow, /exact-main embedding release evidence requires candidate or stable status/);
+  assert.match(workflow, /exact-main embedding release evidence requires candidate or stable status[\s\S]*?expectedEvidenceId[\s\S]*?train\.status[\s\S]*?process\.env\.EXPECTED_SHA/);
+  const evidencePatternSource = workflow.match(/evidence_pattern="([^"]+)"/)?.[1];
+  assert.ok(evidencePatternSource, "workflow must declare the exact evidence ID pattern");
+  const sampleSha = "a".repeat(40);
+  const evidencePattern = new RegExp(evidencePatternSource.replace("${EXPECTED_SHA}", sampleSha));
+  for (const validEvidence of [`candidate-${sampleSha}-20260720T035554Z-0123456789abcdef`, `stable-${sampleSha}-20260720T035554Z-fedcba9876543210`]) assert.match(validEvidence, evidencePattern);
+  for (const invalidEvidence of [`candidate-${sampleSha}-20260720t035554z-0123456789abcdef`, `candidate-${"b".repeat(40)}-20260720T035554Z-0123456789abcdef`]) assert.doesNotMatch(invalidEvidence, evidencePattern);
 
   for (const [key, repository, checkoutPath] of [
     ["sdk", "ostinatocc/aionis-sdk", "external/aionis-sdk"],
@@ -498,15 +503,9 @@ test("exact-main embedding smoke is manual, read-only, protected, and fail-close
     /^          AIONIS_EXTERNAL_SMOKE_EXPECTED_EMBEDDING_MODEL: dashscope:qwen3\.7-text-embedding$/m,
   );
   assert.match(workflow, /test -n "\$\{DASHSCOPE_API_KEY:-\}"/);
-  assert.match(workflow, /name: Verify immutable Runtime tag remains absent/);
-  assert.match(workflow, /git ls-remote --tags origin/);
-  assert.match(workflow, /test -z "\$\{tag_refs\}"/);
-  assert.match(workflow, /\[a-z0-9\._:-\]\{0,95\}/);
-  assert.doesNotMatch(workflow, /set -x/);
-  assert.doesNotMatch(workflow, /upload-artifact/);
-  assert.match(workflow, /aionis_external_package_entrypoint_smoke_v1/);
-  assert.match(workflow, /sdk_product_loop_ok/);
-  assert.match(workflow, /mcp_stdio_tool_loop_ok/);
+  for (const pattern of [/name: Verify immutable Runtime tag remains absent/, /git ls-remote --tags origin/, /test -z "\$\{tag_refs\}"/]) assert.match(workflow, pattern);
+  assert.doesNotMatch(workflow, /set -x|upload-artifact/);
+  for (const pattern of [/aionis_external_package_entrypoint_smoke_v1/, /sdk_product_loop_ok/, /mcp_stdio_tool_loop_ok/]) assert.match(workflow, pattern);
 
   for (const document of [releaseNotes, patchNotes]) {
     assert.match(document, /exact-main-embedding-smoke\.yml/);
@@ -514,6 +513,7 @@ test("exact-main embedding smoke is manual, read-only, protected, and fail-close
     assert.match(document, /qwen3\.7-text-embedding/);
     assert.match(document, /evidence ID/i);
   }
+  for (const document of [releaseNotes, read("docs/AIONIS_RELEASES.md")]) assert.ok(document.includes('EMBED_EVIDENCE_ID="candidate-${MAIN_COMMIT}-$(date -u +%Y%m%dT%H%M%SZ)-${EMBED_EVIDENCE_NONCE}"'));
   assert.match(releaseNotes, /gh run view[\s\S]*--json headSha[\s\S]*= "\$\{MAIN_COMMIT\}"/);
   assert.match(releaseNotes, /--json headBranch[\s\S]*= "main"/);
   assert.match(releaseNotes, /--json conclusion[\s\S]*= "success"/);
