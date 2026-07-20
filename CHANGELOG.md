@@ -3,12 +3,14 @@
 ## v0.3.12 - Replay Upgrade Hardening Candidate
 
 Candidate preparation: 2026-07-20
+Published prerelease: 2026-07-20
 
 This Runtime-only candidate fixes the legacy replay-database compatibility gap
-found by a real v0.3.6-to-v0.3.11 upgrade exercise. Candidate status alone does
-not create release artifacts; the v0.3.12 tag, image, and GitHub Release become
-valid only after their exact-commit release gates pass. v0.3.11 remains an
-immutable published candidate.
+found by a real v0.3.6-to-v0.3.11 upgrade exercise. It is published as a
+non-latest GitHub prerelease with one verified `linux/amd64` image digest. The
+exact CI, provider, tag, image, recovery, cross-version, and Release chain is
+recorded in `docs/releases/v0.3.12-publication-evidence.json`. v0.3.11 remains
+an immutable historical candidate.
 
 ### Changed
 

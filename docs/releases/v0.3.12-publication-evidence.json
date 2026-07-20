@@ -1,0 +1,110 @@
+{
+  "schema_version": "aionis_release_publication_evidence_v1",
+  "release_status": "candidate",
+  "runtime": {
+    "version": "0.3.12",
+    "tag": "v0.3.12",
+    "tag_object_oid": "a7a833be619728fc93876bb5371ee6cbbfb78d9c",
+    "commit": "6f3557014117af85c19f1589a48173e87bd84b70"
+  },
+  "main_ci": {
+    "workflow_name": "CI",
+    "run_id": 29742405911,
+    "run_attempt": 1,
+    "url": "https://github.com/ostinatocc/Aionis/actions/runs/29742405911",
+    "event": "push",
+    "head_branch": "main",
+    "head_sha": "6f3557014117af85c19f1589a48173e87bd84b70",
+    "successful_jobs": 13,
+    "total_jobs": 13,
+    "conclusion": "success",
+    "created_at": "2026-07-20T12:29:34Z",
+    "updated_at": "2026-07-20T12:35:58Z"
+  },
+  "provider_evidence": {
+    "workflow_name": "Exact Main Embedding Smoke",
+    "run_id": 29742899471,
+    "run_attempt": 1,
+    "job_id": 88353626160,
+    "url": "https://github.com/ostinatocc/Aionis/actions/runs/29742899471",
+    "event": "workflow_dispatch",
+    "head_branch": "main",
+    "head_sha": "6f3557014117af85c19f1589a48173e87bd84b70",
+    "evidence_id": "candidate-6f3557014117af85c19f1589a48173e87bd84b70-20260720T123703Z-187c8107f4a24ef8",
+    "provider": "dashscope",
+    "model": "qwen3.7-text-embedding",
+    "persisted_model": "dashscope:qwen3.7-text-embedding",
+    "dimensions": 1536,
+    "embedding_status": "ready",
+    "conclusion": "success",
+    "created_at": "2026-07-20T12:37:06Z",
+    "updated_at": "2026-07-20T12:38:12Z"
+  },
+  "docker": {
+    "image": "ghcr.io/ostinatocc/aionis",
+    "release_tag": "v0.3.12",
+    "digest": "sha256:f40c5a1f14af23674fab5e59414bbe4187a0d56dcf8a2798afd02c1563c4a5d6",
+    "platforms": [
+      "linux/amd64"
+    ],
+    "image_manifest_digest": "sha256:52bc8eae9c018ac08f5c22cc930d1685a0a0bc92f273617ce9037a10823e1f96",
+    "attestation_manifest_digest": "sha256:f319cdd117d43ba46083a46b062e663e5521f513a8fdb4ad8e45e2533327e115",
+    "immutable_subject": "ghcr.io/ostinatocc/aionis:build-v0.3.12-6f3557014117af85c19f1589a48173e87bd84b70-29743055567-1",
+    "latest_promoted": false,
+    "latest_at_verification": {
+      "verified_at": "2026-07-20T13:18:27Z",
+      "tag": "latest",
+      "digest": "sha256:714bbf451969c233c648a266c7c1d918bc91e35dcb957e57b0e7549b7c2ab0a9",
+      "version": "v0.3.6",
+      "commit": "fadce2269189dae00e8b0014fc673975598bdc17",
+      "platform": "linux/amd64"
+    },
+    "source_workflow": {
+      "workflow_name": "Docker",
+      "run_id": 29743055567,
+      "run_attempt": 1,
+      "url": "https://github.com/ostinatocc/Aionis/actions/runs/29743055567",
+      "event": "push",
+      "head_branch": "v0.3.12",
+      "head_sha": "6f3557014117af85c19f1589a48173e87bd84b70",
+      "conclusion": "success",
+      "publish_job_id": 88356296461,
+      "completed_exact_digest_gates": {
+        "build": true,
+        "immutable_subject_verification": true,
+        "release_smoke": true,
+        "process_death_recovery": true,
+        "cross_version_upgrade": true,
+        "release_tag_promotion": true
+      },
+      "created_at": "2026-07-20T12:39:40Z",
+      "updated_at": "2026-07-20T12:52:23Z"
+    },
+    "cross_version_upgrade": {
+      "source_tag": "v0.3.6",
+      "source_commit": "fadce2269189dae00e8b0014fc673975598bdc17",
+      "source_digest": "sha256:714bbf451969c233c648a266c7c1d918bc91e35dcb957e57b0e7549b7c2ab0a9",
+      "source_schema": 2,
+      "candidate_schema": 6,
+      "replay_mode_before": "0644",
+      "replay_mode_after": "0600",
+      "counts_preserved": true,
+      "operation_replay_preserved": true,
+      "replacement_container_recovery": true,
+      "untouched_volume_rollback": true
+    }
+  },
+  "github_release": {
+    "id": 356727781,
+    "tag": "v0.3.12",
+    "url": "https://github.com/ostinatocc/Aionis/releases/tag/v0.3.12",
+    "target_commitish": "6f3557014117af85c19f1589a48173e87bd84b70",
+    "created_at": "2026-07-20T12:39:35Z",
+    "published_at": "2026-07-20T13:05:57Z",
+    "updated_at": "2026-07-20T13:10:14Z",
+    "prerelease": true,
+    "latest": false,
+    "draft": false,
+    "immutable": false
+  }
+}

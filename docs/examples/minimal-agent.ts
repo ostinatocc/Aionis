@@ -1,4 +1,4 @@
-// Runtime v0.3.11 candidate / SDK v0.3.19
+// Current candidate Runtime / SDK v0.3.19
 import {
   compileExecutionAgentContext,
   createAionisClient,

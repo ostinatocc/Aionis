@@ -45,13 +45,13 @@ npx aionis setup
 
 Current candidate: **Runtime v0.3.12 / SDK v0.3.19 / Manifest v0.1.1**.
 The frozen `aionis` installer still installs Runtime v0.3.6; the command above
-does not install this candidate. v0.3.12 is a Runtime-only candidate for
-strict, identity-bound upgrade of legacy replay SQLite artifacts. Candidate
-status alone does not create an official tag, image, or publication receipt.
-The last published candidate is Runtime v0.3.11, whose immutable
-tag-and-digest chain is recorded in
-[`docs/releases/v0.3.11-publication-evidence.json`](docs/releases/v0.3.11-publication-evidence.json).
-Both trains are intended for a single self-hosted Runtime process with
+does not install this candidate. Runtime v0.3.12 is published as a non-latest
+GitHub prerelease with one verified `linux/amd64` image digest. It adds strict,
+identity-bound upgrade of legacy replay SQLite artifacts. Its exact CI,
+protected provider, tag, image, recovery, cross-version, and Release chain is
+recorded in
+[`docs/releases/v0.3.12-publication-evidence.json`](docs/releases/v0.3.12-publication-evidence.json).
+The candidate is intended for a single self-hosted Runtime process with
 same-host Agent clients.
 The TypeScript SDK, HTTP API, MCP bridge, AIFS file surface, Memory Firewall,
 Agent Flight Recorder, optional Zvec candidate retrieval, and Substrate
@@ -116,18 +116,15 @@ This enables Zvec as a persisted candidate index while keeping SQLite as the
 Runtime fact source. Aionis still performs final scope, lifecycle, authority,
 admission, and rehydrate governance after candidates are loaded.
 
-The last published candidate tag is `ghcr.io/ostinatocc/aionis:v0.3.11`.
-The candidate coordinate `ghcr.io/ostinatocc/aionis:v0.3.12` is reserved but
-not published; do not pull or deploy it until the immutable tag workflow has
-verified and promoted its digest. For an exact v0.3.11
-deployment, pin the verified digest recorded in
-`docs/releases/v0.3.11-publication-evidence.json`:
+The published candidate tag is `ghcr.io/ostinatocc/aionis:v0.3.12`. For an
+exact candidate deployment, pin the verified digest recorded in
+`docs/releases/v0.3.12-publication-evidence.json`:
 
 ```bash
 docker run --rm \
   -p 127.0.0.1:3001:3001 \
   -v aionis-data:/data \
-  ghcr.io/ostinatocc/aionis@sha256:140603566945fccebbdb019c713e51578d5e14ca369ce88989b34768acbfba94
+  ghcr.io/ostinatocc/aionis@sha256:f40c5a1f14af23674fab5e59414bbe4187a0d56dcf8a2798afd02c1563c4a5d6
 ```
 
 The container process listens on `0.0.0.0` inside its network namespace so

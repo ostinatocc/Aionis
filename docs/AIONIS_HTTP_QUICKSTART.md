@@ -1,6 +1,6 @@
 # Aionis HTTP Quickstart
 
-Status: curl-first product quickstart for the v0.3.11 candidate Runtime
+Status: curl-first product quickstart for the current candidate Runtime
 
 This quickstart shows the product loop without the TypeScript SDK:
 

@@ -2,21 +2,21 @@
 
 Release status `candidate`.
 
-Runtime `v0.3.12` is the current candidate for a Runtime-only Local Runtime
-Public Beta patch. A real v0.3.6-to-v0.3.11 exercise found that the old
+Runtime `v0.3.12` is a published Runtime-only Local Runtime Public Beta
+prerelease candidate. A real v0.3.6-to-v0.3.11 exercise found that the old
 image leaves `aionis-lite-replay.sqlite` at mode `0644`, while v0.3.11 correctly
 fails closed on that legacy artifact. The v0.3.11 tag and image remain
 immutable; this train adds an explicit offline replay verification and
 hardening step instead of weakening startup security or silently chmodding a
 live database.
 
-Candidate status alone does not create or validate the v0.3.12 tag, official
-image, protected-provider evidence, or publication receipt. Each becomes
-release authority only after the exact-commit gates below pass. The last
-published candidate remains v0.3.11, whose immutable coordinates are recorded in
-`docs/releases/v0.3.11-publication-evidence.json`. The supported target remains
-one self-hosted Runtime process with SQLite authority; this is not a managed
-service or multi-instance HA release.
+The annotated tag, exact `linux/amd64` image digest, exact-main CI, protected
+provider run, recovery and cross-version gates, and non-latest GitHub
+prerelease are bound in
+`docs/releases/v0.3.12-publication-evidence.json`. Runtime v0.3.11 and its
+publication receipt remain immutable historical evidence. The supported target
+remains one self-hosted Runtime process with SQLite authority; this is not a
+managed service or multi-instance HA release.
 
 ## Candidate Coordinates
 
@@ -28,9 +28,9 @@ service or multi-instance HA release.
 - `@aionis/aifs@0.3.4` — immutable source ref `v0.3.4`
 - `@aionis/claude-code@0.3.5` — immutable source ref `v0.3.5`
 - `@aionis/substrate@0.1.11` — immutable source ref `v0.1.11`
-- Candidate Runtime source tag `v0.3.12` (not created)
-- Candidate Docker image `ghcr.io/ostinatocc/aionis:v0.3.12` (`linux/amd64`
-  only; not published)
+- Runtime source tag `v0.3.12` — annotated at the receipt-bound commit
+- Docker image `ghcr.io/ostinatocc/aionis:v0.3.12` — published `linux/amd64`
+  digest recorded in the receipt
 - Default installer Runtime ref `v0.3.6`
 
 All eight external package coordinates remain frozen. This patch does not
@@ -63,18 +63,23 @@ publish npm packages or change the installer default.
 Runtime routes, schema v6, learning posture, package contracts, and external
 package commits are unchanged. Global admission-candidate serving remains off.
 
-## Candidate Evidence
+## Published Evidence
 
 The candidate implementation has passed typecheck, 104/104 static checks, the
 complete 46/46 data-operations suite, the focused 3/3 startup security suite,
 the legacy-0644 and inode-binding security regressions, and a downward
-complexity ratchet. The repository now contains a real Docker/SQLite
-cross-version gate, but that gate still must pass against the clean, exact
-candidate digest before promotion. Local development evidence is bounded and
-cannot be represented as v0.3.12 publication evidence.
+complexity ratchet. The published candidate additionally passed 13/13
+exact-main CI jobs, the protected DashScope embedding gate, the tag-triggered
+native `linux/amd64` build, exact-digest smoke and process-death recovery, and
+the real v0.3.6 upgrade/restart/replacement-recovery/untouched-volume rollback
+gate. The machine-checkable receipt is
+[`docs/releases/v0.3.12-publication-evidence.json`](docs/releases/v0.3.12-publication-evidence.json),
+and the published digest is
+`ghcr.io/ostinatocc/aionis@sha256:f40c5a1f14af23674fab5e59414bbe4187a0d56dcf8a2798afd02c1563c4a5d6`.
 
-The commands below define the v0.3.12 candidate gate. They do not claim that
-the tag or image already exists.
+The commands below are retained as the historical v0.3.12 release procedure
+and as the contract for a future release train. They are not instructions to
+recreate or move the existing v0.3.12 tag.
 
 ```bash
 npm run -s typecheck
@@ -109,7 +114,7 @@ credential in this repository, logs, release notes, artifacts, or a child
 package checkout. A successful run also proves the immutable Runtime tag is
 still absent after the provider smoke completes.
 
-## Candidate Publication Checklist
+## Historical Publication Checklist
 
 For a new, not-yet-tagged release, do not create the tag until the exact
 candidate commit has passed all convergence checks, exact-main CI, and
@@ -198,6 +203,7 @@ bash scripts/ci/docker-recovery-smoke.sh --cross-version \
 gh release create v0.3.12 \
   --repo ostinatocc/Aionis \
   --verify-tag \
+  --target "$MAIN_COMMIT" \
   --prerelease \
   --latest=false \
   --title "Aionis v0.3.12 Replay Upgrade Hardening Candidate" \
@@ -206,7 +212,7 @@ gh release create v0.3.12 \
 
 Do not republish `@aionis/create@0.3.8`; its default Runtime remains `v0.3.6`.
 Do not republish any other frozen package coordinate. Do not move, delete, or
-recreate the immutable v0.3.10 or v0.3.11 tags or image digests.
+recreate the immutable v0.3.10, v0.3.11, or v0.3.12 tags or image digests.
 
 The normal release path requires a green tag workflow. If a post-promotion
 registry readback alone marks that run failed, publication is complete only

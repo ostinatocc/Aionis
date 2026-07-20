@@ -2,20 +2,19 @@
 
 Status: v0.3.12 Local Runtime Public Beta candidate.
 
-v0.3.12 is the Runtime-only candidate for legacy replay database upgrade
-hardening. A real v0.3.6-to-v0.3.11 exercise found that the
+v0.3.12 is the published Runtime-only prerelease candidate for legacy replay
+database upgrade hardening. A real v0.3.6-to-v0.3.11 exercise found that the
 old image leaves `aionis-lite-replay.sqlite` at mode `0644`, while v0.3.11
 correctly refuses to start with that artifact. This train adds an explicit
 offline verification and hardening path; it does not weaken Runtime startup or
 silently mutate a live database.
 
-Candidate status alone does not create or validate the v0.3.12 tag, official
-image, protected-provider evidence, or publication receipt. Each becomes
-release authority only after all exact-commit gates pass. The last published
-candidate remains v0.3.11. Its immutable tag, commit, image digest, provider
-evidence, and bounded recovery record are fixed in
-[`v0.3.11-publication-evidence.json`](./releases/v0.3.11-publication-evidence.json)
-at `docs/releases/v0.3.11-publication-evidence.json`.
+The annotated tag, exact `linux/amd64` image digest, exact-main CI, protected
+provider run, recovery and cross-version gates, and non-latest GitHub
+prerelease are fixed in
+[`v0.3.12-publication-evidence.json`](./releases/v0.3.12-publication-evidence.json)
+at `docs/releases/v0.3.12-publication-evidence.json`. The v0.3.11 tag, digest,
+and publication receipt remain immutable historical evidence.
 
 The supported release posture is one self-hosted Runtime process with SQLite
 authority on `linux/amd64`. It is not GA, a managed multi-tenant service, or a
@@ -25,8 +24,8 @@ multi-instance HA release.
 
 | Artifact | Current channel | Immutable source ref | Purpose |
 |---|---:|---:|---|
-| GitHub Runtime source | `v0.3.12` candidate | `v0.3.12` | Becomes immutable only after all pre-tag gates pass and the tag is created. |
-| Docker image | `ghcr.io/ostinatocc/aionis:v0.3.12` candidate coordinate | Runtime `v0.3.12` | Published only after the tag workflow verifies and promotes one `linux/amd64` digest. |
+| GitHub Runtime source | `v0.3.12` published prerelease candidate | `v0.3.12` | Annotated tag at the receipt-bound Runtime commit. |
+| Docker image | `ghcr.io/ostinatocc/aionis:v0.3.12` published candidate | Runtime `v0.3.12` | Verified `linux/amd64` digest recorded in the publication receipt. |
 | Default installer Runtime ref | `v0.3.6` frozen | `v0.3.6` | Immutable Runtime selected by the frozen installer. |
 | `aionis` | `0.3.8` frozen | `v0.3.8` | Top-level setup and operator CLI. |
 | `@aionis/create` | `0.3.8` frozen | `v0.3.8` | One-command installer; its default remains Runtime v0.3.6. |
@@ -43,8 +42,9 @@ verification resolves all eight external repositories and fails closed on any
 checkout, tag, commit, package name, or version mismatch.
 
 Candidate notes: [v0.3.12 replay upgrade hardening](./releases/v0.3.12.md).
-The v0.3.11 publication receipt remains historical evidence only; it cannot be
-reused as v0.3.12 evidence.
+Publication receipt: [v0.3.12 evidence](./releases/v0.3.12-publication-evidence.json).
+The v0.3.11 publication receipt remains immutable historical evidence only; it
+was not reused as v0.3.12 evidence.
 
 ## v0.3.12 Candidate Scope
 
@@ -74,7 +74,7 @@ The route matrix, schema v6, learning posture, complexity ratchet, external npm
 packages, and installer ref do not change in this patch. Global
 admission-candidate serving remains off.
 
-## Last Published Candidate Image (v0.3.11)
+## Published Candidate Image
 
 For an exact deployment, use the verified digest rather than resolving the tag
 again:
@@ -83,22 +83,26 @@ again:
 docker run --rm \
   -p 127.0.0.1:3001:3001 \
   -v aionis-data:/data \
-  ghcr.io/ostinatocc/aionis@sha256:140603566945fccebbdb019c713e51578d5e14ca369ce88989b34768acbfba94
+  ghcr.io/ostinatocc/aionis@sha256:f40c5a1f14af23674fab5e59414bbe4187a0d56dcf8a2798afd02c1563c4a5d6
 ```
 
-The v0.3.11 source tag run passed build, immutable-subject verification, basic
-smoke, and cross-process recovery, then was marked failed by the final
-promotion readback. A subsequent successful read-only recovery run performed
-no registry writes and re-ran both exact-digest smokes against the promoted
-digest. Both runs and their relationship are preserved in
-`docs/releases/v0.3.11-publication-evidence.json`; the source run is not
-misreported as green. That receipt does not claim that legacy v0.3.6 replay
-artifacts can be upgraded by v0.3.11.
+The v0.3.12 source tag run completed successfully. It built one immutable
+subject, verified its digest, passed basic and process-death recovery smokes,
+upgraded real v0.3.6 write/replay data, recovered it in a replacement
+container, proved untouched-volume rollback, and only then promoted the exact
+digest to `v0.3.12`. Candidate status did not publish Docker `latest`; that
+coordinate remains v0.3.6. The full chain is preserved in
+`docs/releases/v0.3.12-publication-evidence.json`.
 
-## Candidate Release Gate
+The v0.3.11 exceptional recovery chain remains preserved separately in
+`docs/releases/v0.3.11-publication-evidence.json`; its failed source run is not
+misreported as green.
 
-The commands below define the gate contract for this candidate. They do not
-claim that v0.3.12 is already tagged or published.
+## Historical Candidate Release Gate
+
+The commands below are the historical v0.3.12 gate and the contract for a
+future release train. They are not instructions to recreate published
+v0.3.12 artifacts.
 
 ```bash
 npm run -s typecheck
@@ -130,7 +134,7 @@ random nonce and the runbook rejects ambiguous title matches. The provider
 workflow checks that the immutable Runtime tag is still absent after the smoke
 completes.
 
-## Candidate Publication Checklist
+## Historical Publication Checklist
 
 For a new, not-yet-tagged candidate, run this after the reviewed commit is the
 exact `origin/main` SHA and its full Runtime CI is green. This procedure obtains
@@ -220,6 +224,7 @@ bash scripts/ci/docker-recovery-smoke.sh --cross-version \
 gh release create v0.3.12 \
   --repo ostinatocc/Aionis \
   --verify-tag \
+  --target "$MAIN_COMMIT" \
   --prerelease \
   --latest=false \
   --title "Aionis v0.3.12 Replay Upgrade Hardening Candidate" \
