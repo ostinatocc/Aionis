@@ -37,7 +37,6 @@ test("Docker release verifies all frozen package repositories before publication
     ["claude_code", "ostinatocc/aionis-claude-code", "external/aionis-claude-code", "CLAUDE_CODE"],
     ["substrate", "ostinatocc/AionisSubstrate", "external/AionisSubstrate", "SUBSTRATE"],
   ];
-
   assert.match(workflow, /--check\s*\\?\s*\n\s*--require-package-roots/);
   assert.match(
     workflow,
@@ -83,8 +82,8 @@ test("Docker image is built once, smoked by digest, and only then promoted", () 
   const workflow = read(".github/workflows/docker.yml");
   const verifyJob = workflowJob(workflow, "verify");
   const publishJob = workflowJob(workflow, "publish");
+  const recoveryJob = workflowJob(workflow, "recover");
   const buildActions = workflow.match(/uses: docker\/build-push-action@v6/g) ?? [];
-
   assert.match(workflow, /^  verify:\s*$/m);
   assert.match(workflow, /^  publish:\s*$/m);
   assert.match(publishJob, /^    needs: \[verify, release-core, release-recovery\]\s*$/m);
@@ -92,6 +91,8 @@ test("Docker image is built once, smoked by digest, and only then promoted", () 
   assert.match(publishJob, /needs\['release-core'\]\.result == 'success'/);
   assert.match(publishJob, /needs\['release-recovery'\]\.result == 'success'/);
   assert.match(workflow, /release_ref:[\s\S]*required: true[\s\S]*publish:[\s\S]*default: false/);
+  assert.match(workflow, /recovery_run_id:[\s\S]*recovery_run_attempt:[\s\S]*recovery_digest:/);
+  assert.match(publishJob, /inputs\.recovery_run_id == ''[\s\S]*inputs\.recovery_run_attempt == ''[\s\S]*inputs\.recovery_digest == ''/);
   assert.match(workflow, /^  actions: read$/m);
   assert.match(workflow, /group: docker-release-/);
   assert.match(workflow, /ref: \$\{\{ github\.event_name == 'workflow_dispatch' && inputs\.release_ref \|\| github\.ref_name \}\}/);
@@ -194,6 +195,22 @@ test("Docker image is built once, smoked by digest, and only then promoted", () 
   assert.match(workflow, /org\.opencontainers\.image\.revision=\$\{\{ needs\.verify\.outputs\.runtime_commit \}\}/);
   assert.match(workflow, /refusing to replace existing/);
   assert.match(workflow, /promoted_digest[\s\S]*VERIFIED_DIGEST/);
+  assert.match(publishJob, /for _ in \$\(seq 1 30\); do[\s\S]*promoted_digest[\s\S]*conflicting/);
+  assert.match(recoveryJob, /^    needs: \[verify, release-core, release-recovery\]$/m);
+  assert.match(recoveryJob, /github\.event_name == 'workflow_dispatch'/);
+  assert.match(recoveryJob, /PUBLISH_REQUESTED: "\$\{\{ inputs\.publish \}\}"[\s\S]*PUBLISH_REQUESTED === "true"/);
+  assert.match(recoveryJob, /inputs\.recovery_run_id != ''[\s\S]*inputs\.recovery_run_attempt != ''[\s\S]*inputs\.recovery_digest != ''/);
+  assert.match(recoveryJob, /^    permissions: \{ contents: read, actions: read, packages: read \}$/m);
+  assert.doesNotMatch(recoveryJob, /packages: write|docker\/build-push-action|docker buildx imagetools create/);
+  assert.match(recoveryJob, /actions\/runs\/\$\{process\.env\.SOURCE_RUN_ID\}\/attempts\/\$\{process\.env\.SOURCE_RUN_ATTEMPT\}/);
+  assert.match(recoveryJob, /run\.path === "\.github\/workflows\/docker\.yml" && run\.event === "push"/);
+  for (const step of ["Build immutable amd64 release artifact", "Verify immutable build subject digest", "Smoke the exact published digest", "Recover the exact published digest across process death"]) assert.ok(recoveryJob.includes(step), `recovery must bind the source step: ${step}`);
+  assert.match(recoveryJob, /steps\.get\("Promote the verified digest to release tags"\) === "failure"/);
+  assert.match(recoveryJob, /build-\$\{process\.env\.RUNTIME_TAG\}-\$\{process\.env\.RUNTIME_COMMIT\}-\$\{process\.env\.SOURCE_RUN_ID\}-\$\{process\.env\.SOURCE_RUN_ATTEMPT\}/);
+  assert.match(recoveryJob, /subjectDigest[\s\S]*releaseDigest[\s\S]*EXPECTED_DIGEST/);
+  assert.match(recoveryJob, /\.Provenance\.SLSA[\s\S]*github_workflow_ref[\s\S]*runDetails\?\.builder\?\.id[\s\S]*buildkit_metadata\?\.vcs\?\.revision/);
+  assert.match(recoveryJob, /docker-release-smoke\.sh[\s\S]*docker-recovery-smoke\.sh/);
+  assert.match(recoveryJob, /Registry writes: none/);
   assert.ok(
     workflow.indexOf("Verify release commit is on main first-parent history") <
       workflow.indexOf("Read immutable package refs"),
@@ -226,7 +243,6 @@ test("Docker starts Runtime as PID 1 and proves named-volume recovery", () => {
   const releaseSmoke = read("scripts/ci/docker-release-smoke.sh");
   const recoverySmoke = read("scripts/ci/docker-recovery-smoke.sh");
   const workflow = read(".github/workflows/docker.yml");
-
   assert.match(dockerfile, /CMD \["bash", "scripts\/start-lite\.sh"\]/);
   assert.doesNotMatch(dockerfile, /CMD \["npm", "run"/);
   assert.match(startScript, /^exec node --import tsx src\/index\.ts "\$@"$/m);
@@ -235,7 +251,6 @@ test("Docker starts Runtime as PID 1 and proves named-volume recovery", () => {
   assert.match(releaseSmoke, /trap 'exit 130' INT/);
   assert.match(releaseSmoke, /trap 'exit 143' TERM/);
   assert.match(releaseSmoke, /AbortSignal\.timeout/);
-
   assert.doesNotMatch(recoverySmoke, /docker build/);
   assert.match(recoverySmoke, /docker pull --platform linux\/amd64/);
   assert.match(recoverySmoke, /trap cleanup EXIT/);
@@ -261,7 +276,6 @@ test("Docker starts Runtime as PID 1 and proves named-volume recovery", () => {
     workflow,
     /\.github\/workflows\/docker\.yml\|\.github\/workflows\/exact-main-embedding-smoke\.yml\|scripts\/ci\/release-workflow-contract\.test\.mjs\|scripts\/ci\/docker-recovery-smoke\.sh/,
   );
-
   const result = spawnSync("bash", ["scripts/ci/docker-recovery-smoke.sh", "aionis:mutable"], {
     cwd: ROOT,
     encoding: "utf8",
@@ -273,7 +287,6 @@ test("Docker starts Runtime as PID 1 and proves named-volume recovery", () => {
 test("Docker release runs every core shard against the verified release commit", () => {
   const workflow = read(".github/workflows/docker.yml");
   const coreJob = workflowJob(workflow, "release-core");
-
   assert.match(coreJob, /^    needs: verify$/m);
   assert.match(coreJob, /^    timeout-minutes: \$\{\{ matrix\.timeout_minutes \}\}$/m);
   assert.match(coreJob, /^      fail-fast: false$/m);
@@ -310,7 +323,6 @@ test("Docker release runs every core shard against the verified release commit",
 test("Docker release runs all provisioning recovery shards against the verified release commit", () => {
   const workflow = read(".github/workflows/docker.yml");
   const recoveryJob = workflowJob(workflow, "release-recovery");
-
   assert.match(recoveryJob, /^    needs: verify$/m);
   assert.match(
     recoveryJob,
@@ -354,11 +366,9 @@ test("Docker release runs all provisioning recovery shards against the verified 
   assert.doesNotMatch(recoveryJob, /^\s+run: npm run -s lite:test(?:\s|$)/m);
   assert.doesNotMatch(recoveryJob, /lite:test:(?:static|core)/);
 });
-
 test("cross-package release gates install tarballs packed from exact checkouts", () => {
   const workflow = read(".github/workflows/docker.yml");
   const smoke = read("scripts/e2e/external-package-entrypoint-smoke.ts");
-
   assert.match(workflow, /name: Checkout dispatch verification harness[\s\S]*ref: \$\{\{ github\.sha \}\}[\s\S]*path: external\/release-harness/);
   assert.match(workflow, /git -C external\/release-harness rev-parse HEAD/);
   assert.match(workflow, /git -C external\/release-harness diff --name-only "\$\{EXPECTED_RUNTIME_COMMIT\}" "\$\{actual_harness_commit\}"/);
@@ -429,12 +439,10 @@ test("cross-package release gates install tarballs packed from exact checkouts",
   assert.match(freshInstallSmoke, /child\.once\("close"/);
   assert.match(freshInstallSmoke, /child\.kill\("SIGKILL"\)/);
 });
-
 test("exact-main embedding smoke is manual, read-only, protected, and fail-closed", () => {
   const workflow = read(".github/workflows/exact-main-embedding-smoke.yml");
   const releaseNotes = read("RELEASE_NOTES.md");
   const patchNotes = read("docs/releases/v0.3.11.md");
-
   assert.match(workflow, /^name: Exact Main Embedding Smoke$/m);
   assert.match(workflow, /^on:\n  workflow_dispatch:\n    inputs:\n      expected_sha:/m);
   assert.match(workflow, /expected_sha:[\s\S]*?required: true[\s\S]*?type: string[\s\S]*?evidence_id:[\s\S]*?required: true[\s\S]*?type: string/);
@@ -449,7 +457,6 @@ test("exact-main embedding smoke is manual, read-only, protected, and fail-close
   assert.match(workflow, /actions\/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5/);
   assert.match(workflow, /actions\/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020/);
   assert.doesNotMatch(workflow, /uses: actions\/(?:checkout|setup-node)@v\d/);
-
   assert.match(workflow, /name: Checkout expected Runtime commit[\s\S]*?ref: \$\{\{ inputs\.expected_sha \}\}/);
   assert.match(workflow, /fetch-depth: 0/);
   assert.match(workflow, /persist-credentials: false/);
@@ -466,7 +473,6 @@ test("exact-main embedding smoke is manual, read-only, protected, and fail-close
   const evidencePattern = new RegExp(evidencePatternSource.replace("${EXPECTED_SHA}", sampleSha));
   for (const validEvidence of [`candidate-${sampleSha}-20260720T035554Z-0123456789abcdef`, `stable-${sampleSha}-20260720T035554Z-fedcba9876543210`]) assert.match(validEvidence, evidencePattern);
   for (const invalidEvidence of [`candidate-${sampleSha}-20260720t035554z-0123456789abcdef`, `candidate-${"b".repeat(40)}-20260720T035554Z-0123456789abcdef`]) assert.doesNotMatch(invalidEvidence, evidencePattern);
-
   for (const [key, repository, checkoutPath] of [
     ["sdk", "ostinatocc/aionis-sdk", "external/aionis-sdk"],
     ["mcp", "ostinatocc/aionis-mcp", "external/aionis-mcp"],
@@ -484,7 +490,6 @@ test("exact-main embedding smoke is manual, read-only, protected, and fail-close
       new RegExp(`pack_exact ${key} "\\$\\{GITHUB_WORKSPACE\\}/${checkoutPath}"`),
     );
   }
-
   assert.match(workflow, /npm ci --ignore-scripts/);
   assert.match(workflow, /npm pack --silent --pack-destination "\$\{PACK_DIR\}"/);
   assert.match(workflow, /AIONIS_RUNTIME_REPO="\$\{GITHUB_WORKSPACE\}"/);
@@ -506,7 +511,6 @@ test("exact-main embedding smoke is manual, read-only, protected, and fail-close
   for (const pattern of [/name: Verify immutable Runtime tag remains absent/, /git ls-remote --tags origin/, /test -z "\$\{tag_refs\}"/]) assert.match(workflow, pattern);
   assert.doesNotMatch(workflow, /set -x|upload-artifact/);
   for (const pattern of [/aionis_external_package_entrypoint_smoke_v1/, /sdk_product_loop_ok/, /mcp_stdio_tool_loop_ok/]) assert.match(workflow, pattern);
-
   for (const document of [releaseNotes, patchNotes]) {
     assert.match(document, /exact-main-embedding-smoke\.yml/);
     assert.match(document, /exact-main-embedding/);
@@ -520,12 +524,10 @@ test("exact-main embedding smoke is manual, read-only, protected, and fail-close
   assert.match(releaseNotes, /randomBytes\(8\)/);
   assert.match(releaseNotes, /EMBED_RUN_COUNT[\s\S]*-gt 1[\s\S]*refusing ambiguous embedding evidence title/);
 });
-
 test("Docker context excludes external release checkouts", () => {
   const dockerIgnore = read(".dockerignore");
   assert.match(dockerIgnore, /^\/external$/m);
 });
-
 test("release smoke rejects mutable image tags before invoking Docker", () => {
   const smokeScript = read("scripts/ci/docker-release-smoke.sh");
   assert.doesNotMatch(smokeScript, /docker build/);
@@ -539,7 +541,6 @@ test("release smoke rejects mutable image tags before invoking Docker", () => {
   assert.match(smokeScript, /learningControl\.last_succeeded_at/);
   assert.match(smokeScript, /\["pending", "leased", "expired_leases", "completed", "dead_letter", "exhausted"\]/);
   assert.match(smokeScript, /learningControlBacklog\.exhausted !== 0/);
-
   const result = spawnSync("bash", ["scripts/ci/docker-release-smoke.sh", "aionis:mutable"], {
     cwd: ROOT,
     encoding: "utf8",
@@ -547,7 +548,6 @@ test("release smoke rejects mutable image tags before invoking Docker", () => {
   assert.equal(result.status, 2);
   assert.match(result.stderr, /requires an immutable image digest/);
 });
-
 test("default CI verifies release metadata, SDK and Manifest ownership, complexity, smoke, and minimum Node", () => {
   const workflow = read(".github/workflows/ci.yml");
   const minimumNode = workflowJob(workflow, "minimum-node");
