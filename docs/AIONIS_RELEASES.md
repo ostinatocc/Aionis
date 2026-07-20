@@ -1,23 +1,25 @@
 # Aionis Releases
 
-Status: v0.3.11 Local Runtime Public Beta development.
+Status: v0.3.11 Local Runtime Public Beta candidate.
 
 v0.3.11 is the patch train for the Docker PID 1 and cross-process recovery
-boundary. It has no tag, image, or GitHub Release yet. v0.3.10 remains the
-latest immutable release, but its default container command does not deliver
-Docker SIGTERM directly to Runtime, so it is not the durable-container target.
-The v0.3.10 tag and digest remain immutable.
+boundary. Candidate status alone does not create or validate its tag, image,
+or GitHub Release; each becomes a release artifact only after all exact-commit
+gates pass. v0.3.10 remains the latest immutable stable release, but its
+default container command does not deliver Docker SIGTERM directly to Runtime,
+so it is not the durable-container target. The v0.3.10 tag and digest remain
+immutable.
 
 The supported release posture is one self-hosted Runtime process with SQLite
 authority on `linux/amd64`. It is not GA, a managed multi-tenant service, or a
 multi-instance HA release.
 
-## Current Development Coordinates
+## Current Candidate Coordinates
 
 | Artifact | Current channel | Immutable source ref | Purpose |
 |---|---:|---:|---|
-| GitHub Runtime source | `v0.3.11` development target | `v0.3.11` | Future immutable Runtime source after all pre-tag gates pass. |
-| Docker image | `ghcr.io/ostinatocc/aionis:v0.3.11` reserved | Runtime `v0.3.11` | Future verified `linux/amd64` image; not published in development status. |
+| GitHub Runtime source | `v0.3.11` candidate | `v0.3.11` | Becomes immutable only after all pre-tag gates pass and the tag is created. |
+| Docker image | `ghcr.io/ostinatocc/aionis:v0.3.11` candidate coordinate | Runtime `v0.3.11` | Published only after the tag workflow verifies and promotes one `linux/amd64` digest. |
 | Default installer Runtime ref | `v0.3.6` frozen | `v0.3.6` | Immutable Runtime selected by the frozen installer. |
 | `aionis` | `0.3.8` frozen | `v0.3.8` | Top-level setup and operator CLI. |
 | `@aionis/create` | `0.3.8` frozen | `v0.3.8` | One-command installer; its default remains Runtime v0.3.6. |
@@ -33,9 +35,9 @@ Runtime CI resolves SDK and Manifest from that authority; Docker release
 verification resolves all eight external repositories and fails closed on any
 checkout, tag, commit, package name, or version mismatch.
 
-Development notes: [v0.3.11 development notes](./releases/v0.3.11.md).
+Candidate notes: [v0.3.11 candidate notes](./releases/v0.3.11.md).
 
-## v0.3.11 Development Scope
+## v0.3.11 Candidate Scope
 
 - Enter `scripts/start-lite.sh` directly from Docker. Its final `exec` makes
   Runtime Node PID 1 without creating a second startup contract.
@@ -53,9 +55,9 @@ The route matrix, schema v6, learning posture, complexity ratchet, external npm
 packages, and installer ref do not change in this patch. Global
 admission-candidate serving remains off.
 
-## Development Image
+## Candidate Image
 
-The future coordinate is:
+The candidate coordinate is:
 
 ```bash
 docker run --rm \
@@ -64,9 +66,9 @@ docker run --rm \
   ghcr.io/ostinatocc/aionis:v0.3.11
 ```
 
-Do not pull or advertise that coordinate while the train is `development`.
-The tag-triggered workflow must first build one immutable digest, pass both
-exact-digest smokes, and promote that digest.
+Do not pull or advertise that coordinate before the tag-triggered workflow
+builds one immutable digest, passes both exact-digest smokes, and promotes that
+digest.
 
 ## Required Gate
 
@@ -102,8 +104,9 @@ completes.
 
 ## Promotion Checklist
 
-Run this only after review changes the train from `development` to `candidate`
-and all required evidence passes on the exact remote-main commit:
+Run this after the reviewed candidate commit is the exact `origin/main` SHA and
+its full Runtime CI is green. This procedure obtains the protected external
+evidence; create the tag only after that evidence succeeds:
 
 ```bash
 set -euo pipefail

@@ -1,6 +1,6 @@
-# Aionis v0.3.11 Docker Lifecycle Recovery Development Notes
+# Aionis v0.3.11 Docker Lifecycle Recovery Candidate Notes
 
-Release status `development`.
+Release status `candidate`.
 
 Runtime `v0.3.11` is the next Runtime-only Local Runtime Public Beta patch.
 It fixes the Docker process boundary discovered after v0.3.10: the published
@@ -9,12 +9,13 @@ without executing Runtime's awaited shutdown path. v0.3.11 launches the
 existing signal-aware startup script directly, whose final `exec` makes Node
 PID 1.
 
-There is no v0.3.11 tag, image, or GitHub Release while this train remains in
-`development`. Runtime v0.3.10 and its published digest stay immutable. The
+Candidate status alone does not create or validate the v0.3.11 tag, image, or
+GitHub Release. Each becomes a release artifact only after the exact-commit
+gates below pass. Runtime v0.3.10 and its published digest stay immutable. The
 supported target remains one self-hosted `linux/amd64` Runtime process with
 SQLite authority; this is not a managed service or multi-instance HA release.
 
-## Development Coordinates
+## Candidate Coordinates
 
 - `aionis@0.3.8` — immutable source ref `v0.3.8`
 - `@aionis/create@0.3.8` — immutable source ref `v0.3.8`
@@ -95,9 +96,8 @@ still absent after the provider smoke completes.
 
 ## Promotion Checklist
 
-Do not run this section while the release train is `development`. First finish
-the convergence checks, review the exact diff, switch the train to `candidate`,
-and require all exact-main CI and external embedding evidence to pass.
+Do not create the tag until this exact candidate commit has passed all
+convergence checks, exact-main CI, and protected external embedding evidence.
 
 ```bash
 set -euo pipefail

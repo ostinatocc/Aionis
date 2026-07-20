@@ -1,6 +1,6 @@
 # Aionis Product API Usage
 
-Status: product API usage guide for the v0.3.11 development Runtime
+Status: product API usage guide for the v0.3.11 candidate Runtime
 
 This document explains how a host should use the product actions:
 `observe`, `guide`, `feedback`, `measure`, `rehydrate`, and `snapshot`.

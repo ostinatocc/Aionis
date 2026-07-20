@@ -1,12 +1,13 @@
 # Changelog
 
-## v0.3.11 - Docker Lifecycle Recovery Development
+## v0.3.11 - Docker Lifecycle Recovery Candidate
 
-Development started: 2026-07-20
+Candidate preparation: 2026-07-20
 
 This patch train repairs the container process boundary found after the
-immutable v0.3.10 release. It is a development target; no v0.3.11 tag, image,
-or GitHub Release exists yet.
+immutable v0.3.10 release. Candidate status alone does not create release
+artifacts; the v0.3.11 tag, image, and GitHub Release become valid only after
+their exact-commit release gates pass.
 
 ### Changed
 

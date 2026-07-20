@@ -30,7 +30,7 @@ npx aionis setup
 ```
 
 The frozen installer currently selects Runtime v0.3.6. It is the default
-published-beta install path, not the v0.3.11 development test path. Runtime
+published-beta install path, not the v0.3.11 candidate test path. Runtime
 v0.3.10 remains the latest immutable release, but its default Docker command
 does not make Runtime the container's PID 1. Do not use that image as the
 durable-container release. Test v0.3.11 only from the reviewed source checkout
@@ -68,7 +68,7 @@ prints Runtime start and integration next steps.
 
 ## Docker
 
-The checked-in development train reserves
+The checked-in candidate uses
 `ghcr.io/ostinatocc/aionis:v0.3.11`. It does not exist as a release artifact
 until the immutable tag workflow verifies and promotes its digest:
 
