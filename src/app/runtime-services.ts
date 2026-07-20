@@ -14,6 +14,7 @@ import { createSandboxStore } from "../store/sandbox-access.js";
 import { createLiteWriteStoreFromDatabase } from "../store/lite-write-store.js";
 import { createLiteClaimLedgerStoreFromDatabase } from "../store/lite-claim-ledger-store.js";
 import { createLiteRuntimeDatabase } from "../store/lite-runtime-database.js";
+import { assertPrivateRuntimeSqlitePathNamespacesDisjoint } from "../store/sqlite.js";
 import { createLiteLearningEpisodeLedgerAccess } from "../store/lite-learning-episode-ledger.js";
 import { createLiteLearningControlJobAccess } from "../store/lite-learning-control-jobs.js";
 import {
@@ -119,6 +120,7 @@ export async function createRuntimeServices(config: RuntimeServiceConfig) {
   const sandboxRemoteAllowedHosts = parseSandboxRemoteAllowedHosts(sandbox.SANDBOX_REMOTE_EXECUTOR_ALLOWED_HOSTS_JSON);
   const sandboxRemoteAllowedCidrs = parseSandboxRemoteAllowedCidrs(sandbox.SANDBOX_REMOTE_EXECUTOR_EGRESS_ALLOWED_CIDRS_JSON);
   const sandboxAllowedCommands = parseAllowedSandboxCommands(sandbox.SANDBOX_ALLOWED_COMMANDS_JSON);
+  assertPrivateRuntimeSqlitePathNamespacesDisjoint(storage.LITE_WRITE_SQLITE_PATH, storage.LITE_REPLAY_SQLITE_PATH);
   const store = createLiteRuntimeStore(storage.LITE_WRITE_SQLITE_PATH);
   const liteReplayStore = createLiteReplayStore(storage.LITE_REPLAY_SQLITE_PATH);
   const liteReplayAccess = liteReplayStore?.createReplayAccess() ?? null;

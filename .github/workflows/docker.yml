@@ -484,7 +484,7 @@ jobs:
       (github.ref_type == 'tag' ||
       (github.event_name == 'workflow_dispatch' && inputs.publish == true))
     runs-on: ubuntu-latest
-    timeout-minutes: 30
+    timeout-minutes: 60
     permissions:
       contents: read
       packages: write
@@ -571,10 +571,8 @@ jobs:
         env:
           VERIFIED_IMAGE_REF: ${{ env.REGISTRY_IMAGE }}@${{ steps.build.outputs.digest }}
         run: bash scripts/ci/docker-release-smoke.sh "${VERIFIED_IMAGE_REF}"
-      - name: Recover the exact published digest across process death
-        env:
-          VERIFIED_IMAGE_REF: ${{ env.REGISTRY_IMAGE }}@${{ steps.build.outputs.digest }}
-        run: bash scripts/ci/docker-recovery-smoke.sh "${VERIFIED_IMAGE_REF}"
+      - { name: Recover the exact published digest across process death, env: { VERIFIED_IMAGE_REF: "${{ env.REGISTRY_IMAGE }}@${{ steps.build.outputs.digest }}" }, run: 'bash scripts/ci/docker-recovery-smoke.sh "${VERIFIED_IMAGE_REF}"' }
+      - { name: Upgrade v0.3.6 data through the exact digest, env: { VERIFIED_IMAGE_REF: "${{ env.REGISTRY_IMAGE }}@${{ steps.build.outputs.digest }}", EXPECTED_RUNTIME_COMMIT: "${{ needs.verify.outputs.runtime_commit }}", EXPECTED_RUNTIME_TAG: "${{ needs.verify.outputs.runtime_tag }}" }, run: 'bash scripts/ci/docker-recovery-smoke.sh --cross-version "${VERIFIED_IMAGE_REF}" "${EXPECTED_RUNTIME_COMMIT}" "${EXPECTED_RUNTIME_TAG}"' }
       - name: Promote the verified digest to release tags
         env:
           VERIFIED_DIGEST: ${{ steps.build.outputs.digest }}
@@ -612,7 +610,7 @@ jobs:
       needs.verify.outputs.release_status == 'stable') && github.event_name == 'workflow_dispatch' &&
       (inputs.recovery_run_id != '' || inputs.recovery_run_attempt != '' || inputs.recovery_digest != '')
     runs-on: ubuntu-latest
-    timeout-minutes: 30
+    timeout-minutes: 60
     permissions: { contents: read, actions: read, packages: read }
     env: { REGISTRY_IMAGE: "ghcr.io/${{ github.repository_owner }}/aionis" }
     steps:
@@ -637,7 +635,7 @@ jobs:
           const matches = jobs.filter((job) => job.name === "Build once, verify digest, and publish Docker image"); const source = matches[0];
           need(matches.length === 1 && source.head_sha === process.env.RUNTIME_COMMIT && source.conclusion === "failure", "recovery source publish job mismatch"); need(jobs.every((job) => job === source || job.conclusion === "success"), "recovery source has another non-successful job");
           const steps = new Map(source.steps.map((step) => [step.name, step.conclusion]));
-          for (const name of ["Verify Docker source commit", "Build immutable amd64 release artifact", "Verify immutable build subject digest", "Smoke the exact published digest", "Recover the exact published digest across process death"]) need(steps.get(name) === "success", `recovery source step was not successful: ${name}`);
+          for (const name of ["Verify Docker source commit", "Build immutable amd64 release artifact", "Verify immutable build subject digest", "Smoke the exact published digest", "Recover the exact published digest across process death", "Upgrade v0.3.6 data through the exact digest"]) need(steps.get(name) === "success", `recovery source step was not successful: ${name}`);
           need(steps.get("Promote the verified digest to release tags") === "failure" && source.steps.filter((step) => step.conclusion === "failure").every((step) => step.name === "Promote the verified digest to release tags"), "recovery source must fail only at promotion verification");
           const subject = `${process.env.REGISTRY_IMAGE}:build-${process.env.RUNTIME_TAG}-${process.env.RUNTIME_COMMIT}-${process.env.SOURCE_RUN_ID}-${process.env.SOURCE_RUN_ATTEMPT}`;
           fs.appendFileSync(process.env.GITHUB_OUTPUT, `digest=${process.env.EXPECTED_DIGEST}\nsubject_ref=${subject}\n`);
@@ -672,3 +670,4 @@ jobs:
       - name: Recover the exact digest again across process death
         env: { VERIFIED_IMAGE_REF: "${{ env.REGISTRY_IMAGE }}@${{ steps.recovery.outputs.digest }}" }
         run: bash scripts/ci/docker-recovery-smoke.sh "${VERIFIED_IMAGE_REF}"
+      - { name: Upgrade v0.3.6 data through the recovered exact digest, env: { VERIFIED_IMAGE_REF: "${{ env.REGISTRY_IMAGE }}@${{ steps.recovery.outputs.digest }}", EXPECTED_RUNTIME_COMMIT: "${{ needs.verify.outputs.runtime_commit }}", EXPECTED_RUNTIME_TAG: "${{ needs.verify.outputs.runtime_tag }}" }, run: 'bash scripts/ci/docker-recovery-smoke.sh --cross-version "${VERIFIED_IMAGE_REF}" "${EXPECTED_RUNTIME_COMMIT}" "${EXPECTED_RUNTIME_TAG}"' }

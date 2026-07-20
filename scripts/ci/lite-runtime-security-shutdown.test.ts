@@ -4,9 +4,11 @@ import { randomUUID } from "node:crypto";
 import {
   chmodSync,
   existsSync,
+  lstatSync,
   mkdtempSync,
   mkdirSync,
   rmSync,
+  renameSync,
   statSync,
   symlinkSync,
   writeFileSync,
@@ -15,7 +17,7 @@ import { createServer as createHttpServer, type Server as HttpServer } from "nod
 import net from "node:net";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
-import test from "node:test";
+import test, { type TestContext } from "node:test";
 
 import Fastify from "fastify";
 
@@ -50,6 +52,12 @@ function deferred<T = void>() {
 
 function mode(path: string): number {
   return statSync(path).mode & 0o777;
+}
+
+function privateRuntimeRoot(t: TestContext, suffix: string): string {
+  const root = mkdtempSync(join(tmpdir(), `aionis-runtime-${suffix}-`));
+  t.after(() => rmSync(root, { recursive: true, force: true }));
+  return root;
 }
 
 async function within<T>(promise: Promise<T>, label: string, timeoutMs = 15_000): Promise<T> {
@@ -125,84 +133,92 @@ test("Lite Runtime SQLite safely hardens an existing 0755 directory under umask 
 
 test("Lite Runtime SQLite rejects old 0644 databases until explicit offline hardening", {
   skip: process.platform === "win32" ? "POSIX mode bits are not a Windows ACL" : false,
-}, async () => {
-  const root = mkdtempSync(join(tmpdir(), "aionis-runtime-mode-drift-"));
+}, async (t) => {
+  const root = privateRuntimeRoot(t, "mode-drift");
   const directory = join(root, "authority");
   const databasePath = join(directory, "runtime.sqlite");
-  try {
-    preparePrivateRuntimeSqlitePath(databasePath);
-    chmodSync(databasePath, 0o644);
-    assert.throws(
-      () => createLiteRuntimeDatabase(databasePath),
-      /runtime_sqlite_artifact_mode_invalid/u,
-    );
-    assert.equal(mode(databasePath), 0o644, "startup must not repair an existing file by pathname");
+  preparePrivateRuntimeSqlitePath(databasePath);
+  chmodSync(databasePath, 0o644);
+  assert.throws(
+    () => createLiteRuntimeDatabase(databasePath),
+    /runtime_sqlite_artifact_mode_invalid/u,
+  );
+  assert.equal(mode(databasePath), 0o644, "startup must not repair an existing file by pathname");
 
-    hardenPrivateRuntimeSqlitePathOffline(databasePath);
-    assert.equal(mode(directory), 0o700);
-    assert.equal(mode(databasePath), 0o600);
-    const database = createLiteRuntimeDatabase(databasePath);
-    try {
-      database.db.exec("CREATE TABLE mode_probe (value TEXT); INSERT INTO mode_probe VALUES ('ok')");
-      for (const artifact of [`${databasePath}-wal`, `${databasePath}-shm`]) {
-        assert.equal(existsSync(artifact), true);
-        chmodSync(artifact, 0o644);
-        assert.throws(
-          () => createLiteRuntimeDatabase(databasePath),
-          /runtime_sqlite_artifact_mode_invalid/u,
-        );
-        assert.equal(mode(artifact), 0o644, "startup must not repair a live SQLite sidecar");
-        chmodSync(artifact, 0o600);
-      }
-    } finally {
-      await database.close();
+  hardenPrivateRuntimeSqlitePathOffline(databasePath);
+  assert.equal(mode(directory), 0o700);
+  assert.equal(mode(databasePath), 0o600);
+  const database = createLiteRuntimeDatabase(databasePath);
+  try {
+    database.db.exec("CREATE TABLE mode_probe (value TEXT); INSERT INTO mode_probe VALUES ('ok')");
+    for (const artifact of [`${databasePath}-wal`, `${databasePath}-shm`]) {
+      assert.equal(existsSync(artifact), true);
+      chmodSync(artifact, 0o644);
+      assert.throws(
+        () => createLiteRuntimeDatabase(databasePath),
+        /runtime_sqlite_artifact_mode_invalid/u,
+      );
+      assert.equal(mode(artifact), 0o644, "startup must not repair a live SQLite sidecar");
+      chmodSync(artifact, 0o600);
     }
   } finally {
-    rmSync(root, { recursive: true, force: true });
+    await database.close();
   }
+});
+
+test("offline hardening remains bound to the previously verified SQLite inode", {
+  skip: process.platform === "win32" ? "POSIX mode bits are not a Windows ACL" : false,
+}, (t) => {
+  const root = privateRuntimeRoot(t, "inode-binding");
+  const databasePath = join(root, "runtime.sqlite");
+  preparePrivateRuntimeSqlitePath(databasePath);
+  const verified = lstatSync(databasePath, { bigint: true });
+  renameSync(databasePath, `${databasePath}.verified`);
+  writeFileSync(databasePath, "replacement", { mode: 0o644 });
+  chmodSync(databasePath, 0o644);
+  assert.throws(
+    () => hardenPrivateRuntimeSqlitePathOffline(databasePath, {
+      main: { dev: verified.dev, ino: verified.ino },
+      wal: null, shm: null, journal: null,
+    }),
+    /runtime_sqlite_artifact_changed_since_verification/u,
+  );
+  assert.equal(mode(databasePath), 0o644, "replacement must not be chmodded before rejection");
 });
 
 test("Lite Runtime SQLite refuses main-file symlinks without touching the target", {
   skip: process.platform === "win32" ? "symlink setup requires platform privileges" : false,
-}, () => {
-  const root = mkdtempSync(join(tmpdir(), "aionis-runtime-symlink-"));
+}, (t) => {
+  const root = privateRuntimeRoot(t, "symlink");
   const directory = join(root, "authority");
   const victim = join(root, "victim.sqlite");
   const databasePath = join(directory, "runtime.sqlite");
-  try {
-    preparePrivateRuntimeSqlitePath(join(directory, "anchor.sqlite"));
-    writeFileSync(victim, "must-not-open", { mode: 0o600 });
-    symlinkSync(victim, databasePath);
-    assert.throws(
-      () => createLiteRuntimeDatabase(databasePath),
-      /runtime_sqlite_artifact_must_be_regular_file/u,
-    );
-    assert.equal(statSync(victim).size, Buffer.byteLength("must-not-open"));
-  } finally {
-    rmSync(root, { recursive: true, force: true });
-  }
+  preparePrivateRuntimeSqlitePath(join(directory, "anchor.sqlite"));
+  writeFileSync(victim, "must-not-open", { mode: 0o600 });
+  symlinkSync(victim, databasePath);
+  assert.throws(
+    () => createLiteRuntimeDatabase(databasePath),
+    /runtime_sqlite_artifact_must_be_regular_file/u,
+  );
+  assert.equal(statSync(victim).size, Buffer.byteLength("must-not-open"));
 });
 
 test("Lite Runtime SQLite refuses sidecar symlinks before opening SQLite", {
   skip: process.platform === "win32" ? "symlink setup requires platform privileges" : false,
-}, async () => {
-  const root = mkdtempSync(join(tmpdir(), "aionis-runtime-sidecar-symlink-"));
+}, async (t) => {
+  const root = privateRuntimeRoot(t, "sidecar-symlink");
   const directory = join(root, "authority");
   const databasePath = join(directory, "runtime.sqlite");
   const victim = join(root, "victim.wal");
-  try {
-    const initial = createLiteRuntimeDatabase(databasePath);
-    await initial.close();
-    writeFileSync(victim, "must-not-open", { mode: 0o600 });
-    symlinkSync(victim, `${databasePath}-wal`);
-    assert.throws(
-      () => createLiteRuntimeDatabase(databasePath),
-      /runtime_sqlite_artifact_must_be_regular_file/u,
-    );
-    assert.equal(statSync(victim).size, Buffer.byteLength("must-not-open"));
-  } finally {
-    rmSync(root, { recursive: true, force: true });
-  }
+  const initial = createLiteRuntimeDatabase(databasePath);
+  await initial.close();
+  writeFileSync(victim, "must-not-open", { mode: 0o600 });
+  symlinkSync(victim, `${databasePath}-wal`);
+  assert.throws(
+    () => createLiteRuntimeDatabase(databasePath),
+    /runtime_sqlite_artifact_must_be_regular_file/u,
+  );
+  assert.equal(statSync(victim).size, Buffer.byteLength("must-not-open"));
 });
 
 test("Lite Runtime SQLite refuses a shared sticky parent instead of chmodding it", {
@@ -498,6 +514,15 @@ async function insertShutdownTestSandboxRun(args: {
   }));
 }
 
+function getShutdownTestRun(
+  sandboxStore: ReturnType<typeof createSandboxStore>,
+  runId: string,
+) {
+  return sandboxStore.withClient((access) => access.getRun({
+    id: runId, tenantId: "default", scope: "default",
+  }));
+}
+
 function flattenErrorMessages(error: unknown, seen = new Set<unknown>()): string {
   if (seen.has(error)) return "";
   seen.add(error);
@@ -575,15 +600,21 @@ async function cleanupShutdownTestFixture(args: {
   }
 }
 
+function localShutdownFixture(t: TestContext, suffix: string, allowShutdownFailure = false) {
+  const root = mkdtempSync(join(tmpdir(), `aionis-sandbox-${suffix}-`));
+  const databasePath = join(root, "authority", "runtime.sqlite");
+  const store = createLiteRuntimeStore(databasePath);
+  const sandboxStore = createSandboxStore(store);
+  const executor = createShutdownTestSandboxExecutor(sandboxStore, root);
+  t.after(() => cleanupShutdownTestFixture({ root, store, executor, allowShutdownFailure }));
+  return { root, databasePath, sandboxStore, executor };
+}
+
 test("sandbox shutdown cancels and waits for a real active child before the store closes", {
   skip: process.platform === "win32" ? "POSIX child signal contract" : false,
 }, async (t) => {
-  const root = mkdtempSync(join(tmpdir(), "aionis-sandbox-shutdown-"));
-  const store = createLiteRuntimeStore(join(root, "authority", "runtime.sqlite"));
-  const sandboxStore = createSandboxStore(store);
+  const { sandboxStore, executor } = localShutdownFixture(t, "shutdown");
   const runId = randomUUID();
-  const executor = createShutdownTestSandboxExecutor(sandboxStore, root);
-  t.after(async () => await cleanupShutdownTestFixture({ root, store, executor }));
   await insertShutdownTestSandboxRun({
     sandboxStore,
     runId,
@@ -605,11 +636,7 @@ test("sandbox shutdown cancels and waits for a real active child before the stor
 
   await within(executor.shutdown(), "sandbox shutdown", 5_000);
   await within(execution, "sandbox execution finalization", 5_000);
-  const terminal = await sandboxStore.withClient((access) => access.getRun({
-    id: runId,
-    tenantId: "default",
-    scope: "default",
-  }));
+  const terminal = await getShutdownTestRun(sandboxStore, runId);
   assert.equal(terminal?.status, "canceled");
   assert.equal(terminal?.error, "canceled_by_shutdown");
   assert.equal(terminal?.result_json?.canceled_by, "shutdown");
@@ -617,15 +644,11 @@ test("sandbox shutdown cancels and waits for a real active child before the stor
 });
 
 test("sandbox shutdown seals pre-active execution and durably cancels queued backlog", async (t) => {
-  const root = mkdtempSync(join(tmpdir(), "aionis-sandbox-shutdown-seal-"));
-  const store = createLiteRuntimeStore(join(root, "authority", "runtime.sqlite"));
-  const sandboxStore = createSandboxStore(store);
+  const { root, sandboxStore, executor } = localShutdownFixture(t, "shutdown-seal");
   const startingRunId = randomUUID();
   const queuedRunId = randomUUID();
   const startingMarker = join(root, "starting-child-created");
   const queuedMarker = join(root, "queued-child-created");
-  const executor = createShutdownTestSandboxExecutor(sandboxStore, root);
-  t.after(async () => await cleanupShutdownTestFixture({ root, store, executor }));
   await insertShutdownTestSandboxRun({
     sandboxStore,
     runId: startingRunId,
@@ -654,11 +677,7 @@ test("sandbox shutdown seals pre-active execution and durably cancels queued bac
     [startingRunId, startingMarker],
     [queuedRunId, queuedMarker],
   ] as const) {
-    const terminal = await sandboxStore.withClient((access) => access.getRun({
-      id: runId,
-      tenantId: "default",
-      scope: "default",
-    }));
+    const terminal = await getShutdownTestRun(sandboxStore, runId);
     assert.equal(terminal?.status, "canceled");
     assert.equal(terminal?.error, "canceled_by_shutdown");
     assert.equal(terminal?.result_json?.canceled_by, "shutdown");
@@ -671,19 +690,9 @@ test("sandbox shutdown seals pre-active execution and durably cancels queued bac
 });
 
 test("sandbox shutdown reports durable cancellation failures and still attempts every queued run", async (t) => {
-  const root = mkdtempSync(join(tmpdir(), "aionis-sandbox-shutdown-failure-"));
-  const databasePath = join(root, "authority", "runtime.sqlite");
-  const store = createLiteRuntimeStore(databasePath);
-  const sandboxStore = createSandboxStore(store);
+  const { databasePath, sandboxStore, executor } = localShutdownFixture(t, "shutdown-failure", true);
   const failedRunId = randomUUID();
   const siblingRunId = randomUUID();
-  const executor = createShutdownTestSandboxExecutor(sandboxStore, root);
-  t.after(async () => await cleanupShutdownTestFixture({
-    root,
-    store,
-    executor,
-    allowShutdownFailure: true,
-  }));
 
   for (const runId of [failedRunId, siblingRunId]) {
     await insertShutdownTestSandboxRun({
@@ -722,16 +731,8 @@ test("sandbox shutdown reports durable cancellation failures and still attempts 
   });
 
   const [failed, sibling] = await Promise.all([
-    sandboxStore.withClient((access) => access.getRun({
-      id: failedRunId,
-      tenantId: "default",
-      scope: "default",
-    })),
-    sandboxStore.withClient((access) => access.getRun({
-      id: siblingRunId,
-      tenantId: "default",
-      scope: "default",
-    })),
+    getShutdownTestRun(sandboxStore, failedRunId),
+    getShutdownTestRun(sandboxStore, siblingRunId),
   ]);
   assert.equal(failed?.status, "queued");
   assert.equal(failed?.finished_at, null);
@@ -742,12 +743,8 @@ test("sandbox shutdown reports durable cancellation failures and still attempts 
 });
 
 test("sandbox shutdown preserves a prior durable request cancellation cause", async (t) => {
-  const root = mkdtempSync(join(tmpdir(), "aionis-sandbox-shutdown-request-cause-"));
-  const store = createLiteRuntimeStore(join(root, "authority", "runtime.sqlite"));
-  const sandboxStore = createSandboxStore(store);
+  const { sandboxStore, executor } = localShutdownFixture(t, "shutdown-request-cause");
   const runId = randomUUID();
-  const executor = createShutdownTestSandboxExecutor(sandboxStore, root);
-  t.after(async () => await cleanupShutdownTestFixture({ root, store, executor }));
   await insertShutdownTestSandboxRun({
     sandboxStore,
     runId,
@@ -764,11 +761,7 @@ test("sandbox shutdown preserves a prior durable request cancellation cause", as
   const execution = executor.executeSync(runId);
   const shutdown = executor.shutdown();
   await within(Promise.all([execution, shutdown]), "request-first sandbox shutdown", 5_000);
-  const terminal = await sandboxStore.withClient((access) => access.getRun({
-    id: runId,
-    tenantId: "default",
-    scope: "default",
-  }));
+  const terminal = await getShutdownTestRun(sandboxStore, runId);
   assert.equal(terminal?.status, "canceled");
   assert.equal(terminal?.error, "canceled_before_execution");
   assert.equal(terminal?.result_json?.canceled_by, "request");
@@ -778,12 +771,8 @@ test("sandbox shutdown preserves a prior durable request cancellation cause", as
 test("sandbox timeout remains the first terminal cause when shutdown follows", {
   skip: process.platform === "win32" ? "POSIX child signal contract" : false,
 }, async (t) => {
-  const root = mkdtempSync(join(tmpdir(), "aionis-sandbox-shutdown-timeout-cause-"));
-  const store = createLiteRuntimeStore(join(root, "authority", "runtime.sqlite"));
-  const sandboxStore = createSandboxStore(store);
+  const { sandboxStore, executor } = localShutdownFixture(t, "shutdown-timeout-cause");
   const runId = randomUUID();
-  const executor = createShutdownTestSandboxExecutor(sandboxStore, root);
-  t.after(async () => await cleanupShutdownTestFixture({ root, store, executor }));
   await insertShutdownTestSandboxRun({
     sandboxStore,
     runId,
@@ -800,11 +789,7 @@ test("sandbox timeout remains the first terminal cause when shutdown follows", {
   await new Promise((resolveSleep) => setTimeout(resolveSleep, 150));
   await within(Promise.all([execution, executor.shutdown()]), "timeout-first sandbox shutdown", 5_000);
 
-  const terminal = await sandboxStore.withClient((access) => access.getRun({
-    id: runId,
-    tenantId: "default",
-    scope: "default",
-  }));
+  const terminal = await getShutdownTestRun(sandboxStore, runId);
   assert.equal(terminal?.status, "timeout");
   assert.equal(terminal?.error, "execution_timeout");
   assert.equal(terminal?.result_json?.timed_out, true);
@@ -850,11 +835,7 @@ test("sandbox shutdown aborts a real active remote request before store close", 
   await within(Promise.all([execution, executor.shutdown()]), "remote sandbox shutdown", 5_000);
   await within(waitForNoSockets(sockets), "remote sandbox transport drain", 5_000);
 
-  const terminal = await sandboxStore.withClient((access) => access.getRun({
-    id: runId,
-    tenantId: "default",
-    scope: "default",
-  }));
+  const terminal = await getShutdownTestRun(sandboxStore, runId);
   assert.equal(terminal?.status, "canceled");
   assert.equal(terminal?.error, "canceled_by_shutdown");
   assert.equal(terminal?.result_json?.canceled_by, "shutdown");
@@ -902,11 +883,7 @@ test("sandbox shutdown seals a pre-active remote run before any request is sent"
   const execution = executor.executeSync(runId);
   const shutdown = executor.shutdown();
   await within(Promise.all([execution, shutdown]), "pre-active remote sandbox shutdown", 5_000);
-  const terminal = await sandboxStore.withClient((access) => access.getRun({
-    id: runId,
-    tenantId: "default",
-    scope: "default",
-  }));
+  const terminal = await getShutdownTestRun(sandboxStore, runId);
   assert.equal(terminal?.status, "canceled");
   assert.equal(terminal?.error, "canceled_by_shutdown");
   assert.equal(terminal?.result_json?.canceled_by, "shutdown");

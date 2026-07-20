@@ -167,6 +167,7 @@ test("Docker image is built once, smoked by digest, and only then promoted", () 
   );
   assert.match(workflow, /docker-release-smoke\.sh/);
   assert.match(workflow, /docker-recovery-smoke\.sh/);
+  assert.match(workflow, /docker-recovery-smoke\.sh --cross-version/);
   assert.equal(buildActions.length, 1, "release workflow must perform one container build");
   assert.match(workflow, /platforms: linux\/amd64(?:\s|$)/);
   assert.doesNotMatch(workflow, /linux\/arm64/);
@@ -210,6 +211,14 @@ test("Docker image is built once, smoked by digest, and only then promoted", () 
   assert.match(recoveryJob, /subjectDigest[\s\S]*releaseDigest[\s\S]*EXPECTED_DIGEST/);
   assert.match(recoveryJob, /\.Provenance\.SLSA[\s\S]*github_workflow_ref[\s\S]*runDetails\?\.builder\?\.id[\s\S]*buildkit_metadata\?\.vcs\?\.revision/);
   assert.match(recoveryJob, /docker-release-smoke\.sh[\s\S]*docker-recovery-smoke\.sh/);
+  assert.match(
+    recoveryJob,
+    /docker-recovery-smoke\.sh[^\n]*"\$\{VERIFIED_IMAGE_REF\}"[\s\S]*docker-recovery-smoke\.sh --cross-version/,
+  );
+  assert.match(
+    recoveryJob,
+    /"Upgrade v0\.3\.6 data through the exact digest"\][\s\S]*steps\.get\(name\) === "success"/,
+  );
   assert.match(recoveryJob, /Registry writes: none/);
   assert.ok(
     workflow.indexOf("Verify release commit is on main first-parent history") <
@@ -223,8 +232,13 @@ test("Docker image is built once, smoked by digest, and only then promoted", () 
   );
   assert.ok(
     workflow.indexOf("Recover the exact published digest across process death") <
+      workflow.indexOf("Upgrade v0.3.6 data through the exact digest"),
+    "cross-version upgrade must run after the ordinary exact-digest recovery",
+  );
+  assert.ok(
+    workflow.indexOf("Upgrade v0.3.6 data through the exact digest") <
       workflow.indexOf("Promote the verified digest to release tags"),
-    "promotion must happen after exact-digest recovery",
+    "promotion must happen after the v0.3.6 cross-version gate",
   );
   assert.match(workflow, /publish_latest == 'true'/);
   assert.match(workflow, /provenance: mode=max/);
@@ -271,7 +285,7 @@ test("Docker starts Runtime as PID 1 and proves named-volume recovery", () => {
   assert.match(recoverySmoke, /scripts\/runtime-data-ops\.ts/);
   assert.match(recoverySmoke, /--name "\$\{VERIFY_CONTAINER\}"/);
   assert.match(recoverySmoke, /verify --db \/data\/aionis-lite-write\.sqlite/);
-  assert.match(recoverySmoke, /schema\?\.classification !== "current"/);
+  assert.match(recoverySmoke, /schema\?\.classification\s*!==\s*"current"/);
   assert.match(
     workflow,
     /\.github\/workflows\/docker\.yml\|\.github\/workflows\/exact-main-embedding-smoke\.yml\|scripts\/ci\/release-workflow-contract\.test\.mjs\|scripts\/ci\/docker-recovery-smoke\.sh/,
@@ -282,6 +296,38 @@ test("Docker starts Runtime as PID 1 and proves named-volume recovery", () => {
   });
   assert.equal(result.status, 2);
   assert.match(result.stderr, /requires an immutable image digest/);
+});
+
+test("Docker release proves a real v0.3.6 upgrade, recovery, and untouched rollback", () => {
+  const workflow = read(".github/workflows/docker.yml");
+  const publishJob = workflowJob(workflow, "publish");
+  const recoveryJob = workflowJob(workflow, "recover");
+  const smoke = read("scripts/ci/docker-recovery-smoke.sh");
+  assert.match(smoke, /^OLD_IMAGE="ghcr\.io\/ostinatocc\/aionis@sha256:714bbf451969c233c648a266c7c1d918bc91e35dcb957e57b0e7549b7c2ab0a9"$/m);
+  assert.match(smoke, /^OLD_COMMIT="fadce2269189dae00e8b0014fc673975598bdc17"$/m);
+  assert.match(smoke, /docker volume create/);
+  assert.match(smoke, /target=\/source,readonly/);
+  assert.match(smoke, /upgrade --db \/data\/aionis-lite-write\.sqlite --replay-db \/data\/aionis-lite-replay\.sqlite/);
+  assert.match(smoke, /mode_before == "0644"/);
+  assert.match(smoke, /mode_after == "0600"/);
+  assert.match(smoke, /supported_previous_v2/);
+  assert.match(smoke, /candidate_restart/);
+  assert.match(smoke, /replacement-container recovery|replacement_container_recovery/);
+  assert.match(smoke, /reattach_unmodified_full_v2_volume/);
+  assert.match(smoke, /post_upgrade_memory_absent:\s*true/); assert.match(smoke, /docker_health_required/); assert.match(smoke, /request_timeout_ms/);
+  assert.doesNotMatch(smoke, /docker build/);
+  const mutable = spawnSync(
+    "bash",
+    ["scripts/ci/docker-recovery-smoke.sh", "--cross-version", "aionis:mutable", "a".repeat(40), "v0.3.12"],
+    { cwd: ROOT, encoding: "utf8" },
+  );
+  assert.equal(mutable.status, 2);
+  assert.match(mutable.stderr, /requires an immutable candidate image digest/);
+  for (const job of [publishJob, recoveryJob]) {
+    assert.match(job, /docker-recovery-smoke\.sh --cross-version/);
+    assert.match(job, /needs\.verify\.outputs\.runtime_commit/);
+    assert.match(job, /needs\.verify\.outputs\.runtime_tag/);
+  }
 });
 
 test("Docker release runs every core shard against the verified release commit", () => {

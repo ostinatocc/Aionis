@@ -12,25 +12,7 @@ import {
   type ToolRuleEvaluationSource,
 } from "./tool-rule-evaluation-provenance.js";
 
-type RuleRow = {
-  rule_node_id: string;
-  state: "draft" | "shadow" | "active" | "disabled";
-  rule_scope: "global" | "team" | "agent";
-  target_agent_id: string | null;
-  target_team_id: string | null;
-  rule_memory_lane: "private" | "shared";
-  rule_owner_agent_id: string | null;
-  rule_owner_team_id: string | null;
-  if_json: any;
-  then_json: any;
-  exceptions_json: any;
-  positive_count: number;
-  negative_count: number;
-  rule_commit_id: string;
-  rule_summary: string | null;
-  rule_slots: any;
-  updated_at: string;
-};
+type RuleRow = LiteRuleCandidateRow;
 
 type RuleRankMeta = {
   score: number;
@@ -239,31 +221,227 @@ async function loadRuleRows(
   liteWriteStore: Pick<LiteWriteStore, "listRuleCandidates"> | null | undefined,
 ): Promise<RuleRow[]> {
   if (liteWriteStore) {
-    return (await liteWriteStore.listRuleCandidates({
+    return liteWriteStore.listRuleCandidates({
       scope,
       limit,
       states: ["shadow", "active"],
-    })).map((r: LiteRuleCandidateRow) => ({
-      rule_node_id: r.rule_node_id,
-      state: r.state,
-      rule_scope: r.rule_scope,
-      target_agent_id: r.target_agent_id,
-      target_team_id: r.target_team_id,
-      rule_memory_lane: r.rule_memory_lane,
-      rule_owner_agent_id: r.rule_owner_agent_id,
-      rule_owner_team_id: r.rule_owner_team_id,
-      if_json: r.if_json,
-      then_json: r.then_json,
-      exceptions_json: r.exceptions_json,
-      positive_count: r.positive_count,
-      negative_count: r.negative_count,
-      rule_commit_id: r.rule_commit_id,
-      rule_summary: r.rule_summary,
-      rule_slots: r.rule_slots,
-      updated_at: r.updated_at,
-    }));
+    });
   }
   throw new Error("rules evaluation requires liteWriteStore");
+}
+
+type MatchedRule = {
+  row: RuleRow;
+  rank: RuleRankMeta;
+  thenPatch: PolicyPatch;
+  provenanceSource: ToolRuleEvaluationSource | null;
+};
+
+type RuleMatches = {
+  active: MatchedRule[];
+  shadow: MatchedRule[];
+  ctxAgentId: string | null;
+  ctxTeamId: string | null;
+  laneStatus: { applied: boolean; reason: string };
+  skippedInvalidThen: number;
+  invalidThenSample: Array<{ rule_node_id: string; state: string; commit_id: string }>;
+  filteredByScope: number;
+  filteredByLane: number;
+  filteredByCondition: number;
+  unownedPrivateDetected: number;
+};
+
+function matchRuleRows(
+  rows: RuleRow[],
+  context: any,
+  includeShadow: boolean,
+  collectProvenance = false,
+): RuleMatches {
+  const ctxAgentId = contextAgentId(context);
+  const ctxTeamId = contextTeamId(context);
+  const laneStatus = laneEnforcementStatus(ctxAgentId, ctxTeamId);
+  const active: MatchedRule[] = [];
+  const shadow: MatchedRule[] = [];
+  const invalidThenSample: RuleMatches["invalidThenSample"] = [];
+  let skippedInvalidThen = 0;
+  let filteredByScope = 0;
+  let filteredByLane = 0;
+  let filteredByCondition = 0;
+  let unownedPrivateDetected = 0;
+
+  for (const row of rows) {
+    if (!scopeRuleMatchesContext(row, context)) {
+      filteredByScope += 1;
+      continue;
+    }
+    const laneDecision = laneRuleMatchesContext(
+      row,
+      ctxAgentId,
+      ctxTeamId,
+      laneStatus.applied,
+    );
+    if (laneDecision.unowned_private_detected) unownedPrivateDetected += 1;
+    if (!laneDecision.visible) {
+      filteredByLane += 1;
+      continue;
+    }
+    if (!ruleMatchesContext(row.if_json, row.exceptions_json, context)) {
+      filteredByCondition += 1;
+      continue;
+    }
+
+    let thenPatch: PolicyPatch;
+    try {
+      thenPatch = parsePolicyPatch(row.then_json);
+    } catch {
+      skippedInvalidThen += 1;
+      if (invalidThenSample.length < 5) {
+        invalidThenSample.push({
+          rule_node_id: row.rule_node_id,
+          state: row.state,
+          commit_id: row.rule_commit_id,
+        });
+      }
+      continue;
+    }
+
+    const matched = {
+      row,
+      rank: readRuleRankMeta(row),
+      thenPatch,
+      provenanceSource: collectProvenance ? buildToolRuleEvaluationSource(row) : null,
+    };
+    if (row.state === "active") active.push(matched);
+    else if (row.state === "shadow" && includeShadow) shadow.push(matched);
+  }
+
+  return {
+    active,
+    shadow,
+    ctxAgentId,
+    ctxTeamId,
+    laneStatus,
+    skippedInvalidThen,
+    invalidThenSample,
+    filteredByScope,
+    filteredByLane,
+    filteredByCondition,
+    unownedPrivateDetected,
+  };
+}
+
+function matchedRuleDto({ row, rank, thenPatch }: MatchedRule) {
+  return {
+    rule_node_id: row.rule_node_id,
+    state: row.state,
+    rule_scope: row.rule_scope,
+    target_agent_id: row.target_agent_id,
+    target_team_id: row.target_team_id,
+    summary: row.rule_summary,
+    if_json: row.if_json,
+    then_json: thenPatch,
+    exceptions_json: row.exceptions_json,
+    stats: { positive: row.positive_count, negative: row.negative_count },
+    rank: {
+      score: rank.score,
+      evidence_score: rank.evidence_score,
+      priority: rank.priority,
+      weight: rank.weight,
+      specificity: rank.specificity,
+    },
+    match_detail: {
+      condition_paths: rank.condition_paths,
+      condition_path_count: rank.condition_paths.length,
+    },
+    commit_id: row.rule_commit_id,
+  };
+}
+
+function compileRuleState(rules: MatchedRule[], state: "active" | "shadow") {
+  const applied = buildAppliedPolicy(rules
+    .slice()
+    .sort((a, b) => a.rank.score - b.rank.score
+      || String(a.row.rule_node_id).localeCompare(String(b.row.rule_node_id)))
+    .map((rule) => ({
+      rule_node_id: rule.row.rule_node_id,
+      state,
+      commit_id: rule.row.rule_commit_id,
+      then_patch: rule.thenPatch,
+    })));
+  const tool = computeEffectiveToolPolicy(rules.map(({ row, rank, thenPatch }) => ({
+    rule_node_id: row.rule_node_id,
+    score: rank.score,
+    evidence_score: rank.evidence_score,
+    priority: rank.priority,
+    weight: rank.weight,
+    specificity: rank.specificity,
+    tool: thenPatch.tool ?? null,
+  })));
+  (applied.policy as any).tool = tool.tool;
+
+  const rankByRule = new Map(rules.map(({ row, rank }) => [row.rule_node_id, rank]));
+  const sources = applied.sources.map((source) => {
+    const rank = rankByRule.get(source.rule_node_id);
+    return {
+      ...source,
+      rank: rank ? {
+        score: rank.score,
+        evidence_score: rank.evidence_score,
+        priority: rank.priority,
+        weight: rank.weight,
+        specificity: rank.specificity,
+      } : null,
+    };
+  });
+  return {
+    policy: applied.policy,
+    sources,
+    conflicts: applied.conflicts,
+    conflictExplain: buildConflictExplain(applied.conflicts, sources, rankByRule),
+    toolExplain: tool.explain,
+  };
+}
+
+function agentVisibilitySummary(matches: RuleMatches, scanned: number) {
+  return {
+    agent: { id: matches.ctxAgentId, team_id: matches.ctxTeamId },
+    rule_scope: {
+      scanned,
+      filtered_by_scope: matches.filteredByScope,
+      filtered_by_lane: matches.filteredByLane,
+      filtered_by_condition: matches.filteredByCondition,
+      skipped_invalid_then: matches.skippedInvalidThen,
+      matched_active: matches.active.length,
+      matched_shadow: matches.shadow.length,
+    },
+    lane: {
+      applied: matches.laneStatus.applied,
+      reason: matches.laneStatus.reason,
+      unowned_private_visible: 0,
+      unowned_private_detected: matches.unownedPrivateDetected,
+    },
+  };
+}
+
+function appliedSurface(
+  active: ReturnType<typeof compileRuleState>,
+  shadow: ReturnType<typeof compileRuleState>,
+  includeShadow: boolean,
+) {
+  return {
+    policy: active.policy,
+    sources: active.sources,
+    conflicts: active.conflicts,
+    conflict_explain: active.conflictExplain,
+    tool_explain: active.toolExplain,
+    ...(includeShadow ? {
+      shadow_policy: shadow.policy,
+      shadow_sources: shadow.sources,
+      shadow_conflicts: shadow.conflicts,
+      shadow_conflict_explain: shadow.conflictExplain,
+      shadow_tool_explain: shadow.toolExplain,
+    } : {}),
+  };
 }
 
 export async function evaluateRules(
@@ -277,214 +455,31 @@ export async function evaluateRules(
     { scope: parsed.scope, tenant_id: parsed.tenant_id },
     { defaultScope, defaultTenantId },
   );
-  const scope = tenancy.scope_key;
-
-  const rows = await loadRuleRows(scope, parsed.limit, opts.liteWriteStore);
-
-  const ctx = parsed.context;
-  const ctxAgentId = contextAgentId(ctx);
-  const ctxTeamId = contextTeamId(ctx);
-  const laneStatus = laneEnforcementStatus(ctxAgentId, ctxTeamId);
-  const enforceLane = laneStatus.applied;
-  const active: any[] = [];
-  const shadow: any[] = [];
-  const activeForMerge: Array<{ rule_node_id: string; commit_id: string; rank: RuleRankMeta; then_patch: PolicyPatch }> = [];
-  const shadowForMerge: Array<{ rule_node_id: string; commit_id: string; rank: RuleRankMeta; then_patch: PolicyPatch }> = [];
-  let skipped_invalid_then = 0;
-  const invalid_then_sample: Array<{ rule_node_id: string; state: string; commit_id: string }> = [];
-  let filtered_by_scope = 0;
-  let filtered_by_lane = 0;
-  let filtered_by_condition = 0;
-  let unowned_private_detected = 0;
-
-  for (const r of rows) {
-    if (!scopeRuleMatchesContext(r, ctx)) {
-      filtered_by_scope += 1;
-      continue;
-    }
-    const laneDecision = laneRuleMatchesContext(r, ctxAgentId, ctxTeamId, enforceLane);
-    if (laneDecision.unowned_private_detected) {
-      unowned_private_detected += 1;
-    }
-    if (!laneDecision.visible) {
-      filtered_by_lane += 1;
-      continue;
-    }
-    const ok = ruleMatchesContext(r.if_json, r.exceptions_json, ctx);
-    if (!ok) {
-      filtered_by_condition += 1;
-      continue;
-    }
-
-    let then_patch: PolicyPatch;
-    try {
-      then_patch = parsePolicyPatch(r.then_json);
-    } catch {
-      skipped_invalid_then += 1;
-      if (invalid_then_sample.length < 5) {
-        invalid_then_sample.push({ rule_node_id: r.rule_node_id, state: r.state, commit_id: r.rule_commit_id });
-      }
-      continue;
-    }
-
-    const rank = readRuleRankMeta(r);
-    const dto = {
-      rule_node_id: r.rule_node_id,
-      state: r.state,
-      rule_scope: r.rule_scope,
-      target_agent_id: r.target_agent_id,
-      target_team_id: r.target_team_id,
-      summary: r.rule_summary,
-      if_json: r.if_json,
-      then_json: then_patch,
-      exceptions_json: r.exceptions_json,
-      stats: { positive: r.positive_count, negative: r.negative_count },
-      rank: {
-        score: rank.score,
-        evidence_score: rank.evidence_score,
-        priority: rank.priority,
-        weight: rank.weight,
-        specificity: rank.specificity,
-      },
-      match_detail: {
-        condition_paths: rank.condition_paths,
-        condition_path_count: rank.condition_paths.length,
-      },
-      commit_id: r.rule_commit_id,
-    };
-
-    if (r.state === "active") {
-      active.push(dto);
-      activeForMerge.push({ rule_node_id: r.rule_node_id, commit_id: r.rule_commit_id, rank, then_patch });
-    } else if (r.state === "shadow" && parsed.include_shadow) {
-      shadow.push(dto);
-      shadowForMerge.push({ rule_node_id: r.rule_node_id, commit_id: r.rule_commit_id, rank, then_patch });
-    }
-  }
-
-  // Stable ordering: higher rule rank first.
-  const score = (x: any) => Number(x?.rank?.score ?? 0);
-  active.sort((a, b) => score(b) - score(a) || String(a.rule_node_id).localeCompare(String(b.rule_node_id)));
-  shadow.sort((a, b) => score(b) - score(a) || String(a.rule_node_id).localeCompare(String(b.rule_node_id)));
-
-  // Build an "applied" policy patch by merging matched rules.
-  // Precedence: higher verification score should win on conflicts.
-  const activeMerge = activeForMerge
-    .slice()
-    .sort((a, b) => a.rank.score - b.rank.score || String(a.rule_node_id).localeCompare(String(b.rule_node_id)))
-    .map((r) => ({ rule_node_id: r.rule_node_id, state: "active" as const, commit_id: r.commit_id, then_patch: r.then_patch }));
-  const appliedActive = buildAppliedPolicy(activeMerge);
-
-  const shadowMerge = shadowForMerge
-    .slice()
-    .sort((a, b) => a.rank.score - b.rank.score || String(a.rule_node_id).localeCompare(String(b.rule_node_id)))
-    .map((r) => ({ rule_node_id: r.rule_node_id, state: "shadow" as const, commit_id: r.commit_id, then_patch: r.then_patch }));
-  const appliedShadow = buildAppliedPolicy(shadowMerge);
-
-  // Tool policy has special semantics (deny=union, allow=intersection, prefer=score-desc priority list).
-  // We compute it explicitly and override the generic merge's `tool` field to prevent silent semantic drift.
-  const toolActive = computeEffectiveToolPolicy(
-    activeForMerge.map((r) => ({
-      rule_node_id: r.rule_node_id,
-      score: r.rank.score,
-      evidence_score: r.rank.evidence_score,
-      priority: r.rank.priority,
-      weight: r.rank.weight,
-      specificity: r.rank.specificity,
-      tool: r.then_patch.tool ?? null,
-    })),
-  );
-  const toolShadow = computeEffectiveToolPolicy(
-    shadowForMerge.map((r) => ({
-      rule_node_id: r.rule_node_id,
-      score: r.rank.score,
-      evidence_score: r.rank.evidence_score,
-      priority: r.rank.priority,
-      weight: r.rank.weight,
-      specificity: r.rank.specificity,
-      tool: r.then_patch.tool ?? null,
-    })),
-  );
-  (appliedActive.policy as any).tool = toolActive.tool;
-  (appliedShadow.policy as any).tool = toolShadow.tool;
-
-  const activeRankByRule = new Map<string, RuleRankMeta>(activeForMerge.map((x) => [x.rule_node_id, x.rank]));
-  const shadowRankByRule = new Map<string, RuleRankMeta>(shadowForMerge.map((x) => [x.rule_node_id, x.rank]));
-  const activeSources = appliedActive.sources.map((s) => ({
-    ...s,
-    rank: activeRankByRule.get(s.rule_node_id)
-      ? {
-          score: activeRankByRule.get(s.rule_node_id)!.score,
-          evidence_score: activeRankByRule.get(s.rule_node_id)!.evidence_score,
-          priority: activeRankByRule.get(s.rule_node_id)!.priority,
-          weight: activeRankByRule.get(s.rule_node_id)!.weight,
-          specificity: activeRankByRule.get(s.rule_node_id)!.specificity,
-        }
-      : null,
-  }));
-  const shadowSources = appliedShadow.sources.map((s) => ({
-    ...s,
-    rank: shadowRankByRule.get(s.rule_node_id)
-      ? {
-          score: shadowRankByRule.get(s.rule_node_id)!.score,
-          evidence_score: shadowRankByRule.get(s.rule_node_id)!.evidence_score,
-          priority: shadowRankByRule.get(s.rule_node_id)!.priority,
-          weight: shadowRankByRule.get(s.rule_node_id)!.weight,
-          specificity: shadowRankByRule.get(s.rule_node_id)!.specificity,
-        }
-      : null,
-  }));
-  const activeConflictExplain = buildConflictExplain(appliedActive.conflicts, activeSources, activeRankByRule);
-  const shadowConflictExplain = buildConflictExplain(appliedShadow.conflicts, shadowSources, shadowRankByRule);
+  const rows = await loadRuleRows(tenancy.scope_key, parsed.limit, opts.liteWriteStore);
+  const matches = matchRuleRows(rows, parsed.context, parsed.include_shadow);
+  const active = matches.active.map(matchedRuleDto);
+  const shadow = matches.shadow.map(matchedRuleDto);
+  const score = (entry: ReturnType<typeof matchedRuleDto>) => Number(entry.rank.score ?? 0);
+  active.sort((a, b) => score(b) - score(a)
+    || String(a.rule_node_id).localeCompare(String(b.rule_node_id)));
+  shadow.sort((a, b) => score(b) - score(a)
+    || String(a.rule_node_id).localeCompare(String(b.rule_node_id)));
+  const compiledActive = compileRuleState(matches.active, "active");
+  const compiledShadow = compileRuleState(matches.shadow, "shadow");
 
   const response = {
     scope: tenancy.scope,
     tenant_id: tenancy.tenant_id,
     considered: rows.length,
     matched: active.length + shadow.length,
-    skipped_invalid_then,
-    invalid_then_sample,
+    skipped_invalid_then: matches.skippedInvalidThen,
+    invalid_then_sample: matches.invalidThenSample,
     active,
     shadow,
-    agent_visibility_summary: {
-      agent: { id: ctxAgentId, team_id: ctxTeamId },
-      rule_scope: {
-        scanned: rows.length,
-        filtered_by_scope,
-        filtered_by_lane,
-        filtered_by_condition,
-        skipped_invalid_then,
-        matched_active: active.length,
-        matched_shadow: shadow.length,
-      },
-      lane: {
-        applied: laneStatus.applied,
-        reason: laneStatus.reason,
-        unowned_private_visible: 0,
-        unowned_private_detected,
-      },
-    },
-    applied: {
-      policy: appliedActive.policy,
-      sources: activeSources,
-      conflicts: appliedActive.conflicts,
-      conflict_explain: activeConflictExplain,
-      tool_explain: toolActive.explain,
-      ...(parsed.include_shadow
-        ? {
-            shadow_policy: appliedShadow.policy,
-            shadow_sources: shadowSources,
-            shadow_conflicts: appliedShadow.conflicts,
-            shadow_conflict_explain: shadowConflictExplain,
-            shadow_tool_explain: toolShadow.explain,
-          }
-        : {}),
-    },
+    agent_visibility_summary: agentVisibilitySummary(matches, rows.length),
+    applied: appliedSurface(compiledActive, compiledShadow, parsed.include_shadow),
   };
-  return {
-    ...response,
-    evaluation_summary: buildRulesEvaluationSummary(response),
-  };
+  return { ...response, evaluation_summary: buildRulesEvaluationSummary(response) };
 }
 
 // Applied-only variant for tool selector / planner injection: avoids returning full match DTOs.
@@ -496,193 +491,23 @@ export async function evaluateRulesAppliedOnly(
     { scope: params.scope, tenant_id: params.tenant_id },
     { defaultScope: params.scope, defaultTenantId: params.default_tenant_id ?? "default" },
   );
-  const scope = tenancy.scope_key;
-  const ctxAgentId = contextAgentId(params.context);
-  const ctxTeamId = contextTeamId(params.context);
-  const laneStatus = laneEnforcementStatus(ctxAgentId, ctxTeamId);
-  const rows = await loadRuleRows(scope, params.limit, opts.liteWriteStore);
-
-  const activeForMerge: Array<{
-    rule_node_id: string;
-    commit_id: string;
-    rank: RuleRankMeta;
-    then_patch: PolicyPatch;
-    provenance_source: ToolRuleEvaluationSource;
-  }> = [];
-  const shadowForMerge: Array<{
-    rule_node_id: string;
-    commit_id: string;
-    rank: RuleRankMeta;
-    then_patch: PolicyPatch;
-    provenance_source: ToolRuleEvaluationSource;
-  }> = [];
-  const enforceLane = laneStatus.applied;
-  let skipped_invalid_then = 0;
-  const invalid_then_sample: Array<{ rule_node_id: string; state: string; commit_id: string }> = [];
-  let filtered_by_scope = 0;
-  let filtered_by_lane = 0;
-  let filtered_by_condition = 0;
-  let unowned_private_detected = 0;
-
-  for (const r of rows) {
-    if (!scopeRuleMatchesContext(r, params.context)) {
-      filtered_by_scope += 1;
-      continue;
-    }
-    const laneDecision = laneRuleMatchesContext(r, ctxAgentId, ctxTeamId, enforceLane);
-    if (laneDecision.unowned_private_detected) {
-      unowned_private_detected += 1;
-    }
-    if (!laneDecision.visible) {
-      filtered_by_lane += 1;
-      continue;
-    }
-    const ok = ruleMatchesContext(r.if_json, r.exceptions_json, params.context);
-    if (!ok) {
-      filtered_by_condition += 1;
-      continue;
-    }
-
-    let then_patch: PolicyPatch;
-    try {
-      then_patch = parsePolicyPatch(r.then_json);
-    } catch {
-      skipped_invalid_then += 1;
-      if (invalid_then_sample.length < 5) {
-        invalid_then_sample.push({ rule_node_id: r.rule_node_id, state: r.state, commit_id: r.rule_commit_id });
-      }
-      continue;
-    }
-
-    const rank = readRuleRankMeta(r);
-    const provenanceSource = buildToolRuleEvaluationSource(r);
-    if (r.state === "active") activeForMerge.push({
-      rule_node_id: r.rule_node_id,
-      commit_id: r.rule_commit_id,
-      rank,
-      then_patch,
-      provenance_source: provenanceSource,
-    });
-    else if (r.state === "shadow" && params.include_shadow)
-      shadowForMerge.push({
-        rule_node_id: r.rule_node_id,
-        commit_id: r.rule_commit_id,
-        rank,
-        then_patch,
-        provenance_source: provenanceSource,
-      });
-  }
-
-  const activeMerge = activeForMerge
-    .slice()
-    .sort((a, b) => a.rank.score - b.rank.score || String(a.rule_node_id).localeCompare(String(b.rule_node_id)))
-    .map((r) => ({ rule_node_id: r.rule_node_id, state: "active" as const, commit_id: r.commit_id, then_patch: r.then_patch }));
-  const appliedActive = buildAppliedPolicy(activeMerge);
-
-  const shadowMerge = shadowForMerge
-    .slice()
-    .sort((a, b) => a.rank.score - b.rank.score || String(a.rule_node_id).localeCompare(String(b.rule_node_id)))
-    .map((r) => ({ rule_node_id: r.rule_node_id, state: "shadow" as const, commit_id: r.commit_id, then_patch: r.then_patch }));
-  const appliedShadow = buildAppliedPolicy(shadowMerge);
-
-  const toolActive = computeEffectiveToolPolicy(
-    activeForMerge.map((r) => ({
-      rule_node_id: r.rule_node_id,
-      score: r.rank.score,
-      evidence_score: r.rank.evidence_score,
-      priority: r.rank.priority,
-      weight: r.rank.weight,
-      specificity: r.rank.specificity,
-      tool: r.then_patch.tool ?? null,
-    })),
-  );
-  const toolShadow = computeEffectiveToolPolicy(
-    shadowForMerge.map((r) => ({
-      rule_node_id: r.rule_node_id,
-      score: r.rank.score,
-      evidence_score: r.rank.evidence_score,
-      priority: r.rank.priority,
-      weight: r.rank.weight,
-      specificity: r.rank.specificity,
-      tool: r.then_patch.tool ?? null,
-    })),
-  );
-  (appliedActive.policy as any).tool = toolActive.tool;
-  (appliedShadow.policy as any).tool = toolShadow.tool;
-
-  const activeRankByRule = new Map<string, RuleRankMeta>(activeForMerge.map((x) => [x.rule_node_id, x.rank]));
-  const shadowRankByRule = new Map<string, RuleRankMeta>(shadowForMerge.map((x) => [x.rule_node_id, x.rank]));
-  const activeSources = appliedActive.sources.map((s) => ({
-    ...s,
-    rank: activeRankByRule.get(s.rule_node_id)
-      ? {
-          score: activeRankByRule.get(s.rule_node_id)!.score,
-          evidence_score: activeRankByRule.get(s.rule_node_id)!.evidence_score,
-          priority: activeRankByRule.get(s.rule_node_id)!.priority,
-          weight: activeRankByRule.get(s.rule_node_id)!.weight,
-          specificity: activeRankByRule.get(s.rule_node_id)!.specificity,
-        }
-      : null,
-  }));
-  const shadowSources = appliedShadow.sources.map((s) => ({
-    ...s,
-    rank: shadowRankByRule.get(s.rule_node_id)
-      ? {
-          score: shadowRankByRule.get(s.rule_node_id)!.score,
-          evidence_score: shadowRankByRule.get(s.rule_node_id)!.evidence_score,
-          priority: shadowRankByRule.get(s.rule_node_id)!.priority,
-          weight: shadowRankByRule.get(s.rule_node_id)!.weight,
-          specificity: shadowRankByRule.get(s.rule_node_id)!.specificity,
-        }
-      : null,
-  }));
-  const activeConflictExplain = buildConflictExplain(appliedActive.conflicts, activeSources, activeRankByRule);
-  const shadowConflictExplain = buildConflictExplain(appliedShadow.conflicts, shadowSources, shadowRankByRule);
+  const rows = await loadRuleRows(tenancy.scope_key, params.limit, opts.liteWriteStore);
+  const matches = matchRuleRows(rows, params.context, params.include_shadow, true);
+  const compiledActive = compileRuleState(matches.active, "active");
+  const compiledShadow = compileRuleState(matches.shadow, "shadow");
 
   return {
     scope: tenancy.scope,
     tenant_id: tenancy.tenant_id,
     considered: rows.length,
-    matched: activeForMerge.length + shadowForMerge.length,
-    skipped_invalid_then,
-    invalid_then_sample,
-    agent_visibility_summary: {
-      agent: { id: ctxAgentId, team_id: ctxTeamId },
-      rule_scope: {
-        scanned: rows.length,
-        filtered_by_scope,
-        filtered_by_lane,
-        filtered_by_condition,
-        skipped_invalid_then,
-        matched_active: activeForMerge.length,
-        matched_shadow: shadowForMerge.length,
-      },
-      lane: {
-        applied: laneStatus.applied,
-        reason: laneStatus.reason,
-        unowned_private_visible: 0,
-        unowned_private_detected,
-      },
-    },
-    applied: {
-      policy: appliedActive.policy,
-      sources: activeSources,
-      conflicts: appliedActive.conflicts,
-      conflict_explain: activeConflictExplain,
-      tool_explain: toolActive.explain,
-      ...(params.include_shadow
-        ? {
-            shadow_policy: appliedShadow.policy,
-            shadow_sources: shadowSources,
-            shadow_conflicts: appliedShadow.conflicts,
-            shadow_conflict_explain: shadowConflictExplain,
-            shadow_tool_explain: toolShadow.explain,
-          }
-        : {}),
-    },
+    matched: matches.active.length + matches.shadow.length,
+    skipped_invalid_then: matches.skippedInvalidThen,
+    invalid_then_sample: matches.invalidThenSample,
+    agent_visibility_summary: agentVisibilitySummary(matches, rows.length),
+    applied: appliedSurface(compiledActive, compiledShadow, params.include_shadow),
     rule_evaluation_sources: {
-      active_sources: activeForMerge.map((rule) => rule.provenance_source),
-      shadow_sources: shadowForMerge.map((rule) => rule.provenance_source),
+      active_sources: matches.active.map((rule) => rule.provenanceSource!),
+      shadow_sources: matches.shadow.map((rule) => rule.provenanceSource!),
     },
   };
 }

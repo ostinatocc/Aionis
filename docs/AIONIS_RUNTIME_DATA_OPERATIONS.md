@@ -1,8 +1,10 @@
 # Aionis Runtime SQLite Data Operations
 
-This runbook covers the file-backed SQLite database configured by
-`LITE_WRITE_SQLITE_PATH`. It is the authority for memory, execution state,
-durable write receipts, embedding vectors, and projection work.
+This runbook covers the authoritative SQLite database configured by
+`LITE_WRITE_SQLITE_PATH` and the non-authoritative replay mirror configured by
+`LITE_REPLAY_SQLITE_PATH`. Backup, restore, preflight, and verify operate on the
+write authority. Upgrade can additionally verify and harden the replay mirror
+before either database is opened by the new Runtime.
 
 The commands below do not call an embedding provider or ANN service. Projection
 repair creates durable work that the normal Runtime worker later executes.
@@ -16,12 +18,22 @@ repair creates durable work that the normal Runtime worker later executes.
   parent or following the link. The operator must also ensure that untrusted
   local users cannot replace or rename that directory through a writable
   ancestor; Runtime validates the dedicated directory, not the full ancestor
-  chain.
+  chain. The offline upgrade also does not claim protection from a malicious
+  process running as the same operating-system user; such a process already
+  has owner access to the Runtime data.
 - On POSIX hosts, startup creates a missing Runtime data directory as `0700`
   and safely narrows an existing owner-controlled directory to `0700`. A new
   SQLite main file is pre-created as `0600` before SQLite opens it, and newly
   created WAL, SHM, and rollback-journal files must also verify as `0600`.
   Runtime does not change the process-wide umask.
+- Before either SQLite database opens, startup requires the complete reserved
+  write and replay path sets—main, `-wal`, `-shm`, and `-journal`—to be
+  mutually exclusive under a conservative filesystem key that first resolves
+  the nearest existing ancestor by realpath, then applies NFC normalization
+  and case-insensitive comparison. Database names distinguished only by case or
+  Unicode normalization are therefore rejected on every platform. Startup
+  path/mode validation also rejects every existing SQLite main or sidecar
+  artifact whose hard-link count is not exactly one.
 - Startup does not reopen and chmod existing SQLite main, WAL, SHM, or
   rollback-journal files while SQLite connections may be active. An existing
   file with an incorrect POSIX mode fails closed and is left unchanged. Stop
@@ -35,14 +47,31 @@ repair creates durable work that the normal Runtime worker later executes.
   exits `0` after a clean drain. A second signal or the 30-second shutdown
   deadline forces exit using the corresponding `128 + signal` status.
 - Runtime startup performs a schema preflight before write/projection schema
-  changes. A database from v0.3.4 is accepted for upgrade. A future, malformed,
-  or partially missing schema that already claims the current version fails
-  closed.
-- Upgrade only adds current tables, columns, indexes, and schema metadata. It
-  verifies that commit, node, and edge row counts did not change.
+  changes. The unversioned v0.3.4 layout and structurally complete versions
+  v2-v5 are accepted for upgrade. A future, malformed, or partially missing
+  schema fails closed.
+- When `--replay-db` is supplied, upgrade first descriptor-safely narrows each
+  dedicated database directory to `0700`, then binds the write/replay main
+  files and existing WAL/SHM/journal files by device and inode before opening
+  SQLite. The complete write and replay artifact namespaces—each database's
+  main, WAL, SHM, and journal identities—must be mutually exclusive. It
+  requires SQLite integrity, zero foreign-key violations, and exactly four
+  schema objects: the canonical `lite_replay_nodes` v1 table, its two canonical
+  non-unique indexes, and the sole `sqlite_autoindex_lite_replay_nodes_1`
+  primary-key autoindex with null SQL. Any other object fails closed. Pathname,
+  symlink, hard-link, identity overlap, or sidecar drift fails before file
+  hardening or write-schema mutation. A sidecar created by SQLite during
+  read-only validation is added to the binding and hardened.
+- Upgrade preserves business rows. Schema v6 may add an authority-adoption
+  commit that transactionally seals older terminal rows; this exact migration
+  delta is not a loss or duplication of pre-existing memory.
 - Backup uses SQLite `VACUUM INTO`, so committed WAL state is included in one
   consistent standalone database file. Never back up by copying only the main
   `.sqlite` file while Runtime is running.
+- The backup command covers only `LITE_WRITE_SQLITE_PATH`; it does not capture
+  the replay mirror or ANN files. Before a release upgrade, also preserve an
+  immutable snapshot of the entire stopped Runtime data volume. That full
+  snapshot is the rollback point for the old binary.
 - Restore never overwrites a live database. It creates and verifies a new path;
   the operator switches `LITE_WRITE_SQLITE_PATH` only after validation.
 - Projection repair rebuilds intent from current SQLite node state and current
@@ -52,20 +81,22 @@ All commands emit JSON. A command error exits with status `1`; `preflight` or
 `verify` exits with status `2` when it successfully produced a report that is
 not safe to continue with.
 
-## Schema transition from v0.3.4
+## Supported schema transitions
 
-The v0.3.4 commit/node/edge rows remain the semantic baseline. The current
-write/projection schema adds these durable operational surfaces:
+The current write/projection target is schema v6. Its accepted sources are:
 
-- `lite_runtime_write_operations` for operation-id receipts;
-- `lite_product_guide_receipts` for guide evidence linkage;
-- `lite_memory_projection_jobs` for embedding and ANN recovery;
-- `lite_runtime_schema_metadata` for component-scoped schema versioning.
+- the unversioned v0.3.4 commit/node/edge layout;
+- `supported_previous_v2`;
+- `supported_previous_v3`;
+- `supported_previous_v4`;
+- `supported_previous_v5`;
+- `current` (an idempotent offline verification/hardening run).
 
-Existing unversioned databases that already contain some or all of these new
-tables remain supported: `CREATE IF NOT EXISTS`/guarded column migrations are
-idempotent, and metadata is recorded only after current schema initialization
-finishes. The upgrader proves that commit, node, and edge counts are unchanged.
+A previous-version classification is granted only after the complete structural
+contract for that version passes. Hybrid, partial, malformed, or future schemas
+remain `incompatible`; `CREATE IF NOT EXISTS` is not used to bless them.
+`uninitialized` is also rejected by the explicit upgrade command so a mistyped
+empty database path cannot be silently initialized as a successful upgrade.
 
 ## 1. Preflight
 
@@ -77,8 +108,10 @@ npx tsx scripts/runtime-data-ops.ts preflight \
 Expected classifications:
 
 - `legacy_v0_3_4`: supported and needs upgrade;
+- `supported_previous_v2` through `supported_previous_v5`: supported and need
+  an explicit offline upgrade;
 - `current`: no schema upgrade needed;
-- `uninitialized`: no write schema exists yet;
+- `uninitialized`: no write schema exists yet; do not run `upgrade` against it;
 - `incompatible`: stop. Do not start Runtime or run upgrade against this file.
 
 Preflight is read-only with respect to application tables. Runtime also runs
@@ -102,33 +135,51 @@ The operation:
 4. writes `runtime-2026-07-12.sqlite.manifest.json` containing its byte size,
    SHA-256 digest, schema version, and semantic row counts.
 
-The backup can run while Runtime is serving traffic. For a release upgrade,
-stop Runtime after backup and before running the upgrade so no old binary can
-write during the release transition.
+The write-authority backup can run while Runtime is serving traffic. For a
+release upgrade, stop Runtime after that backup, take an immutable snapshot of
+the complete data volume, and keep Runtime stopped until upgrade finishes. The
+complete snapshot must include write SQLite sidecars, replay SQLite sidecars,
+and any ANN files present in the deployment.
 
-## 3. Upgrade v0.3.4 data
+## 3. Upgrade supported data
 
 With Runtime stopped and a verified backup available:
 
 ```bash
 npx tsx scripts/runtime-data-ops.ts upgrade \
-  --db /var/lib/aionis/runtime.sqlite
+  --db /var/lib/aionis/runtime.sqlite \
+  --replay-db /var/lib/aionis/replay.sqlite
 
 npx tsx scripts/runtime-data-ops.ts verify \
   --db /var/lib/aionis/runtime.sqlite
 ```
 
-`upgrade` is the explicit offline permission-hardening path for an existing
-POSIX database. Before opening the database for schema work, it hardens the
-dedicated data directory to `0700` and the existing main/WAL/SHM/journal
-artifacts to `0600`. Do not use this operation while Runtime or another SQLite
-process has the same database open.
+`upgrade` is the explicit offline permission-hardening path for existing POSIX
+databases. It first restricts each owner-controlled dedicated directory to
+`0700`, then validates both identity-bound files read-only before schema mutation and
+hardens the bound main/WAL/SHM/journal artifacts to `0600`. `mode_before` and
+`mode_after` in the replay report describe the main file; sidecars are enforced
+as a postcondition. On Windows these mode fields are `null` and make no ACL
+claim. Do not run this operation while Runtime or another SQLite process has
+either database open.
+
+Omit `--replay-db` only when replay persistence is deliberately disabled or no
+replay database exists. If the deployment configures `LITE_REPLAY_SQLITE_PATH`,
+the release upgrade must supply that exact path.
 
 The upgrade report must show:
 
-- `before.classification` is `legacy_v0_3_4` or `current`;
+- `before.classification` is `legacy_v0_3_4`, a supported previous version, or
+  `current`;
 - `after.classification` is `current`;
-- `preserved_counts.before` equals `preserved_counts.after`.
+- `replay_database.quick_check` is exactly `["ok"]`, its foreign-key violation
+  count is zero, all replay table-definition, column/primary-key, and index
+  booleans are `true`, and its schema is exactly the canonical table, two
+  explicit indexes, and sole primary-key autoindex described above;
+- every `preserved_counts` field except `commits` is unchanged;
+- `commits.after` equals `commits.before` plus the exact increase in
+  `commit_authority.adoption_manifest_count` reported by before/after
+  verification.
 
 Do not proceed if `verify.ok` is false. Warnings about legacy pending
 projections or dead letters are handled in the next section; they are not
@@ -271,7 +322,8 @@ generates embeddings and reconciles ANN. Check `/health` until projection
 
 ## 6. Restore and rollback
 
-Stop Runtime. Restore the backup to a new path:
+Stop Runtime. To recover the current release's write authority, restore its
+verified backup to a new path:
 
 ```bash
 npx tsx scripts/runtime-data-ops.ts restore \
@@ -287,12 +339,25 @@ Then point `LITE_WRITE_SQLITE_PATH` at the restored path and start Runtime.
 Keep the failed database and its WAL/SHM files for incident analysis; do not
 copy them over the verified restore.
 
+A release rollback is different. Never start an older Runtime against a write
+database already migrated to schema v6. Mount a new volume restored from the
+immutable, complete pre-upgrade data-volume snapshot and start the exact old
+image against that volume. Verify old memory resolution and operation replay
+there before switching traffic. Keep the upgraded volume untouched for forward
+recovery and incident analysis.
+
+The write-only backup above is sufficient for authority recovery by a compatible
+Runtime, but it is not an exact old-release rollback artifact because it omits
+replay and ANN files. If no complete pre-upgrade volume snapshot exists, stop:
+do not improvise an in-place downgrade.
+
 ## 7. Incident checklist
 
-1. Stop Runtime for upgrade/restore/repair involving release transition.
-2. Preserve logs and the original database path.
+1. Stop Runtime for upgrade/restore/repair involving a release transition.
+2. Preserve logs, the original database paths, and the complete data volume.
 3. Run `preflight` and `verify`; save their JSON output.
-4. Take a new consistent backup before mutation.
+4. Take a new consistent write-authority backup and a stopped full-volume
+   snapshot before mutation.
 5. Run a scoped projection list.
 6. Repair the smallest reviewed batch.
 7. Run `verify` again.

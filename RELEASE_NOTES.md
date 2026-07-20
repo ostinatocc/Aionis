@@ -1,26 +1,23 @@
-# Aionis v0.3.11 Docker Lifecycle Recovery Candidate Notes
+# Aionis v0.3.12 Replay Upgrade Hardening Development Notes
 
-Release status `candidate`.
+Release status `development`.
 
-Runtime `v0.3.11` is a published Runtime-only Local Runtime Public Beta
-prerelease candidate.
-It fixes the Docker process boundary discovered after v0.3.10: the v0.3.10
-image starts through npm, so Docker SIGTERM can terminate the parent process
-without executing Runtime's awaited shutdown path. v0.3.11 launches the
-existing signal-aware startup script directly, whose final `exec` makes Node
-PID 1.
+Runtime `v0.3.12` is the untagged development train for a Runtime-only Local
+Runtime Public Beta patch. A real v0.3.6-to-v0.3.11 exercise found that the old
+image leaves `aionis-lite-replay.sqlite` at mode `0644`, while v0.3.11 correctly
+fails closed on that legacy artifact. The v0.3.11 tag and image remain
+immutable; this train adds an explicit offline replay verification and
+hardening step instead of weakening startup security or silently chmodding a
+live database.
 
-The annotated tag, exact `linux/amd64` image digest, protected-provider run,
-read-only Docker recovery run, and non-latest GitHub prerelease are bound in
-`docs/releases/v0.3.11-publication-evidence.json`. The source Docker run is
-truthfully recorded as failed at its final promotion/readback step after all
-exact-digest gates had passed; the later successful recovery run performed no
-registry writes and revalidated that same digest. Runtime v0.3.10 and its
-published digest stay immutable. The supported target remains one self-hosted
-Runtime process with SQLite authority; this is not a managed service or
-multi-instance HA release.
+There is no v0.3.12 tag, official image, protected-provider run, or publication
+receipt yet. The last published candidate remains v0.3.11, whose immutable
+coordinates are recorded in
+`docs/releases/v0.3.11-publication-evidence.json`. The supported target remains
+one self-hosted Runtime process with SQLite authority; this is not a managed
+service or multi-instance HA release.
 
-## Candidate Coordinates
+## Development Coordinates
 
 - `aionis@0.3.8` — immutable source ref `v0.3.8`
 - `@aionis/create@0.3.8` — immutable source ref `v0.3.8`
@@ -30,8 +27,9 @@ multi-instance HA release.
 - `@aionis/aifs@0.3.4` — immutable source ref `v0.3.4`
 - `@aionis/claude-code@0.3.5` — immutable source ref `v0.3.5`
 - `@aionis/substrate@0.1.11` — immutable source ref `v0.1.11`
-- Runtime source tag `v0.3.11`
-- Docker image `ghcr.io/ostinatocc/aionis:v0.3.11` (`linux/amd64` only)
+- Future Runtime source tag `v0.3.12` (not created)
+- Future Docker image `ghcr.io/ostinatocc/aionis:v0.3.12` (`linux/amd64` only;
+  not published)
 - Default installer Runtime ref `v0.3.6`
 
 All eight external package coordinates remain frozen. This patch does not
@@ -39,38 +37,43 @@ publish npm packages or change the installer default.
 
 ## Patch Scope
 
-- Replace the image's npm PID 1 command with the existing startup script. The
-  script retains its environment and Node compatibility checks, then uses
-  `exec node --import tsx src/index.ts`.
-- Require the exact image digest to survive a real Docker SIGTERM with Runtime
-  drain logs and exit code 0.
-- Require a fresh container on the same named volume to resolve the committed
-  memory and return the exact durable operation receipt.
-- Reject reuse of an operation id with a changed payload without corrupting
-  the original replay.
-- Require a second fresh-container recovery after SIGKILL, including both
-  memories, exact replay, healthy workers, protected SQLite permissions, and
-  offline database verification.
-- Run this recovery gate after the basic exact-digest smoke and before any
-  Docker tag promotion.
+- Add `upgrade --replay-db PATH` while retaining the write-only form for
+  deployments where replay persistence is absent.
+- Before write-schema mutation, restrict dedicated directories to owner-only
+  access, bind the write/replay main and sidecar files by device and inode, and
+  require the two complete artifact namespaces to be mutually exclusive.
+- Before either database opens at Runtime startup, reject overlap between the
+  complete reserved write/replay path sets after nearest-existing-ancestor
+  realpath canonicalization plus NFC/case-insensitive comparison, and reject
+  any existing main or sidecar artifact whose hard-link count is not exactly one.
+- Validate replay SQLite read-only with strict `quick_check`, foreign-key,
+  exact table-definition, and exact-index gates. The only permitted schema is
+  the canonical table, its two explicit indexes, and its sole primary-key
+  autoindex; every other object fails closed.
+- Reject pathname, symlink, hard-link, identity, or sidecar drift; the offline
+  hardener receives the verified identities and checks them before `fchmod`.
+- Reject an uninitialized write database instead of silently initializing an
+  upgrade command pointed at the wrong file.
+- Preserve business-row counts while allowing only the exact schema-v6
+  authority-adoption commit delta.
+- Require real v0.3.6 upgrade, restart, recovery, and untouched-volume rollback
+  evidence before this development train can become a candidate.
 
 Runtime routes, schema v6, learning posture, package contracts, and external
 package commits are unchanged. Global admission-candidate serving remains off.
 
-## Published Evidence
+## Development Evidence
 
-The implementation has passed a local `linux/amd64` image exercise covering
-Node PID 1, graceful drain/exit 0, SIGKILL exit 137 with `OOMKilled=false`, two
-fresh-container recoveries, exact replay, conflict rejection, memory resolve,
-worker health, mode-0600 SQLite files, and offline integrity verification.
-The published candidate additionally passed the same-SHA protected DashScope
-gate and the exact-digest release and process-death recovery gates. The
-machine-checkable receipt is
-[`docs/releases/v0.3.11-publication-evidence.json`](docs/releases/v0.3.11-publication-evidence.json).
+The implementation has passed typecheck, 104/104 static checks, the complete
+46/46 data-operations suite, the focused 3/3 startup security suite, the
+legacy-0644 and inode-binding security regressions, and a
+downward complexity ratchet. The repository now contains a real Docker/SQLite
+cross-version gate, but that gate still must pass against the clean, exact
+candidate digest before promotion. Local development evidence is bounded and
+cannot be represented as v0.3.11 publication evidence.
 
-The commands below are retained as the historical release procedure and as the
-contract for a future release train; they are not instructions to recreate or
-move the existing v0.3.11 tag.
+The commands below define the future v0.3.12 candidate gate. They do not claim
+that the tag or image already exists.
 
 ```bash
 npm run -s typecheck
@@ -86,7 +89,7 @@ node --test \
   scripts/ci/release-workflow-contract.test.mjs \
   scripts/ci/docker-listen-contract.test.mjs \
   scripts/ci/lite-startup-contract.test.mjs
-node scripts/ci/release-artifact-gate.mjs --check --expect-tag v0.3.11
+node scripts/ci/release-artifact-gate.mjs --check --expect-tag v0.3.12
 ```
 
 Before promotion, store a rotated DashScope credential only as the
@@ -105,7 +108,7 @@ credential in this repository, logs, release notes, artifacts, or a child
 package checkout. A successful run also proves the immutable Runtime tag is
 still absent after the provider smoke completes.
 
-## Historical Promotion Checklist
+## Future Candidate Promotion Checklist
 
 For a new, not-yet-tagged release, do not create the tag until the exact
 candidate commit has passed all convergence checks, exact-main CI, and
@@ -120,9 +123,9 @@ git pull --ff-only origin main
 test -z "$(git status --porcelain)"
 test "$(git rev-parse HEAD)" = "$(git rev-parse origin/main)"
 test "$(node -p 'require("./release-train.json").status')" = "candidate"
-test "$(node -p 'require("./package.json").version')" = "0.3.11"
-test -z "$(git tag --list v0.3.11)"
-test -z "$(git ls-remote --tags origin refs/tags/v0.3.11 'refs/tags/v0.3.11^{}')"
+test "$(node -p 'require("./package.json").version')" = "0.3.12"
+test -z "$(git tag --list v0.3.12)"
+test -z "$(git ls-remote --tags origin refs/tags/v0.3.12 'refs/tags/v0.3.12^{}')"
 
 MAIN_COMMIT="$(git rev-parse origin/main)"
 EMBED_EVIDENCE_NONCE="$(node -p 'require("node:crypto").randomBytes(8).toString("hex")')"
@@ -164,15 +167,15 @@ test "$(gh run view "${EMBED_RUN_ID}" --repo ostinatocc/Aionis --json headBranch
 test "$(gh run view "${EMBED_RUN_ID}" --repo ostinatocc/Aionis --json headSha --jq .headSha)" = "${MAIN_COMMIT}"
 test "$(gh run view "${EMBED_RUN_ID}" --repo ostinatocc/Aionis --json conclusion --jq .conclusion)" = "success"
 
-git tag -a v0.3.11 "$MAIN_COMMIT" -m "Aionis v0.3.11"
-test "$(git rev-parse 'v0.3.11^{}')" = "$MAIN_COMMIT"
-git push origin v0.3.11
+git tag -a v0.3.12 "$MAIN_COMMIT" -m "Aionis v0.3.12"
+test "$(git rev-parse 'v0.3.12^{}')" = "$MAIN_COMMIT"
+git push origin v0.3.12
 
-git ls-remote --exit-code --tags origin refs/tags/v0.3.11
+git ls-remote --exit-code --tags origin refs/tags/v0.3.12
 RUN_ID="$(gh run list \
   --repo ostinatocc/Aionis \
   --workflow docker.yml \
-  --branch v0.3.11 \
+  --branch v0.3.12 \
   --commit "$MAIN_COMMIT" \
   --event push \
   --limit 1 \
@@ -181,32 +184,34 @@ RUN_ID="$(gh run list \
 test -n "$RUN_ID"
 gh run watch "$RUN_ID" --repo ostinatocc/Aionis --exit-status
 
-IMAGE="ghcr.io/ostinatocc/aionis:v0.3.11"
+IMAGE="ghcr.io/ostinatocc/aionis:v0.3.12"
 DIGEST="$(docker buildx imagetools inspect "$IMAGE" | awk '$1 == "Digest:" { print $2; exit }')"
 test -n "$DIGEST"
 docker pull --platform linux/amd64 "$IMAGE"
 test "$(docker image inspect --format '{{ index .Config.Labels "org.opencontainers.image.revision" }}' "$IMAGE")" = "$MAIN_COMMIT"
 bash scripts/ci/docker-release-smoke.sh "ghcr.io/ostinatocc/aionis@${DIGEST}"
 bash scripts/ci/docker-recovery-smoke.sh "ghcr.io/ostinatocc/aionis@${DIGEST}"
+bash scripts/ci/docker-recovery-smoke.sh --cross-version \
+  "ghcr.io/ostinatocc/aionis@${DIGEST}" "$MAIN_COMMIT" "v0.3.12"
 
-gh release create v0.3.11 \
+gh release create v0.3.12 \
   --repo ostinatocc/Aionis \
   --verify-tag \
   --prerelease \
   --latest=false \
-  --title "Aionis v0.3.11 Docker Lifecycle Recovery Candidate" \
-  --notes-file docs/releases/v0.3.11.md
+  --title "Aionis v0.3.12 Replay Upgrade Hardening Candidate" \
+  --notes-file docs/releases/v0.3.12.md
 ```
 
 Do not republish `@aionis/create@0.3.8`; its default Runtime remains `v0.3.6`.
 Do not republish any other frozen package coordinate. Do not move, delete, or
-recreate the immutable v0.3.10 tag or image digest.
+recreate the immutable v0.3.10 or v0.3.11 tags or image digests.
 
 The normal release path requires a green tag workflow. If a post-promotion
 registry readback alone marks that run failed, publication is complete only
 when a checked evidence receipt binds the exact source run and attempt, commit,
-digest, already-completed exact-digest gates, a successful read-only recovery
-run with `registry_writes` equal to `none`, and the subsequent verified GitHub
-prerelease. That bounded recovery rule is the one documented for v0.3.11 in
+digest, already-completed exact-digest and cross-version gates, a successful
+read-only recovery run with `registry_writes` equal to `none`, and the
+subsequent verified GitHub prerelease. The prior bounded recovery case is preserved exactly in
 `docs/releases/v0.3.11-publication-evidence.json`; it does not authorize a
-rerun that rebuilds or overwrites the image.
+future rerun that rebuilds or overwrites an image.

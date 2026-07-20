@@ -176,7 +176,11 @@ test("release docs preserve the Runtime tag, frozen installer, and candidate sta
     }
     assert.ok(source.indexOf("docker-release-smoke.sh") > tagIndex, `${file} must run the basic digest smoke after the tag workflow`);
     assert.ok(source.indexOf("docker-recovery-smoke.sh") > tagIndex, `${file} must run the recovery digest smoke after the tag workflow`);
-    assert.ok(source.indexOf("gh release create") > tagIndex, `${file} must create the GitHub prerelease only after tag verification`);
+    const crossVersionIndex = source.indexOf("docker-recovery-smoke.sh --cross-version");
+    const prereleaseIndex = source.indexOf("gh release create");
+    assert.ok(crossVersionIndex > source.indexOf("docker-recovery-smoke.sh"), `${file} must run the cross-version gate after ordinary recovery`);
+    assert.ok(prereleaseIndex > crossVersionIndex, `${file} must create the GitHub prerelease only after the cross-version gate`);
+    assert.ok(source.includes('"$MAIN_COMMIT" "' + train.runtime.source_tag + '"'), `${file} must bind the cross-version gate to the exact commit and Runtime tag`);
     assert.ok(source.includes(`Do not republish \`${train.packages.create.name}@${train.packages.create.version}\``), `${file} must explicitly hold the frozen Create package`);
     assert.doesNotMatch(source, /cd \/Volumes\/ziel\/new\.aionis\/aionis-create[\s\S]{0,160}npm publish/, `${file} must not instruct operators to republish the frozen Create package`);
   }

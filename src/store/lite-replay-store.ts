@@ -10,9 +10,13 @@ import type {
 import { REPLAY_STORE_ACCESS_CAPABILITY_VERSION } from "./replay-access.js";
 import type { ReplayMirrorNodeRecord, ReplayWriteMirror } from "../memory/replay-write.js";
 import {
+  assertPrivateRuntimeSqliteArtifactIdentities,
   assertPrivateRuntimeSqliteArtifactModes,
+  createSqliteReadOnlyDatabase,
   createPrivateRuntimeSqliteDatabase,
+  type PrivateRuntimeSqliteArtifactIdentities,
 } from "./sqlite.js";
+import { normalizeSqliteSchemaSql } from "./sqlite-schema-sql.js";
 
 type LiteReplayRow = {
   node_id: string;
@@ -95,36 +99,95 @@ export type LiteReplayStore = ReplayWriteMirror & {
   healthSnapshot(): { path: string; mode: "sqlite_mirror_v1" };
 };
 
+export const LITE_REPLAY_NODES_TABLE_SQL = `CREATE TABLE lite_replay_nodes (
+  node_id TEXT PRIMARY KEY,
+  scope TEXT NOT NULL,
+  replay_kind TEXT NOT NULL,
+  run_id TEXT,
+  step_id TEXT,
+  step_index INTEGER,
+  playbook_id TEXT,
+  version_num INTEGER,
+  playbook_status TEXT,
+  node_type TEXT NOT NULL,
+  title TEXT,
+  text_summary TEXT,
+  slots_json TEXT NOT NULL,
+  memory_lane TEXT NOT NULL,
+  producer_agent_id TEXT,
+  owner_agent_id TEXT,
+  owner_team_id TEXT,
+  created_at TEXT NOT NULL,
+  updated_at TEXT NOT NULL,
+  commit_id TEXT
+)`;
+export const LITE_REPLAY_SCOPE_RUN_INDEX_SQL = `CREATE INDEX idx_lite_replay_nodes_scope_run
+  ON lite_replay_nodes(scope, run_id, created_at)`;
+export const LITE_REPLAY_SCOPE_PLAYBOOK_INDEX_SQL = `CREATE INDEX idx_lite_replay_nodes_scope_playbook
+  ON lite_replay_nodes(scope, playbook_id, version_num, created_at)`;
+const LITE_REPLAY_REQUIRED_INDEXES = [
+  ["idx_lite_replay_nodes_scope_run", LITE_REPLAY_SCOPE_RUN_INDEX_SQL],
+  ["idx_lite_replay_nodes_scope_playbook", LITE_REPLAY_SCOPE_PLAYBOOK_INDEX_SQL],
+] as const;
+
+export type LiteReplayOfflineVerification = {
+  quick_check: string[]; foreign_key_violation_count: number; row_count: number;
+  required_table_present: true;
+  required_columns_present: true;
+  node_id_primary_key: true;
+  required_table_definition_present: true;
+  required_indexes_present: true;
+  artifacts: PrivateRuntimeSqliteArtifactIdentities;
+};
+
+export function verifyLiteReplayDatabaseForOfflineUpgrade(path: string, expected: PrivateRuntimeSqliteArtifactIdentities): LiteReplayOfflineVerification {
+  assertPrivateRuntimeSqliteArtifactIdentities(path, expected, true);
+  const db = createSqliteReadOnlyDatabase(path);
+  let quickCheck: string[], foreignKeyViolationCount: number, rowCount: number;
+  try {
+    quickCheck = (db.prepare("PRAGMA quick_check").all() as Array<Record<string, unknown>>)
+      .map((row) => String(Object.values(row)[0] ?? ""));
+    foreignKeyViolationCount = (db.prepare("PRAGMA foreign_key_check").all() as unknown[]).length;
+    if (quickCheck.length !== 1 || quickCheck[0] !== "ok") throw new Error(`replay_companion_quick_check_failed:${quickCheck.join(",")}`);
+    if (foreignKeyViolationCount !== 0) throw new Error(`replay_companion_foreign_key_check_failed:${foreignKeyViolationCount}`);
+    const schemaObjects = db.prepare("SELECT type, name, tbl_name, sql FROM sqlite_schema ORDER BY type, name").all() as Array<{ type: string; name: string; tbl_name: string; sql: string | null }>;
+    const tableSql = schemaObjects.find(({ type, name }) => type === "table" && name === "lite_replay_nodes")?.sql;
+    if (!tableSql) throw new Error("replay_companion_required_table_missing:lite_replay_nodes");
+    if (normalizeSqliteSchemaSql(tableSql) !== normalizeSqliteSchemaSql(LITE_REPLAY_NODES_TABLE_SQL)) throw new Error("replay_companion_table_definition_mismatch:lite_replay_nodes");
+    const indexes = schemaObjects.filter(({ type, tbl_name, sql }) => type === "index" && tbl_name === "lite_replay_nodes" && sql !== null);
+    if (indexes.length !== LITE_REPLAY_REQUIRED_INDEXES.length || LITE_REPLAY_REQUIRED_INDEXES.some(([name, sql]) => {
+      const actual = indexes.find((index) => index.name === name)?.sql;
+      return !actual || normalizeSqliteSchemaSql(actual) !== normalizeSqliteSchemaSql(sql);
+    })) throw new Error(`replay_companion_index_contract_mismatch:${indexes.map(({ name }) => name).sort().join(",")}`);
+    const requiredIndexNames = LITE_REPLAY_REQUIRED_INDEXES.map(([name]) => name);
+    const unexpectedSchema = schemaObjects.filter(({ type, name, tbl_name, sql }) => !(
+      type === "table" && name === "lite_replay_nodes" && tbl_name === "lite_replay_nodes"
+      || type === "index" && tbl_name === "lite_replay_nodes" && (requiredIndexNames.includes(name as typeof requiredIndexNames[number])
+        || name === "sqlite_autoindex_lite_replay_nodes_1" && sql === null)
+    ));
+    const autoIndexCount = schemaObjects.filter(({ type, name, tbl_name, sql }) => type === "index" && name === "sqlite_autoindex_lite_replay_nodes_1" && tbl_name === "lite_replay_nodes" && sql === null).length;
+    if (unexpectedSchema.length > 0 || schemaObjects.length !== 4 || autoIndexCount !== 1) throw new Error(`replay_companion_unexpected_schema_object:${unexpectedSchema.map(({ type, name }) => `${type}:${name}`).sort().join(",") || "schema_multiplicity"}`);
+    rowCount = Number((db.prepare("SELECT COUNT(*) AS count FROM lite_replay_nodes")
+      .get() as { count?: number } | undefined)?.count ?? 0);
+    assertPrivateRuntimeSqliteArtifactIdentities(path, expected, true);
+  } finally {
+    db.close();
+  }
+  return {
+    quick_check: quickCheck, foreign_key_violation_count: foreignKeyViolationCount, row_count: rowCount,
+    required_table_present: true, required_columns_present: true, node_id_primary_key: true,
+    required_table_definition_present: true, required_indexes_present: true,
+    artifacts: assertPrivateRuntimeSqliteArtifactIdentities(path, expected, true),
+  };
+}
+
 export function createLiteReplayStore(path: string): LiteReplayStore {
   const db = createPrivateRuntimeSqliteDatabase(path);
   db.exec(`
     PRAGMA journal_mode = WAL;
-    CREATE TABLE IF NOT EXISTS lite_replay_nodes (
-      node_id TEXT PRIMARY KEY,
-      scope TEXT NOT NULL,
-      replay_kind TEXT NOT NULL,
-      run_id TEXT,
-      step_id TEXT,
-      step_index INTEGER,
-      playbook_id TEXT,
-      version_num INTEGER,
-      playbook_status TEXT,
-      node_type TEXT NOT NULL,
-      title TEXT,
-      text_summary TEXT,
-      slots_json TEXT NOT NULL,
-      memory_lane TEXT NOT NULL,
-      producer_agent_id TEXT,
-      owner_agent_id TEXT,
-      owner_team_id TEXT,
-      created_at TEXT NOT NULL,
-      updated_at TEXT NOT NULL,
-      commit_id TEXT
-    );
-    CREATE INDEX IF NOT EXISTS idx_lite_replay_nodes_scope_run
-      ON lite_replay_nodes(scope, run_id, created_at);
-    CREATE INDEX IF NOT EXISTS idx_lite_replay_nodes_scope_playbook
-      ON lite_replay_nodes(scope, playbook_id, version_num, created_at);
+    ${LITE_REPLAY_NODES_TABLE_SQL.replace("CREATE TABLE", "CREATE TABLE IF NOT EXISTS")};
+    ${LITE_REPLAY_SCOPE_RUN_INDEX_SQL.replace("CREATE INDEX", "CREATE INDEX IF NOT EXISTS")};
+    ${LITE_REPLAY_SCOPE_PLAYBOOK_INDEX_SQL.replace("CREATE INDEX", "CREATE INDEX IF NOT EXISTS")};
   `);
   assertPrivateRuntimeSqliteArtifactModes(path);
 

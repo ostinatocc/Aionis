@@ -30,10 +30,11 @@ npx aionis setup
 ```
 
 The frozen installer currently selects Runtime v0.3.6. It is the default
-published-beta install path, not the v0.3.11 candidate test path. Runtime
-v0.3.11 is published separately as a non-latest GitHub prerelease and verified
-`linux/amd64` Docker image. It fixes the v0.3.10 PID 1 boundary, but it does not
-replace the frozen installer default. Publication evidence is recorded in
+published-beta install path, not the v0.3.12 development path. Runtime v0.3.12
+is an untagged replay-upgrade hardening train with no official image or
+publication receipt. The last published candidate remains v0.3.11, a non-latest
+GitHub prerelease and verified `linux/amd64` Docker image. It does not replace
+the frozen installer default. Publication evidence is recorded in
 [`v0.3.11-publication-evidence.json`](releases/v0.3.11-publication-evidence.json)
 at `docs/releases/v0.3.11-publication-evidence.json`.
 
@@ -69,8 +70,10 @@ prints Runtime start and integration next steps.
 
 ## Docker
 
-The published candidate tag is `ghcr.io/ostinatocc/aionis:v0.3.11`. Pin its
-verified digest when evaluating the candidate:
+The release-train coordinate `ghcr.io/ostinatocc/aionis:v0.3.12` is reserved
+but not published; do not pull or deploy it yet. The last published candidate
+tag is `ghcr.io/ostinatocc/aionis:v0.3.11`. Pin its verified digest when
+evaluating that candidate:
 
 ```bash
 docker run --rm \

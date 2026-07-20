@@ -7,8 +7,9 @@ import {
   lstatSync,
   mkdirSync,
   openSync,
+  realpathSync,
 } from "node:fs";
-import { dirname, parse, resolve } from "node:path";
+import { basename, dirname, parse, resolve } from "node:path";
 import { pathToFileURL } from "node:url";
 
 export type SqliteStatement = {
@@ -104,38 +105,122 @@ export function createSqliteDatabase(path: string): SqliteDatabase {
 
 const PRIVATE_RUNTIME_DIRECTORY_MODE = 0o700;
 const PRIVATE_RUNTIME_SQLITE_MODE = 0o600;
+export type PrivateRuntimeSqliteFileIdentity = Readonly<{ dev: bigint; ino: bigint }>;
+export type PrivateRuntimeSqliteArtifactIdentities = Readonly<{ main: PrivateRuntimeSqliteFileIdentity; wal: PrivateRuntimeSqliteFileIdentity | null; shm: PrivateRuntimeSqliteFileIdentity | null; journal: PrivateRuntimeSqliteFileIdentity | null }>;
+const PRIVATE_RUNTIME_SQLITE_ARTIFACT_SUFFIXES = ["", "-wal", "-shm", "-journal"] as const;
+const PRIVATE_RUNTIME_SQLITE_ARTIFACT_KEYS = ["main", "wal", "shm", "journal"] as const;
 
-function chmodExisting(path: string, mode: number): void {
+function privateRuntimeSqliteFileIdentity(path: string, required = true): PrivateRuntimeSqliteFileIdentity | null {
+  try {
+    const file = lstatSync(path, { bigint: true });
+    if (file.isSymbolicLink() || !file.isFile()) throw new Error(`runtime_sqlite_artifact_must_be_regular_file:${path}`);
+    if (process.platform !== "win32" && typeof process.getuid === "function"
+      && file.uid !== BigInt(process.getuid())) throw new Error(`runtime_sqlite_artifact_owner_invalid:${path}`);
+    if (file.nlink !== 1n) throw new Error(`runtime_sqlite_artifact_hardlink_invalid:${path}:${file.nlink}`);
+    return { dev: file.dev, ino: file.ino };
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException)?.code !== "ENOENT") throw error;
+    if (required) throw new Error(`runtime_sqlite_artifact_missing:${path}`);
+    return null;
+  }
+}
+
+export function capturePrivateRuntimeSqliteArtifactIdentities(path: string): PrivateRuntimeSqliteArtifactIdentities {
+  const identities = PRIVATE_RUNTIME_SQLITE_ARTIFACT_SUFFIXES.map((suffix) => privateRuntimeSqliteFileIdentity(`${path}${suffix}`, suffix === "")); return { main: identities[0]!, wal: identities[1], shm: identities[2], journal: identities[3] };
+}
+function canonicalPrivateRuntimeSqliteArtifactPath(path: string): string {
+  const absolute = resolve(path);
+  try { return realpathSync.native(absolute); } catch (error) {
+    if ((error as NodeJS.ErrnoException)?.code !== "ENOENT") throw error;
+    const parent = dirname(absolute); if (parent === absolute) throw error;
+    return resolve(canonicalPrivateRuntimeSqliteArtifactPath(parent), basename(absolute));
+  }
+}
+export function assertPrivateRuntimeSqlitePathNamespacesDisjoint(leftPath: string, rightPath: string): void {
+  const artifacts = (path: string) => PRIVATE_RUNTIME_SQLITE_ARTIFACT_SUFFIXES.map((suffix) => {
+    const artifactPath = `${resolve(path)}${suffix}`;
+    return { key: canonicalPrivateRuntimeSqliteArtifactPath(artifactPath).normalize("NFC").toLowerCase(),
+      identity: privateRuntimeSqliteFileIdentity(artifactPath, false) };
+  });
+  const left = artifacts(leftPath); const right = artifacts(rightPath);
+  for (const leftArtifact of left) for (const rightArtifact of right) {
+    const sameIdentity = leftArtifact.identity && rightArtifact.identity
+      && leftArtifact.identity.dev === rightArtifact.identity.dev
+      && leftArtifact.identity.ino === rightArtifact.identity.ino;
+    if (leftArtifact.key === rightArtifact.key || sameIdentity) throw new Error(`runtime_sqlite_artifact_namespace_overlap:${rightArtifact.key}`);
+  }
+}
+
+export function assertPrivateRuntimeSqliteNamespacesDisjoint(leftPath: string, left: PrivateRuntimeSqliteArtifactIdentities,
+  rightPath: string, right: PrivateRuntimeSqliteArtifactIdentities): void {
+  assertPrivateRuntimeSqlitePathNamespacesDisjoint(leftPath, rightPath);
+  for (const leftRole of PRIVATE_RUNTIME_SQLITE_ARTIFACT_KEYS) for (const rightRole of PRIVATE_RUNTIME_SQLITE_ARTIFACT_KEYS) {
+    const leftIdentity = left[leftRole]; const rightIdentity = right[rightRole];
+    if (leftIdentity && rightIdentity && leftIdentity.ino !== 0n && leftIdentity.dev === rightIdentity.dev
+      && leftIdentity.ino === rightIdentity.ino) throw new Error(`runtime_sqlite_artifact_namespace_overlap:${leftRole}:${rightRole}`);
+  }
+}
+
+export function assertPrivateRuntimeSqliteFileIdentity(path: string, expected: PrivateRuntimeSqliteFileIdentity): void {
+  const actual = privateRuntimeSqliteFileIdentity(path);
+  if (!actual || actual.dev !== expected.dev || actual.ino !== expected.ino) throw new Error(`runtime_sqlite_artifact_changed_since_verification:${path}`);
+}
+
+export function assertPrivateRuntimeSqliteArtifactIdentities(path: string, expected: PrivateRuntimeSqliteArtifactIdentities,
+  allowNew = false): PrivateRuntimeSqliteArtifactIdentities {
+  const actual = capturePrivateRuntimeSqliteArtifactIdentities(path);
+  for (const key of PRIVATE_RUNTIME_SQLITE_ARTIFACT_KEYS) {
+    if (!expected[key]) {
+      if (!allowNew && actual[key]) throw new Error(`runtime_sqlite_artifact_appeared_since_verification:${path}:${key}`);
+    } else if (!actual[key] || actual[key]?.dev !== expected[key]?.dev || actual[key]?.ino !== expected[key]?.ino) {
+      throw new Error(`runtime_sqlite_artifact_changed_since_verification:${path}:${key}`);
+    }
+  }
+  return actual;
+}
+
+function chmodExisting(path: string, mode: number, expectedIdentity?: PrivateRuntimeSqliteFileIdentity | null): void {
   let fd: number | null = null;
   try {
-    const pathStat = lstatSync(path);
+    const pathStat = lstatSync(path, { bigint: true });
     if (pathStat.isSymbolicLink() || !pathStat.isFile()) {
       throw new Error(`runtime_sqlite_artifact_must_be_regular_file:${path}`);
+    }
+    if (pathStat.nlink !== 1n) {
+      throw new Error(`runtime_sqlite_artifact_hardlink_invalid:${path}:${pathStat.nlink}`);
+    }
+    if (expectedIdentity === null) {
+      throw new Error(`runtime_sqlite_artifact_appeared_since_verification:${path}`);
+    }
+    if (expectedIdentity && (pathStat.dev !== expectedIdentity.dev
+      || pathStat.ino !== expectedIdentity.ino)) {
+      throw new Error(`runtime_sqlite_artifact_changed_since_verification:${path}`);
     }
     fd = openSync(
       path,
       constants.O_RDONLY | (constants.O_NOFOLLOW ?? 0),
     );
-    const openedStat = fstatSync(fd);
+    const openedStat = fstatSync(fd, { bigint: true });
     if (!openedStat.isFile()
       || openedStat.dev !== pathStat.dev || openedStat.ino !== pathStat.ino) {
       throw new Error(`runtime_sqlite_artifact_changed_during_mode_hardening:${path}`);
     }
     if (process.platform !== "win32" && typeof process.getuid === "function"
-      && openedStat.uid !== process.getuid()) {
+      && openedStat.uid !== BigInt(process.getuid())) {
       throw new Error(`runtime_sqlite_artifact_owner_invalid:${path}`);
     }
     fchmodSync(fd, mode);
-    const after = lstatSync(path);
+    const after = lstatSync(path, { bigint: true });
     if (after.isSymbolicLink() || !after.isFile()
       || after.dev !== pathStat.dev || after.ino !== pathStat.ino) {
       throw new Error(`runtime_sqlite_artifact_changed_during_mode_hardening:${path}`);
     }
-    if (process.platform !== "win32" && (after.mode & 0o7777) !== mode) {
-      throw new Error(`runtime_sqlite_artifact_mode_invalid:${path}:${(after.mode & 0o7777).toString(8)}`);
+    if (process.platform !== "win32" && (after.mode & 0o7777n) !== BigInt(mode)) {
+      throw new Error(`runtime_sqlite_artifact_mode_invalid:${path}:${(after.mode & 0o7777n).toString(8)}`);
     }
   } catch (error) {
     if ((error as NodeJS.ErrnoException)?.code !== "ENOENT") throw error;
+    if (expectedIdentity) throw new Error(`runtime_sqlite_artifact_missing_since_verification:${path}`);
   } finally {
     if (fd !== null) closeSync(fd);
   }
@@ -144,9 +229,8 @@ function chmodExisting(path: string, mode: number): void {
 function assertPrivateRuntimeSqliteArtifactPath(path: string): void {
   try {
     const artifact = lstatSync(path);
-    if (artifact.isSymbolicLink() || !artifact.isFile()) {
-      throw new Error(`runtime_sqlite_artifact_must_be_regular_file:${path}`);
-    }
+    if (artifact.isSymbolicLink() || !artifact.isFile()) throw new Error(`runtime_sqlite_artifact_must_be_regular_file:${path}`);
+    if (artifact.nlink !== 1) throw new Error(`runtime_sqlite_artifact_hardlink_invalid:${path}:${artifact.nlink}`);
   } catch (error) {
     if ((error as NodeJS.ErrnoException)?.code !== "ENOENT") throw error;
   }
@@ -257,17 +341,28 @@ export function preparePrivateRuntimeSqlitePath(path: string): void {
  * different descriptor in the same process. Live stores use the stat-only
  * assertion below instead.
  */
-export function hardenPrivateRuntimeSqliteArtifacts(path: string): void {
-  chmodExisting(path, PRIVATE_RUNTIME_SQLITE_MODE);
-  chmodExisting(`${path}-wal`, PRIVATE_RUNTIME_SQLITE_MODE);
-  chmodExisting(`${path}-shm`, PRIVATE_RUNTIME_SQLITE_MODE);
-  chmodExisting(`${path}-journal`, PRIVATE_RUNTIME_SQLITE_MODE);
+export function hardenPrivateRuntimeSqliteArtifacts(
+  path: string,
+  expected?: PrivateRuntimeSqliteArtifactIdentities,
+): void {
+  chmodExisting(path, PRIVATE_RUNTIME_SQLITE_MODE, expected?.main);
+  chmodExisting(`${path}-wal`, PRIVATE_RUNTIME_SQLITE_MODE, expected?.wal);
+  chmodExisting(`${path}-shm`, PRIVATE_RUNTIME_SQLITE_MODE, expected?.shm);
+  chmodExisting(`${path}-journal`, PRIVATE_RUNTIME_SQLITE_MODE, expected?.journal);
+}
+
+/** Restricts the dedicated parent before an offline verifier opens SQLite by path. */
+export function hardenPrivateRuntimeSqliteDirectoryOffline(path: string): void {
+  hardenPrivateRuntimeSqliteDirectory(path);
 }
 
 /** Repairs a Runtime path only while every SQLite connection to it is closed. */
-export function hardenPrivateRuntimeSqlitePathOffline(path: string): void {
+export function hardenPrivateRuntimeSqlitePathOffline(
+  path: string,
+  expected?: PrivateRuntimeSqliteArtifactIdentities,
+): void {
   hardenPrivateRuntimeSqliteDirectory(path);
-  hardenPrivateRuntimeSqliteArtifacts(path);
+  hardenPrivateRuntimeSqliteArtifacts(path, expected);
   assertPrivateRuntimeSqliteArtifactModes(path);
 }
 
@@ -278,9 +373,8 @@ function assertPrivateRuntimeSqliteArtifactMode(
 ): void {
   try {
     const artifact = lstatSync(path);
-    if (artifact.isSymbolicLink() || !artifact.isFile()) {
-      throw new Error(`runtime_sqlite_artifact_must_be_regular_file:${path}`);
-    }
+    if (artifact.isSymbolicLink() || !artifact.isFile()) throw new Error(`runtime_sqlite_artifact_must_be_regular_file:${path}`);
+    if (artifact.nlink !== 1) throw new Error(`runtime_sqlite_artifact_hardlink_invalid:${path}:${artifact.nlink}`);
     if (process.platform !== "win32" && typeof process.getuid === "function"
       && artifact.uid !== process.getuid()) {
       throw new Error(`runtime_sqlite_artifact_owner_invalid:${path}`);

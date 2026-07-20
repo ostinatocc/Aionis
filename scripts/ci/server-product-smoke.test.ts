@@ -1176,6 +1176,71 @@ test("server edition can construct local-store Runtime services", async () => {
   }
 });
 
+test("Runtime rejects write/replay reserved-path overlap before creating either database", async (t) => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "aionis-runtime-namespace-")); t.after(() => fs.rmSync(root, { recursive: true, force: true }));
+  const assertRejected = async (writePath: string, replayPath: string) => {
+    const env = await liteEnv(writePath, replayPath);
+    await assert.rejects(createRuntimeServices(createRuntimeConfig(env)), /runtime_sqlite_artifact_namespace_overlap/);
+    assert.deepEqual([fs.existsSync(writePath), fs.existsSync(replayPath)], [false, false]);
+  };
+  for (const suffix of ["", "-wal", "-shm", "-journal"]) for (const reverse of [false, true]) {
+    const base = path.join(root, `${reverse ? "reverse" : "forward"}${suffix}.sqlite`);
+    const [writePath, replayPath] = reverse ? [`${base}${suffix}`, base] : [base, `${base}${suffix}`];
+    await assertRejected(writePath, replayPath);
+  }
+  await assertRejected(path.join(root, "Data.sqlite"), path.join(root, "data.sqlite"));
+  await assertRejected(path.join(root, "é.sqlite"), path.join(root, "e\u0301.sqlite"));
+});
+
+test("Runtime rejects write/replay namespace aliases through a non-final symlinked ancestor", {
+  skip: process.platform === "win32" ? "symlink setup requires platform privileges" : false,
+}, async (t) => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "aionis-runtime-ancestor-alias-")); t.after(() => fs.rmSync(root, { recursive: true, force: true }));
+  for (const reverse of [false, true]) {
+    await t.test(reverse ? "write alias to canonical replay" : "canonical write to replay alias", async () => {
+      const caseRoot = path.join(root, reverse ? "reverse" : "forward"); const realRoot = path.join(caseRoot, "real");
+      const authorityDirectory = path.join(realRoot, "nested"); const aliasRoot = path.join(caseRoot, "alias");
+      fs.mkdirSync(authorityDirectory, { recursive: true, mode: 0o700 });
+      fs.symlinkSync(realRoot, aliasRoot, "dir");
+      const canonicalPath = path.join(authorityDirectory, "runtime.sqlite"); const aliasedPath = path.join(aliasRoot, "nested", "runtime.sqlite");
+      const database = createLiteRuntimeDatabase(canonicalPath); await database.close();
+      const snapshot = () => {
+        const directory = fs.statSync(authorityDirectory, { bigint: true });
+        return {
+          bytes: fs.readFileSync(canonicalPath), fileMode: fs.statSync(canonicalPath).mode & 0o7777,
+          entries: fs.readdirSync(authorityDirectory).sort(), directoryMode: directory.mode & 0o7777n,
+          directoryMtimeNs: directory.mtimeNs, directoryCtimeNs: directory.ctimeNs,
+          aliasTarget: fs.readlinkSync(aliasRoot),
+        };
+      };
+      const before = snapshot();
+      const [writePath, replayPath] = reverse
+        ? [aliasedPath, canonicalPath]
+        : [canonicalPath, aliasedPath];
+      const env = await liteEnv(writePath, replayPath);
+      let services: Awaited<ReturnType<typeof createRuntimeServices>> | null = null;
+      let startupError: unknown = null;
+      try { services = await createRuntimeServices(createRuntimeConfig(env)); }
+      catch (error) { startupError = error; }
+      finally { if (services) await closeConstructedRuntimeServices(services); }
+      assert.equal(services === null, true, "aliased write/replay roles must fail before services are constructed");
+      assert.match(String(startupError), /runtime_sqlite_artifact_namespace_overlap/);
+      assert.deepEqual(snapshot(), before);
+    });
+  }
+});
+
+test("Runtime rejects hard-linked write/replay databases before mutating authority", async (t) => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "aionis-runtime-hardlink-")); t.after(() => fs.rmSync(root, { recursive: true, force: true }));
+  const writePath = path.join(root, "write.sqlite"); const replayPath = path.join(root, "replay.sqlite");
+  const env = await liteEnv(writePath, replayPath); const services = await createRuntimeServices(createRuntimeConfig(env));
+  await closeConstructedRuntimeServices(services);
+  fs.rmSync(replayPath); fs.linkSync(writePath, replayPath);
+  const authorityBefore = fs.readFileSync(writePath);
+  await assert.rejects(createRuntimeServices(createRuntimeConfig(env)), /runtime_sqlite_artifact_hardlink_invalid/);
+  assert.deepEqual(fs.readFileSync(writePath), authorityBefore);
+});
+
 test("Runtime services establish one tenant-scope anchor, replay it, and reject default-tenant drift", async () => {
   const writePath = tmpDbPath("tenant-anchor-services-write");
   const replayPath = tmpDbPath("tenant-anchor-services-replay");

@@ -51,7 +51,7 @@ function usage(): string {
 
 Usage:
   npx tsx scripts/runtime-data-ops.ts preflight --db PATH
-  npx tsx scripts/runtime-data-ops.ts upgrade --db PATH
+  npx tsx scripts/runtime-data-ops.ts upgrade --db PATH [--replay-db PATH]
   npx tsx scripts/runtime-data-ops.ts verify --db PATH
     [--learning-proposal PATH --learning-artifact-out PATH]
   npx tsx scripts/runtime-data-ops.ts backup --db PATH --out BACKUP_PATH
@@ -192,7 +192,7 @@ async function main(): Promise<void> {
     return;
   }
   if (args.command === "upgrade") {
-    print(await upgradeLiteRuntimeDatabase(required(args, "db")));
+    print(await upgradeLiteRuntimeDatabase(required(args, "db"), { replayPath: args.flags.has("replay-db") || args.values.has("replay-db") ? required(args, "replay-db") : undefined }));
     return;
   }
   if (args.command === "verify") {

@@ -51,13 +51,19 @@ import {
   type LiteRuntimeSchemaReport,
 } from "./lite-runtime-schema.js";
 import {
+  assertPrivateRuntimeSqliteArtifactIdentities,
+  assertPrivateRuntimeSqliteFileIdentity,
+  assertPrivateRuntimeSqliteNamespacesDisjoint, assertPrivateRuntimeSqlitePathNamespacesDisjoint,
+  capturePrivateRuntimeSqliteArtifactIdentities,
   createSqliteReadOnlyDatabase,
   createSqliteSnapshotSourceDatabase,
   hardenPrivateRuntimeSqliteArtifacts,
+  hardenPrivateRuntimeSqliteDirectoryOffline,
   hardenPrivateRuntimeSqlitePathOffline,
   requireSqliteStreamingStatement,
   type SqliteDatabase,
 } from "./sqlite.js";
+import { verifyLiteReplayDatabaseForOfflineUpgrade } from "./lite-replay-store.js";
 import {
   inspectLiteMemoryCommitAuthority,
   type LiteMemoryCommitAuthorityReport,
@@ -145,16 +151,12 @@ export type LiteRuntimeBackupManifest = {
   learning_table_counts?: Readonly<Record<string, number>> | null;
 };
 
+const PRESERVED_COUNT_KEYS = [
+  "commits", "nodes", "edges", "guide_receipts", "write_operations", "rule_feedback",
+  "product_measurements", "skill_reviews",
+] as const;
 type LiteRuntimePreservedCounts = Pick<
-  LiteRuntimeDataVerification["counts"],
-  | "commits"
-  | "nodes"
-  | "edges"
-  | "guide_receipts"
-  | "write_operations"
-  | "rule_feedback"
-  | "product_measurements"
-  | "skill_reviews"
+  LiteRuntimeDataVerification["counts"], (typeof PRESERVED_COUNT_KEYS)[number]
 >;
 
 export type LiteRuntimeUpgradeReport = {
@@ -162,6 +164,14 @@ export type LiteRuntimeUpgradeReport = {
   path: string;
   before: LiteRuntimeSchemaReport;
   after: LiteRuntimeSchemaReport;
+  replay_database: {
+    contract_version: "aionis_lite_runtime_companion_sqlite_hardening_v1"; role: "replay";
+    path: string; row_count: number;
+    quick_check: string[]; foreign_key_violation_count: number;
+    required_table_present: true; required_columns_present: true; node_id_primary_key: true;
+    required_table_definition_present: true; required_indexes_present: true;
+    mode_before: string | null; mode_after: string | null;
+  } | null;
   preserved_counts: {
     before: LiteRuntimePreservedCounts;
     after: LiteRuntimePreservedCounts;
@@ -175,10 +185,7 @@ export function preflightLiteRuntimeDatabase(path: string): {
   const absolute = assertReadableDatabasePath(path);
   const db = createSqliteReadOnlyDatabase(absolute);
   try {
-    return {
-      path: absolute,
-      schema: inspectLiteRuntimeSchema(db),
-    };
+    return { path: absolute, schema: inspectLiteRuntimeSchema(db) };
   } finally {
     db.close();
   }
@@ -189,6 +196,10 @@ function assertReadableDatabasePath(path: string): string {
   if (!existsSync(absolute)) throw new Error(`SQLite database does not exist: ${absolute}`);
   if (!statSync(absolute).isFile()) throw new Error(`SQLite database path is not a file: ${absolute}`);
   return absolute;
+}
+
+function sqliteMode(path: string): string | null {
+  return process.platform === "win32" ? null : (statSync(path).mode & 0o7777).toString(8).padStart(4, "0");
 }
 
 function tableExists(db: SqliteDatabase, table: string): boolean {
@@ -202,6 +213,10 @@ function tableExists(db: SqliteDatabase, table: string): boolean {
 function scalarCount(db: SqliteDatabase, sql: string, ...params: unknown[]): number {
   const row = db.prepare(sql).get(...params) as { count: number } | undefined;
   return Number(row?.count ?? 0);
+}
+
+function preservedCounts(counts: LiteRuntimeDataVerification["counts"]): LiteRuntimePreservedCounts {
+  return Object.fromEntries(PRESERVED_COUNT_KEYS.map((key) => [key, counts[key]])) as LiteRuntimePreservedCounts;
 }
 
 function semanticCounts(
@@ -381,6 +396,18 @@ function errorChainMessage(error: unknown): string {
   return String(error);
 }
 
+async function auditRuntimeStore(
+  open: () => { close(): Promise<void> },
+): Promise<LiteExecutionHistoryVerification> {
+  try {
+    const store = open();
+    await store.close();
+    return { ok: true, violation_count: 0, violations: [] };
+  } catch (error) {
+    return historyAuditFailure(error);
+  }
+}
+
 async function auditExecutionHistoryWithRuntimeStores(
   source: SqliteDatabase,
 ): Promise<LiteRuntimeDataVerification["execution_history"]> {
@@ -393,29 +420,8 @@ async function auditExecutionHistoryWithRuntimeStores(
     vacuumInto(source, snapshotPath);
     hardenPrivateRuntimeSqliteArtifacts(snapshotPath);
 
-    let state: LiteExecutionHistoryVerification = {
-      ok: true,
-      violation_count: 0,
-      violations: [],
-    };
-    try {
-      const store = createLiteExecutionStateStore(snapshotPath);
-      await store.close();
-    } catch (error) {
-      state = historyAuditFailure(error);
-    }
-
-    let tree: LiteExecutionHistoryVerification = {
-      ok: true,
-      violation_count: 0,
-      violations: [],
-    };
-    try {
-      const store = createLiteExecutionTreeStore(snapshotPath);
-      await store.close();
-    } catch (error) {
-      tree = historyAuditFailure(error);
-    }
+    const state = await auditRuntimeStore(() => createLiteExecutionStateStore(snapshotPath));
+    const tree = await auditRuntimeStore(() => createLiteExecutionTreeStore(snapshotPath));
     return { state, tree };
   } finally {
     rmSync(directory, { recursive: true, force: true });
@@ -596,12 +602,7 @@ export async function verifyLiteRuntimeDatabase(path: string): Promise<LiteRunti
   );
   const snapshotPath = join(snapshotDirectory, "runtime.sqlite");
   try {
-    const source = createSqliteSnapshotSourceDatabase(absolute);
-    try {
-      vacuumInto(source, snapshotPath);
-    } finally {
-      source.close();
-    }
+    vacuumSnapshot(absolute, snapshotPath);
     hardenPrivateRuntimeSqliteArtifacts(snapshotPath);
     return await verifyLiteRuntimeDatabaseSnapshot(absolute, snapshotPath);
   } finally {
@@ -640,17 +641,8 @@ export async function verifyLiteRuntimeLearningArtifact(args: {
   const snapshotDirectory = mkdtempSync(join(tmpdir(), "aionis-learning-integrity-snapshot-"));
   const snapshotPath = join(snapshotDirectory, "runtime.sqlite");
   try {
-    const source = createSqliteSnapshotSourceDatabase(sourcePath);
-    try {
-      vacuumInto(source, snapshotPath);
-    } finally {
-      source.close();
-    }
-    const snapshotVerification = await verifyLiteRuntimeDatabaseSnapshot(sourcePath, snapshotPath);
-    const verification: LiteRuntimeDataVerification = {
-      ...snapshotVerification,
-      live_path: sourcePath,
-    };
+    vacuumSnapshot(sourcePath, snapshotPath);
+    const verification = await verifyLiteRuntimeDatabaseSnapshot(sourcePath, snapshotPath);
     let proposalIntegrityError: string | null = null;
     if (verification.schema.classification === "current"
       && verification.schema.detected_version === LITE_RUNTIME_WRITE_SCHEMA_VERSION) {
@@ -795,9 +787,7 @@ function assertBackupManifestSemantics(
   const mismatches: string[] = [];
   if (manifest.schema_component !== verification.schema.component) mismatches.push("schema_component");
   if (manifest.schema_version !== verification.schema.detected_version) mismatches.push("schema_version");
-  if (manifest.database_instance_id !== verification.database_instance_id) {
-    mismatches.push("database_instance_id");
-  }
+  if (manifest.database_instance_id !== verification.database_instance_id) mismatches.push("database_instance_id");
   const expectedCountEntries = Object.entries(verification.counts) as Array<
     [keyof LiteRuntimeDataVerification["counts"], number]
   >;
@@ -809,18 +799,14 @@ function assertBackupManifestSemantics(
       || expectedCountEntries.some(([field, expected]) => manifest.counts[field] !== expected)
     : manifestCountEntries.length === 0
       || manifestCountEntries.some(([field, expected]) => verification.counts[field] !== expected);
-  if (countMismatch) {
-    mismatches.push("counts");
-  }
+  if (countMismatch) mismatches.push("counts");
   const expectedLearningTableCounts = verification.learning.replay?.table_counts ?? null;
   if (manifest.contract_version === "aionis_lite_runtime_backup_manifest_v2"
     && stableStringify(manifest.learning_table_counts ?? null)
       !== stableStringify(expectedLearningTableCounts)) {
     mismatches.push("learning_table_counts");
   }
-  if (mismatches.length > 0) {
-    throw new Error(`backup_manifest_semantic_mismatch:${mismatches.join(",")}`);
-  }
+  if (mismatches.length > 0) throw new Error(`backup_manifest_semantic_mismatch:${mismatches.join(",")}`);
 }
 
 function assertRestoredSnapshotMatches(
@@ -833,19 +819,13 @@ function assertRestoredSnapshotMatches(
   if (snapshot.snapshot_fingerprint.sha256
     !== restored.snapshot_fingerprint.sha256) mismatches.push("sha256");
   if (snapshot.schema.component !== restored.schema.component) mismatches.push("schema_component");
-  if (snapshot.schema.detected_version !== restored.schema.detected_version) {
-    mismatches.push("schema_version");
-  }
-  if (stableStringify(snapshot.counts) !== stableStringify(restored.counts)) {
-    mismatches.push("counts");
-  }
+  if (snapshot.schema.detected_version !== restored.schema.detected_version) mismatches.push("schema_version");
+  if (stableStringify(snapshot.counts) !== stableStringify(restored.counts)) mismatches.push("counts");
   if (stableStringify(snapshot.learning.replay?.table_counts ?? null)
     !== stableStringify(restored.learning.replay?.table_counts ?? null)) {
     mismatches.push("learning_table_counts");
   }
-  if (mismatches.length > 0) {
-    throw new Error(`restored_database_snapshot_mismatch:${mismatches.join(",")}`);
-  }
+  if (mismatches.length > 0) throw new Error(`restored_database_snapshot_mismatch:${mismatches.join(",")}`);
 }
 
 function fsyncPath(path: string): void {
@@ -859,6 +839,15 @@ function fsyncPath(path: string): void {
 
 function vacuumInto(source: SqliteDatabase, destination: string): void {
   source.prepare("VACUUM INTO ?").run(destination);
+}
+
+function vacuumSnapshot(sourcePath: string, destinationPath: string): void {
+  const source = createSqliteSnapshotSourceDatabase(sourcePath);
+  try {
+    vacuumInto(source, destinationPath);
+  } finally {
+    source.close();
+  }
 }
 
 function createPrivateStagingDirectory(parent: string, prefix: string): string {
@@ -886,12 +875,7 @@ export async function backupLiteRuntimeDatabase(args: {
   );
   const snapshotPath = join(stagingDirectory, "runtime.sqlite");
   try {
-    const source = createSqliteSnapshotSourceDatabase(sourcePath);
-    try {
-      vacuumInto(source, snapshotPath);
-    } finally {
-      source.close();
-    }
+    vacuumSnapshot(sourcePath, snapshotPath);
     hardenPrivateRuntimeSqliteArtifacts(snapshotPath);
 
     const verification = await verifyLiteRuntimeDatabaseSnapshot(destinationPath, snapshotPath);
@@ -955,12 +939,7 @@ export async function restoreLiteRuntimeDatabase(args: {
     if (sourceManifest) {
       await copyManifestBoundBackupSnapshot(backupPath, snapshotPath, sourceManifest);
     } else {
-      const source = createSqliteSnapshotSourceDatabase(backupPath);
-      try {
-        vacuumInto(source, snapshotPath);
-      } finally {
-        source.close();
-      }
+      vacuumSnapshot(backupPath, snapshotPath);
     }
     hardenPrivateRuntimeSqliteArtifacts(snapshotPath);
     const backupVerification = await verifyLiteRuntimeDatabaseSnapshot(snapshotPath, snapshotPath);
@@ -1003,35 +982,57 @@ export async function restoreLiteRuntimeDatabase(args: {
   }
 }
 
-export async function upgradeLiteRuntimeDatabase(path: string): Promise<LiteRuntimeUpgradeReport> {
+export async function upgradeLiteRuntimeDatabase(path: string, options: {
+  replayPath?: string | null;
+} = {}): Promise<LiteRuntimeUpgradeReport> {
   const absolute = assertReadableDatabasePath(path);
+  const replayPath = options.replayPath?.trim() ? assertReadableDatabasePath(options.replayPath) : null;
+  if (replayPath) assertPrivateRuntimeSqlitePathNamespacesDisjoint(absolute, replayPath); hardenPrivateRuntimeSqliteDirectoryOffline(absolute);
+  if (replayPath) hardenPrivateRuntimeSqliteDirectoryOffline(replayPath);
+  const writeArtifacts = capturePrivateRuntimeSqliteArtifactIdentities(absolute);
+  const replayArtifacts = replayPath ? capturePrivateRuntimeSqliteArtifactIdentities(replayPath) : null;
+  if (replayPath && replayArtifacts) assertPrivateRuntimeSqliteNamespacesDisjoint(absolute, writeArtifacts, replayPath, replayArtifacts);
+  const replayVerification = replayPath && replayArtifacts
+    ? { mode_before: sqliteMode(replayPath), ...verifyLiteReplayDatabaseForOfflineUpgrade(replayPath, replayArtifacts) }
+    : null;
   const beforeVerification = await verifyLiteRuntimeDatabase(absolute);
-  if (beforeVerification.schema.classification === "incompatible") {
+  if (beforeVerification.schema.classification === "incompatible"
+    || beforeVerification.schema.classification === "uninitialized") {
     throw new Error(`schema_upgrade_preflight_failed:${JSON.stringify(beforeVerification.schema)}`);
   }
+  const verifiedWriteArtifacts = assertPrivateRuntimeSqliteArtifactIdentities(absolute, writeArtifacts, true);
+  if (replayPath && replayArtifacts) {
+    const verifiedReplayArtifacts = replayVerification?.artifacts
+      ?? assertPrivateRuntimeSqliteArtifactIdentities(replayPath, replayArtifacts, true);
+    assertPrivateRuntimeSqliteNamespacesDisjoint(absolute, verifiedWriteArtifacts, replayPath, verifiedReplayArtifacts);
+  }
+  const replayDatabase = replayPath && replayVerification
+    ? (() => {
+        const { artifacts, ...report } = replayVerification;
+        hardenPrivateRuntimeSqlitePathOffline(replayPath, artifacts);
+        assertPrivateRuntimeSqliteArtifactIdentities(replayPath, artifacts);
+        return {
+          contract_version: "aionis_lite_runtime_companion_sqlite_hardening_v1" as const,
+          path: replayPath, role: "replay" as const, ...report, mode_after: sqliteMode(replayPath),
+        };
+      })()
+    : null;
   // Upgrade is an explicit offline operation. Normalize legacy artifact modes
   // only after the read-only verifier accepts the source, and before Runtime
   // opens any live write/read handles whose locks must never be disturbed.
-  hardenPrivateRuntimeSqlitePathOffline(absolute);
+  hardenPrivateRuntimeSqlitePathOffline(absolute, verifiedWriteArtifacts);
+  assertPrivateRuntimeSqliteArtifactIdentities(absolute, verifiedWriteArtifacts);
   const store = createLiteWriteStore(absolute, { annProjectionEnabled: false });
   await store.close();
+  assertPrivateRuntimeSqliteFileIdentity(absolute, writeArtifacts.main);
   const afterVerification = await verifyLiteRuntimeDatabase(absolute);
+  assertPrivateRuntimeSqliteFileIdentity(absolute, writeArtifacts.main);
   if (!afterVerification.ok) {
     throw new Error(`schema_upgrade_verification_failed:${JSON.stringify(afterVerification)}`);
   }
   const beforeCounts = beforeVerification.counts;
   const afterCounts = afterVerification.counts;
-  const preservedCountKeys = [
-    "commits",
-    "nodes",
-    "edges",
-    "guide_receipts",
-    "write_operations",
-    "rule_feedback",
-    "product_measurements",
-    "skill_reviews",
-  ] as const;
-  for (const key of preservedCountKeys) {
+  for (const key of PRESERVED_COUNT_KEYS) {
     const expectedAfter = key === "commits"
       ? beforeCounts.commits
         + afterVerification.commit_authority.adoption_manifest_count
@@ -1046,27 +1047,10 @@ export async function upgradeLiteRuntimeDatabase(path: string): Promise<LiteRunt
     path: absolute,
     before: beforeVerification.schema,
     after: afterVerification.schema,
+    replay_database: replayDatabase,
     preserved_counts: {
-      before: {
-        commits: beforeCounts.commits,
-        nodes: beforeCounts.nodes,
-        edges: beforeCounts.edges,
-        guide_receipts: beforeCounts.guide_receipts,
-        write_operations: beforeCounts.write_operations,
-        rule_feedback: beforeCounts.rule_feedback,
-        product_measurements: beforeCounts.product_measurements,
-        skill_reviews: beforeCounts.skill_reviews,
-      },
-      after: {
-        commits: afterCounts.commits,
-        nodes: afterCounts.nodes,
-        edges: afterCounts.edges,
-        guide_receipts: afterCounts.guide_receipts,
-        write_operations: afterCounts.write_operations,
-        rule_feedback: afterCounts.rule_feedback,
-        product_measurements: afterCounts.product_measurements,
-        skill_reviews: afterCounts.skill_reviews,
-      },
+      before: preservedCounts(beforeCounts),
+      after: preservedCounts(afterCounts),
     },
   };
 }

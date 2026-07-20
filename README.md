@@ -43,14 +43,14 @@ rehydrated later, and why each decision was made.
 npx aionis setup
 ```
 
-Current candidate: **Runtime v0.3.11 / SDK v0.3.19 / Manifest v0.1.1**.
+Current development train: **Runtime v0.3.12 / SDK v0.3.19 / Manifest v0.1.1**.
 The frozen `aionis` installer still installs Runtime v0.3.6; the command above
-does not install this candidate. Runtime v0.3.11 is published as a non-latest
-GitHub prerelease with one verified `linux/amd64` image digest. It fixes the
-v0.3.10 Docker PID 1 boundary and adds exact-image graceful/crash recovery
-gates. The tag-and-digest publication chain is recorded in
+does not install this development train. v0.3.12 is an untagged Runtime-only
+patch for strict, identity-bound upgrade of legacy replay SQLite artifacts; it
+has no official image or publication receipt yet. The last published candidate
+is Runtime v0.3.11, whose immutable tag-and-digest chain is recorded in
 [`docs/releases/v0.3.11-publication-evidence.json`](docs/releases/v0.3.11-publication-evidence.json).
-The candidate is intended for a single self-hosted Runtime process with
+Both trains are intended for a single self-hosted Runtime process with
 same-host Agent clients.
 The TypeScript SDK, HTTP API, MCP bridge, AIFS file surface, Memory Firewall,
 Agent Flight Recorder, optional Zvec candidate retrieval, and Substrate
@@ -97,7 +97,7 @@ writes the generated Runtime `.env`, delegates the install to `@aionis/create`,
 then prints the next Runtime start and SDK/API/MCP/AIFS connection commands.
 It installs for real Agent integration without running optional verification
 flows by default. The frozen installer currently selects Runtime v0.3.6; it is
-the default published-beta install path, not the v0.3.11 candidate test path.
+the default published-beta install path, not the v0.3.12 development path.
 
 For non-interactive installs, set the provider key in the environment:
 
@@ -115,8 +115,10 @@ This enables Zvec as a persisted candidate index while keeping SQLite as the
 Runtime fact source. Aionis still performs final scope, lifecycle, authority,
 admission, and rehydrate governance after candidates are loaded.
 
-The published candidate tag is `ghcr.io/ostinatocc/aionis:v0.3.11`. For an
-exact candidate deployment, pin the verified digest recorded in
+The last published candidate tag is `ghcr.io/ostinatocc/aionis:v0.3.11`.
+The release-train coordinate `ghcr.io/ostinatocc/aionis:v0.3.12` is reserved
+but not published; do not pull or deploy it yet. For an exact v0.3.11
+deployment, pin the verified digest recorded in
 `docs/releases/v0.3.11-publication-evidence.json`:
 
 ```bash

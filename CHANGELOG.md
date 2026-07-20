@@ -1,5 +1,39 @@
 # Changelog
 
+## v0.3.12 - Replay Upgrade Hardening Development
+
+Development started: 2026-07-20
+
+This untagged Runtime-only train fixes the legacy replay-database compatibility
+gap found by a real v0.3.6-to-v0.3.11 upgrade exercise. v0.3.11 remains an
+immutable published candidate; no v0.3.12 release artifact exists yet.
+
+### Changed
+
+- `runtime-data-ops upgrade` can verify and harden a configured replay SQLite
+  companion together with the authoritative write database.
+- Replay validation now binds mutually exclusive write/replay main and sidecar
+  inode namespaces, rejects symlinks and hard links, and permits exactly four
+  schema objects: the v1 replay table, its two canonical explicit indexes, and
+  its sole primary-key autoindex before any schema mutation.
+- Runtime startup now rejects overlapping reserved write/replay main and
+  sidecar paths before either database opens using nearest-existing-ancestor
+  realpath canonicalization plus NFC/case-insensitive comparison, and rejects
+  existing SQLite artifacts whose hard-link count is not exactly one.
+- Explicit upgrade rejects an uninitialized write database instead of turning
+  a mistyped empty path into a new current database.
+- Runtime and CI complexity remain downward-ratcheted; no route, environment,
+  schema-v6, learning-posture, package, or installer-default expansion is part
+  of this patch.
+
+### Required Before Candidate Promotion
+
+- Build a clean-commit `linux/amd64` development image and prove real v0.3.6
+  upgrade, restart, recovery, and untouched-volume rollback.
+- Run the checked-in cross-version gate against the exact candidate digest
+  before image-tag promotion, then run full exact-main CI and protected
+  provider evidence on the later candidate commit.
+
 ## v0.3.11 - Docker Lifecycle Recovery Candidate
 
 Candidate preparation: 2026-07-20
