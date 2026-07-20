@@ -1,8 +1,5 @@
 name: Docker
 on:
-  push:
-    tags:
-      - "v*"
   workflow_dispatch:
     inputs:
       release_ref:
@@ -14,10 +11,6 @@ on:
         required: true
         default: false
         type: boolean
-concurrency:
-  group: docker-release-${{ github.event_name == 'workflow_dispatch' && inputs.release_ref || github.ref_name }}
-  queue: max
-  cancel-in-progress: false
 permissions:
   contents: read
   actions: read
@@ -39,25 +32,29 @@ jobs:
       previous_latest_commit: ${{ steps.release-gate.outputs.previous_latest_commit }}
     steps:
       - name: Checkout Runtime
-        uses: actions/checkout@v4
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
-          ref: ${{ github.event_name == 'workflow_dispatch' && inputs.release_ref || github.ref_name }}
+          ref: ${{ inputs.release_ref }}
           fetch-depth: 0
           persist-credentials: false
-      - name: Verify release commit is on main first-parent history
+      - name: Verify release and workflow commits are current protected main
         run: |
           set -euo pipefail
           release_commit="$(git rev-parse 'HEAD^{commit}')"
           git fetch --no-tags origin \
             '+refs/heads/main:refs/remotes/origin/main'
           main_commit="$(git rev-parse 'refs/remotes/origin/main^{commit}')"
-          if ! git rev-list --first-parent "${main_commit}" | \
-            grep -F -x "${release_commit}" >/dev/null; then
-            printf 'release commit %s is not on the origin/main first-parent history at %s\n' \
+          if [[ "${GITHUB_REF}" != "refs/heads/main" || "${GITHUB_SHA}" != "${main_commit}" ]]; then
+            printf 'Docker publication must be dispatched from current main %s, got %s at %s\n' \
+              "${main_commit}" "${GITHUB_REF}" "${GITHUB_SHA}" >&2
+            exit 1
+          fi
+          if [[ "${release_commit}" != "${main_commit}" ]]; then
+            printf 'release commit %s is not current origin/main %s\n' \
               "${release_commit}" "${main_commit}" >&2
             exit 1
           fi
-      - { name: Set up Node.js, uses: actions/setup-node@v4, with: { node-version: "24", cache: npm } }
+      - { name: Set up Node.js, uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020, with: { node-version: "24", cache: npm } } # v7.0.0
       - name: Verify protected exact-main embedding evidence
         env:
           GH_TOKEN: ${{ github.token }}
@@ -277,7 +274,7 @@ jobs:
           for (const key of ["digest", "version", "commit"]) fs.appendFileSync(process.env.GITHUB_OUTPUT, `previous_latest_${key}=${previous?.[key] ?? ""}\n`);
           NODE
         env:
-          AIONIS_RELEASE_EXPECTED_TAG: ${{ github.event_name == 'workflow_dispatch' && inputs.release_ref || github.ref_name }}
+          AIONIS_RELEASE_EXPECTED_TAG: ${{ inputs.release_ref }}
           AIONIS_RELEASE_CLI_REPO: ${{ github.workspace }}/external/aionis-cli
           AIONIS_RELEASE_CREATE_REPO: ${{ github.workspace }}/external/aionis-create
           AIONIS_RELEASE_SDK_REPO: ${{ github.workspace }}/external/aionis-sdk
@@ -371,7 +368,6 @@ jobs:
           AIONIS_EXTERNAL_SMOKE_CREATE_SPEC="${{ steps.package-artifacts.outputs.create_spec }}" \
           node --import tsx "${GITHUB_WORKSPACE}/scripts/e2e/external-package-entrypoint-smoke.ts"
       - name: Fresh install through the declared installer authority
-        if: github.ref_type == 'tag' || github.event_name == 'workflow_dispatch'
         env:
           LOCAL_CREATE_SPEC: ${{ steps.package-artifacts.outputs.create_spec }}
           CREATE_VERSION: ${{ steps.release-metadata.outputs.create_version }}
@@ -424,7 +420,7 @@ jobs:
           - { suite: recovery, shard: terminal, timeout_minutes: 25 }
     steps:
       - name: Checkout exact Runtime release candidate
-        uses: actions/checkout@v4
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           ref: ${{ needs.verify.outputs.runtime_commit }}
           persist-credentials: false
@@ -435,7 +431,7 @@ jobs:
           set -euo pipefail
           actual_commit="$(git rev-parse 'HEAD^{commit}')"
           test "${actual_commit}" = "${EXPECTED_RUNTIME_COMMIT}"
-      - { name: Set up Node.js, uses: actions/setup-node@v4, with: { node-version: "24", cache: npm } }
+      - { name: Set up Node.js, uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020, with: { node-version: "24", cache: npm } } # v7.0.0
       - name: Install protected-close ACL verifier
         run: |
           sudo apt-get update
@@ -452,19 +448,24 @@ jobs:
       needs['release-tests'].result == 'success' &&
       (needs.verify.outputs.release_status == 'candidate' ||
       needs.verify.outputs.release_status == 'stable') &&
-      (github.ref_type == 'tag' ||
-      (github.event_name == 'workflow_dispatch' && inputs.publish == true))
+      github.event_name == 'workflow_dispatch' && inputs.publish == true
     runs-on: ubuntu-latest
-    timeout-minutes: 60
+    timeout-minutes: 90
+    environment:
+      name: ${{ needs.verify.outputs.release_status == 'stable' && 'stable-release' || 'candidate-release' }}
+    concurrency:
+      group: ghcr-aionis-publisher
+      queue: max
+      cancel-in-progress: false
     permissions:
       contents: read
       packages: write
     outputs:
-      verified_digest: ${{ steps.build.outputs.digest }}
+      verified_digest: ${{ steps.promote.outputs.verified_digest }}
     env:
       REGISTRY_IMAGE: ghcr.io/${{ github.repository_owner }}/aionis
     steps:
-      - { name: Checkout exact Runtime release source, uses: actions/checkout@v4, with: { ref: "${{ needs.verify.outputs.runtime_tag }}", persist-credentials: false } }
+      - { name: Checkout exact Runtime release source, uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1, with: { ref: "${{ needs.verify.outputs.runtime_tag }}", persist-credentials: false } } # v7.0.1
       - name: Verify Docker source commit
         env:
           EXPECTED_RUNTIME_COMMIT: ${{ needs.verify.outputs.runtime_commit }}
@@ -472,16 +473,16 @@ jobs:
           set -euo pipefail
           actual_commit="$(git rev-parse HEAD)"
           test "${actual_commit}" = "${EXPECTED_RUNTIME_COMMIT}"
-      - { name: Set up Docker Buildx, uses: docker/setup-buildx-action@v3 }
+      - { name: Set up Docker Buildx, uses: docker/setup-buildx-action@bb05f3f5519dd87d3ba754cc423b652a5edd6d2c } # v4.2.0
       - name: Log in to GHCR
-        uses: docker/login-action@v3
+        uses: docker/login-action@af1e73f918a031802d376d3c8bbc3fe56130a9b0 # v4.4.0
         with:
           registry: ghcr.io
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
       - name: Define OCI release metadata
         id: metadata
-        uses: docker/metadata-action@v5
+        uses: docker/metadata-action@dc802804100637a589fabce1cb79ff13a1411302 # v6.2.0
         with:
           images: ${{ env.REGISTRY_IMAGE }}
           flavor: latest=false
@@ -504,7 +505,7 @@ jobs:
           echo "ref=${REGISTRY_IMAGE}:${subject_tag}" >> "${GITHUB_OUTPUT}"
       - name: Build immutable amd64 release artifact
         id: build
-        uses: docker/build-push-action@v6
+        uses: docker/build-push-action@53b7df96c91f9c12dcc8a07bcb9ccacbed38856a # v7.3.0
         with:
           context: .
           file: ./Dockerfile
@@ -546,28 +547,10 @@ jobs:
         run: >-
           bash scripts/ci/docker-recovery-smoke.sh --cross-version
           "${VERIFIED_IMAGE_REF}" "${EXPECTED_RUNTIME_COMMIT}" "${EXPECTED_RUNTIME_TAG}"
-  promote-version:
-    name: Promote the verified digest to its immutable version tag
-    needs: [verify, publish]
-    if: needs.publish.result == 'success'
-    runs-on: ubuntu-latest
-    timeout-minutes: 15
-    permissions: { contents: read, packages: write }
-    outputs:
-      verified_digest: ${{ steps.promote.outputs.verified_digest }}
-    env: { REGISTRY_IMAGE: "ghcr.io/${{ github.repository_owner }}/aionis" }
-    steps:
-      - { name: Set up Docker Buildx, uses: docker/setup-buildx-action@v3 }
-      - name: Log in to GHCR
-        uses: docker/login-action@v3
-        with:
-          registry: ghcr.io
-          username: ${{ github.actor }}
-          password: ${{ secrets.GITHUB_TOKEN }}
       - name: Promote and verify the immutable version tag
         id: promote
         env:
-          VERIFIED_DIGEST: ${{ needs.publish.outputs.verified_digest }}
+          VERIFIED_DIGEST: ${{ steps.build.outputs.digest }}
           RUNTIME_TAG: ${{ needs.verify.outputs.runtime_tag }}
         run: |
           set -euo pipefail
@@ -597,26 +580,11 @@ jobs:
           done
           if [[ "${promoted_digest}" != "${VERIFIED_DIGEST}" ]]; then echo "${version_ref} points to ${promoted_digest}, expected ${VERIFIED_DIGEST}" >&2; exit 1; fi
           echo "verified_digest=${VERIFIED_DIGEST}" >> "${GITHUB_OUTPUT}"
-  promote-latest:
-    name: Promote stable Docker latest from its receipt-bound predecessor
-    needs: [verify, promote-version]
-    if: >-
-      always() && needs.verify.result == 'success' &&
-      needs.verify.outputs.release_status == 'stable' &&
-      needs['promote-version'].result == 'success'
-    runs-on: ubuntu-latest
-    environment: stable-release
-    timeout-minutes: 15
-    concurrency: { group: docker-latest-promotion, queue: max, cancel-in-progress: false }
-    permissions: { contents: read, packages: write }
-    env: { REGISTRY_IMAGE: "ghcr.io/${{ github.repository_owner }}/aionis" }
-    steps:
-      - { name: Set up Docker Buildx, uses: docker/setup-buildx-action@v3 }
-      - { name: Log in to GHCR, uses: docker/login-action@v3, with: { registry: ghcr.io, username: "${{ github.actor }}", password: "${{ secrets.GITHUB_TOKEN }}" } }
       - name: Promote latest only from the expected stable predecessor
+        if: needs.verify.outputs.release_status == 'stable'
         env:
           AUTHORIZED: ${{ needs.verify.outputs.stable_promotion_authorized }}
-          TARGET_DIGEST: ${{ needs['promote-version'].outputs.verified_digest }}
+          TARGET_DIGEST: ${{ steps.promote.outputs.verified_digest }}
           RUNTIME_TAG: ${{ needs.verify.outputs.runtime_tag }}
           RUNTIME_COMMIT: ${{ needs.verify.outputs.runtime_commit }}
           PREVIOUS_DIGEST: ${{ needs.verify.outputs.previous_latest_digest }}

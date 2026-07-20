@@ -3,12 +3,12 @@ import assert from "node:assert/strict";
 import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..", "..");
 const read = (relativePath) => fs.readFileSync(path.join(ROOT, relativePath), "utf8");
 const assertMatches = (source, patterns) => patterns.forEach((pattern) => assert.match(source, pattern));
 const assertOmits = (source, patterns) => patterns.forEach((pattern) => assert.doesNotMatch(source, pattern));
-
+const TRUSTED_ACTIONS = new Set(["actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1", "actions/setup-node@820762786026740c76f36085b0efc47a31fe5020", "docker/setup-buildx-action@bb05f3f5519dd87d3ba754cc423b652a5edd6d2c", "docker/login-action@af1e73f918a031802d376d3c8bbc3fe56130a9b0", "docker/metadata-action@dc802804100637a589fabce1cb79ff13a1411302", "docker/build-push-action@53b7df96c91f9c12dcc8a07bcb9ccacbed38856a"]);
+const actionRefs = (source) => [...source.matchAll(/\buses:\s*([^\s,}]+)/g)].map((match) => match[1]);
 function workflowStep(workflow, name) {
   const marker = `      - name: ${name}\n`;
   const start = workflow.indexOf(marker);
@@ -16,7 +16,6 @@ function workflowStep(workflow, name) {
   const next = workflow.indexOf("\n      - name:", start + marker.length);
   return workflow.slice(start, next === -1 ? workflow.length : next);
 }
-
 function workflowJob(workflow, name) {
   const headers = [...workflow.matchAll(/^  ([a-z0-9-]+):\s*$/gm)];
   const index = headers.findIndex((match) => match[1] === name);
@@ -25,7 +24,6 @@ function workflowJob(workflow, name) {
   const end = headers[index + 1]?.index ?? workflow.length;
   return workflow.slice(start, end);
 }
-
 test("Docker release binds frozen packages and stable evaluation authority", () => {
   const workflow = read(".github/workflows/docker.yml");
   const verifyJob = workflowJob(workflow, "verify");
@@ -41,7 +39,6 @@ test("Docker release binds frozen packages and stable evaluation authority", () 
     ["https://github.com/ostinatocc/aionis-claude-code.git", "external/aionis-claude-code", "CLAUDE_CODE"],
     ["https://github.com/ostinatocc/AionisSubstrate.git", "external/AionisSubstrate", "SUBSTRATE"],
   ];
-
   assert.match(verifyJob, /--check\s*\\?\s*\n\s*--require-package-roots/);
   assert.match(verifyJob, /release-package-artifacts\.sh checkout release-train\.json external/);
   assertMatches(workflowEvidence, [
@@ -57,7 +54,6 @@ test("Docker release binds frozen packages and stable evaluation authority", () 
   assert.ok(workflowEvidence.indexOf("run identity is invalid") < workflowEvidence.indexOf("await fetch"));
   assert.equal((workflow.match(/secrets\.AIONIS_EVALS_ACTIONS_READ_TOKEN/g) ?? []).length, 1);
   assert.match(verifyJob, /AIONIS_RELEASE_WORKFLOW_EVIDENCE: .*aionis-workflow-evidence\.json/);
-
   for (const [repository, checkoutPath, envKey] of frozenPackages) {
     assert.ok(packageSupport.includes(repository), `missing checkout contract for ${repository}`);
     assert.ok(
@@ -65,7 +61,6 @@ test("Docker release binds frozen packages and stable evaluation authority", () 
       `missing ${repository} release-gate root`,
     );
   }
-
   assert.match(packageSupport, /entry\?\.repository !== repository/);
   assert.match(packageSupport, /entry\?\.source_ref/);
   assert.match(packageSupport, /entry\?\.source_commit/);
@@ -86,7 +81,6 @@ test("Docker release binds frozen packages and stable evaluation authority", () 
     "the only checkout action must not persist Runtime credentials",
   );
 });
-
 test("fresh install uses stable authority without an override and candidate exact-source overrides", () => {
   const workflow = read(".github/workflows/docker.yml");
   const publishedCreateVerifier = read("scripts/ci/release-package-artifacts.sh");
@@ -94,11 +88,9 @@ test("fresh install uses stable authority without an override and candidate exac
   const stableStart = install.indexOf('if [[ "${RELEASE_STATUS}" == "stable" ]]');
   const elseStart = install.indexOf("\n          else", stableStart);
   const end = install.indexOf("\n          fi", elseStart);
-
   assert.notEqual(stableStart, -1, "missing stable installer branch");
   assert.notEqual(elseStart, -1, "missing candidate installer branch");
   assert.notEqual(end, -1, "missing installer branch terminator");
-
   const stableBranch = install.slice(stableStart, elseStart);
   const candidateBranch = install.slice(elseStart, end);
   assertMatches(stableBranch, [
@@ -118,14 +110,13 @@ test("fresh install uses stable authority without an override and candidate exac
     /-L "\$\{frozen_tarball\}"/,
   ]);
 });
-
 test("release verification uses the exact tag and local verification harnesses", () => {
   const workflow = read(".github/workflows/docker.yml");
   const verifyJob = workflowJob(workflow, "verify");
-
   assertMatches(verifyJob, [
-    /name: Checkout Runtime[\s\S]*?ref: \$\{\{ github\.event_name == 'workflow_dispatch' && inputs\.release_ref \|\| github\.ref_name \}\}[\s\S]*?fetch-depth: 0/,
-    /name: Verify release commit is on main first-parent history[\s\S]*?git rev-list --first-parent "\$\{main_commit\}"[\s\S]*?grep -F -x "\$\{release_commit\}"/,
+    /name: Checkout Runtime[\s\S]*?ref: \$\{\{ inputs\.release_ref \}\}[\s\S]*?fetch-depth: 0/,
+    /GITHUB_REF\}" != "refs\/heads\/main"[\s\S]*?GITHUB_SHA\}" != "\$\{main_commit\}"/,
+    /name: Verify release and workflow commits are current protected main[\s\S]*?"\$\{release_commit\}" != "\$\{main_commit\}"/,
     /actual_tag="\$\(git describe --tags --exact-match HEAD\)"[\s\S]*?test "\$\{actual_tag\}" = "\$\{AIONIS_RELEASE_EXPECTED_TAG\}"/,
     /npm pack --silent --pack-destination "\$\{PACK_DIR\}"/,
     /AIONIS_RUNTIME_REPO="\$\{GITHUB_WORKSPACE\}"/,
@@ -134,7 +125,7 @@ test("release verification uses the exact tag and local verification harnesses",
     /^        run: npm run -s lite:test:static$/m,
     /^        run: npm run -s lite:test:core:manifest$/m,
   ]);
-  assertOmits(verifyJob, [/git merge-base --is-ancestor/, /release-harness|Checkout dispatch verification harness/, /^        run: npm run -s lite:test$/m]);
+  assertOmits(verifyJob, [/git merge-base --is-ancestor|git rev-list/, /release-harness|Checkout dispatch verification harness/, /^        run: npm run -s lite:test$/m]);
 });
 
 test("Docker build produces one verified digest before immutable publication", () => {
@@ -142,32 +133,32 @@ test("Docker build produces one verified digest before immutable publication", (
   const verifyJob = workflowJob(workflow, "verify");
   const releaseTests = workflowJob(workflow, "release-tests");
   const publishJob = workflowJob(workflow, "publish");
-  const buildActions = workflow.match(/uses: docker\/build-push-action@v6/g) ?? [];
-
+  const buildStep = workflowStep(workflow, "Build immutable amd64 release artifact");
+  const buildActions = workflow.match(/uses: docker\/build-push-action@53b7df96c91f9c12dcc8a07bcb9ccacbed38856a/g) ?? [];
   assert.equal(buildActions.length, 1, "release workflow must perform one image build");
   assertMatches(releaseTests, [/max-parallel: 9/, /suite: core/, /suite: recovery/, /lite:test:\$\{\{ matrix\.suite \}\}:\$\{\{ matrix\.shard \}\}/, /persist-credentials: false/]);
   assertMatches(publishJob, [
     /^    needs: \[verify, release-tests\]$/m, /needs\.verify\.result == 'success'/,
     /needs\['release-tests'\]\.result == 'success'/,
-    /^    outputs:\n      verified_digest: \$\{\{ steps\.build\.outputs\.digest \}\}$/m,
-    /uses: docker\/metadata-action@v5/, /labels: \$\{\{ steps\.metadata\.outputs\.labels \}\}/,
+    /^    outputs:\n      verified_digest: \$\{\{ steps\.promote\.outputs\.verified_digest \}\}$/m,
+    /name: \$\{\{ needs\.verify\.outputs\.release_status == 'stable' && 'stable-release' \|\| 'candidate-release' \}\}/,
+    /concurrency:\n      group: ghcr-aionis-publisher\n      queue: max\n      cancel-in-progress: false/,
+    /uses: docker\/metadata-action@dc802804100637a589fabce1cb79ff13a1411302/, /labels: \$\{\{ steps\.metadata\.outputs\.labels \}\}/,
+  ]);
+  assertMatches(buildStep, [
     /tags: \$\{\{ steps\.build-subject\.outputs\.ref \}\}/,
-    /org\.opencontainers\.image\.version=\$\{\{ needs\.verify\.outputs\.runtime_tag \}\}/,
-    /org\.opencontainers\.image\.revision=\$\{\{ needs\.verify\.outputs\.runtime_commit \}\}/,
     /provenance: mode=max/, /sbom: true/, /platforms: linux\/amd64/,
   ]);
+  assertMatches(publishJob, [/org\.opencontainers\.image\.version=\$\{\{ needs\.verify\.outputs\.runtime_tag \}\}/, /org\.opencontainers\.image\.revision=\$\{\{ needs\.verify\.outputs\.runtime_commit \}\}/]);
   assertOmits(verifyJob, [/packages: write|docker\/login-action|push: true/]);
-  assertOmits(publishJob, [/tags: \$\{\{ steps\.metadata\.outputs\.tags \}\}/, /linux\/arm64/, /version_ref|latest_ref|REGISTRY_IMAGE\}:latest/]);
+  assertOmits(buildStep, [/tags: \$\{\{ steps\.metadata\.outputs\.tags \}\}/, /linux\/arm64/, /version_ref|latest_ref|REGISTRY_IMAGE\}:latest/]);
 });
 
 test("immutable version promotion is idempotent, fail-closed, and digest-preserving", () => {
   const workflow = read(".github/workflows/docker.yml");
-  const versionJob = workflowJob(workflow, "promote-version");
-
-  assertMatches(versionJob, [
-    /^    needs: \[verify, publish\]$/m, /^    if: needs\.publish\.result == 'success'$/m,
-    /^    outputs:\n      verified_digest: \$\{\{ steps\.promote\.outputs\.verified_digest \}\}$/m,
-    /VERIFIED_DIGEST: \$\{\{ needs\.publish\.outputs\.verified_digest \}\}/,
+  const versionStep = workflowStep(workflow, "Promote and verify the immutable version tag");
+  assertMatches(versionStep, [
+    /VERIFIED_DIGEST: \$\{\{ steps\.build\.outputs\.digest \}\}/,
     /grep -Fqx "ERROR: \$\{version_ref\}: not found" "\$\{inspect_error\}"/,
     /grep -Fqx "ERROR: \$\{version_ref\}: manifest unknown" "\$\{inspect_error\}"/,
     /failed to inspect immutable \$\{version_ref\}/, /refusing to replace existing/,
@@ -175,24 +166,21 @@ test("immutable version promotion is idempotent, fail-closed, and digest-preserv
     /promoted_digest[\s\S]*VERIFIED_DIGEST/,
     /echo "verified_digest=\$\{VERIFIED_DIGEST\}" >> "\$\{GITHUB_OUTPUT\}"/,
   ]);
-  assertOmits(versionJob, [/grep -E|grep -q|manifest unknown\|not found/, /latest_ref|REGISTRY_IMAGE\}:latest/]);
+  assertOmits(versionStep, [/grep -E|grep -q|manifest unknown\|not found/, /latest_ref|REGISTRY_IMAGE\}:latest/]);
 });
 
 test("stable latest promotion follows verified immutable version promotion", () => {
   const workflow = read(".github/workflows/docker.yml");
-  const latestJob = workflowJob(workflow, "promote-latest");
-
-  assertMatches(latestJob, [
-    /^    needs: \[verify, promote-version\]$/m, /always\(\) && needs\.verify\.result == 'success'/,
-    /needs\.verify\.outputs\.release_status == 'stable'/, /needs\['promote-version'\]\.result == 'success'/,
-    /concurrency: \{ group: docker-latest-promotion, queue: max, cancel-in-progress: false \}/,
+  const publishJob = workflowJob(workflow, "publish");
+  const latestStep = workflowStep(workflow, "Promote latest only from the expected stable predecessor");
+  assertMatches(latestStep, [
+    /if: needs\.verify\.outputs\.release_status == 'stable'/,
     /AUTHORIZED: \$\{\{ needs\.verify\.outputs\.stable_promotion_authorized \}\}/,
-    /TARGET_DIGEST: \$\{\{ needs\['promote-version'\]\.outputs\.verified_digest \}\}/,
+    /TARGET_DIGEST: \$\{\{ steps\.promote\.outputs\.verified_digest \}\}/,
     /\[\[ "\$\{AUTHORIZED\}" == "true" \]\] \|\| \{ echo "stable latest promotion authority is missing" >&2; exit 1; \}/,
-    /permissions: \{ contents: read, packages: write \}/, /^    environment: stable-release$/m,
   ]);
-  assertOmits(latestJob, [/docker\/build-push-action|push: true/]);
-
+  assertMatches(publishJob, [/packages: write/, /name: \$\{\{ needs\.verify\.outputs\.release_status == 'stable' && 'stable-release' \|\| 'candidate-release' \}\}/]);
+  assertOmits(latestStep, [/docker\/build-push-action|push: true/]);
   for (const label of [
     "version",
     "revision",
@@ -204,17 +192,14 @@ test("stable latest promotion follows verified immutable version promotion", () 
     "description",
   ]) {
     assert.ok(
-      latestJob.includes(`org.opencontainers.image.${label}`),
+      latestStep.includes(`org.opencontainers.image.${label}`),
       `latest promotion must verify OCI ${label}`,
     );
   }
-
-  assertMatches(latestJob, [/previous latest version tag/, /stable latest version must advance monotonically/, /current_digest[\s\S]*PREVIOUS_DIGEST[\s\S]*prewrite_digest/, /docker buildx imagetools create --tag "\$\{latest_ref\}"/, /promoted_digest[\s\S]*TARGET_DIGEST[\s\S]*PREVIOUS_DIGEST/]);
+  assertMatches(latestStep, [/previous latest version tag/, /stable latest version must advance monotonically/, /current_digest[\s\S]*PREVIOUS_DIGEST[\s\S]*prewrite_digest/, /docker buildx imagetools create --tag "\$\{latest_ref\}"/, /promoted_digest[\s\S]*TARGET_DIGEST[\s\S]*PREVIOUS_DIGEST/]);
 });
-
 test("exact-main embedding evidence is manual, protected, and commit-bound", () => {
   const workflow = read(".github/workflows/exact-main-embedding-smoke.yml");
-
   assert.match(workflow, /^on:\n  workflow_dispatch:\n    inputs:\n      expected_sha:/m);
   assert.doesNotMatch(workflow, /^  (?:push|pull_request|schedule):/m);
   assert.match(workflow, /^permissions:\n  contents: read$/m);
@@ -243,13 +228,19 @@ test("release workflows preserve focused Runtime boundaries", () => {
   const ciWorkflow = read(".github/workflows/ci.yml");
   const dockerIgnore = read(".dockerignore");
   const gitIgnore = read(".gitignore");
-
+  const workflows = new Map(fs.readdirSync(path.join(ROOT, ".github/workflows")).filter((file) => file.endsWith(".yml")).map((file) => [file, read(`.github/workflows/${file}`)]));
+  const refs = [...workflows.values()].flatMap(actionRefs);
+  for (const ref of refs) assert.equal(TRUSTED_ACTIONS.has(ref), true, `untrusted or mutable workflow action: ${ref}`);
+  assert.deepEqual([...new Set(refs)].sort(), [...TRUSTED_ACTIONS].sort());
+  assert.deepEqual([...workflows].filter(([, source]) => /packages:\s*write/.test(source)).map(([file]) => file), ["docker.yml"]);
+  assert.equal((dockerWorkflow.match(/packages:\s*write/g) ?? []).length, 1);
+  assert.equal((dockerWorkflow.match(/docker\/login-action@af1e73f918a031802d376d3c8bbc3fe56130a9b0/g) ?? []).length, 1);
+  assert.match(workflowJob(dockerWorkflow, "publish"), /packages:\s*write[\s\S]*docker\/login-action@af1e73f918a031802d376d3c8bbc3fe56130a9b0/);
+  assert.doesNotMatch(dockerWorkflow, /^  promote-(?:version|latest):/m);
+  assert.match(dockerWorkflow, /^on:\n  workflow_dispatch:/m);
+  assert.doesNotMatch(dockerWorkflow, /^  (?:push|pull_request|schedule):/m);
   assert.match(dockerIgnore, /^\/external$/m);
   assert.match(gitIgnore, /^\/external\/$/m);
-  assert.match(
-    dockerWorkflow,
-    /^concurrency:\n  group: docker-release-[^\n]+\n  queue: max\n  cancel-in-progress: false$/m,
-  );
   assert.match(dockerWorkflow, /release-artifact-gate\.mjs[\s\\]*--check/);
   assert.match(ciWorkflow, /release-package-artifacts\.sh checkout release-train\.json external\/release-artifacts/);
   assert.match(ciWorkflow, /release-artifact-gate\.mjs --check --pretag --require-package-roots/);

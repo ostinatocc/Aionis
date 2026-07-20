@@ -15,7 +15,7 @@ import {
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..", "..");
 const COLLECTOR = path.join(ROOT, "scripts", "ci", "runtime-complexity-budget.mjs");
 const BUDGET = path.join(ROOT, "docs", "architecture", "runtime-complexity-budget.json");
-const EXPECTED_BUDGET_SHA256 = "50fd08083ab31b1a3a4fb837ced4643107a7423ef40cac020939279c8f1ba8a8";
+const EXPECTED_BUDGET_SHA256 = "757b750b8c0d14e574b3d3bfb9126d405eee0ee3b31ef70d1b99c8c788309082";
 const CODE_EXTENSIONS = ["ts", "tsx", "mts", "cts", "js", "mjs", "cjs"];
 const RESOURCE_EXTENSIONS = ["sql", "json"];
 const SCRIPT_ARTIFACT_EXTENSIONS = [...CODE_EXTENSIONS, "sh", "json"];
