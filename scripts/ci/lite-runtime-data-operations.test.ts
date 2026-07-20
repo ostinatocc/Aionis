@@ -44,6 +44,10 @@ function permissionMode(filePath: string): number {
   return fs.statSync(filePath).mode & 0o777;
 }
 
+function allowTestSchemaCorruption(db: SqliteDatabase): void {
+  (db as SqliteDatabase & { enableDefensive?: (active: boolean) => void }).enableDefensive?.(false);
+}
+
 async function createV2WriteFixture(filePath: string): Promise<void> {
   const store = createLiteWriteStore(filePath, { annProjectionEnabled: false }); await store.close(); downgradeCurrentFixtureToV2(filePath);
 }
@@ -478,10 +482,10 @@ test("replay companion validation fails before the write schema is upgraded", as
     ["same-name-trigger", (db) => db.exec(`
       CREATE TRIGGER idx_lite_replay_nodes_scope_run BEFORE INSERT ON lite_replay_nodes BEGIN SELECT RAISE(ABORT, 'blocked'); END;
     `), /replay_companion_unexpected_schema_object/],
-    ["forged-internal-trigger", (db) => db.exec(`PRAGMA writable_schema=ON;
-      INSERT INTO sqlite_schema(type,name,tbl_name,rootpage,sql) VALUES('trigger','sqlite_evil','lite_replay_nodes',0,'CREATE TRIGGER sqlite_evil BEFORE INSERT ON lite_replay_nodes BEGIN SELECT RAISE(ABORT, ''blocked''); END'); PRAGMA writable_schema=OFF`), /replay_companion_unexpected_schema_object/],
-    ["duplicate-autoindex", (db) => db.exec(`PRAGMA writable_schema=ON; INSERT INTO sqlite_schema(type,name,tbl_name,rootpage,sql)
-      SELECT type,name,tbl_name,rootpage,sql FROM sqlite_schema WHERE name='sqlite_autoindex_lite_replay_nodes_1'; PRAGMA writable_schema=OFF`), /replay_companion_unexpected_schema_object/],
+    ["forged-internal-trigger", (db) => { allowTestSchemaCorruption(db); db.exec(`PRAGMA writable_schema=ON;
+      INSERT INTO sqlite_schema(type,name,tbl_name,rootpage,sql) VALUES('trigger','sqlite_evil','lite_replay_nodes',0,'CREATE TRIGGER sqlite_evil BEFORE INSERT ON lite_replay_nodes BEGIN SELECT RAISE(ABORT, ''blocked''); END'); PRAGMA writable_schema=OFF`); }, /replay_companion_unexpected_schema_object/],
+    ["duplicate-autoindex", (db) => { allowTestSchemaCorruption(db); db.exec(`PRAGMA writable_schema=ON; INSERT INTO sqlite_schema(type,name,tbl_name,rootpage,sql)
+      SELECT type,name,tbl_name,rootpage,sql FROM sqlite_schema WHERE name='sqlite_autoindex_lite_replay_nodes_1'; PRAGMA writable_schema=OFF`); }, /replay_companion_unexpected_schema_object/],
     ["unexpected-user-schema", (db) => db.exec("CREATE TABLE sqliteXextra (id INTEGER); CREATE TRIGGER extra_trigger AFTER INSERT ON sqliteXextra BEGIN SELECT 1; END"), /replay_companion_unexpected_schema_object/],
   ];
   for (const [name, mutate, expected] of cases) await t.test(name,
