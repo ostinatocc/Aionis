@@ -1,0 +1,130 @@
+{
+  "schema_version": "aionis_runtime_development_consumer_lifecycle_evidence_v1",
+  "release_status": "development",
+  "captured_at": "2026-07-20T11:36:11Z",
+  "authority": {
+    "publication_authority": false,
+    "stable_promotion_authority": false,
+    "native_linux_amd64_docker_health_gate_executed": false,
+    "reason": "Local Docker Desktop on Darwin/arm64 required cross-architecture emulation and explicitly disabled Docker's container healthcheck. The Runtime readiness endpoint, final health response, worker backlogs, persistence, recovery, and offline database verification remained mandatory."
+  },
+  "runtime": {
+    "version": "0.3.12",
+    "source_commit": "2c933f1d3f716e00bc0c5e5bdf4760043073839e",
+    "candidate_image_id": "sha256:a741f25f3d2051681185d6eabe588551780a008904a6feeee7c754a683c407db",
+    "candidate_platform": "linux/amd64",
+    "image_revision_label": "2c933f1d3f716e00bc0c5e5bdf4760043073839e",
+    "image_version_label": "v0.3.12"
+  },
+  "environment": {
+    "host": "darwin/arm64",
+    "docker_server": "linux/arm64",
+    "docker_server_version": "29.2.0",
+    "execution_mode": "cross_architecture_emulation"
+  },
+  "gate_implementation": {
+    "path": "scripts/ci/docker-recovery-smoke.sh",
+    "sha256": "baeea562717a4a45c652e254c2fbd3fd71b4ea50435fb63fffec85558c5f1b89",
+    "docker_health_required": false,
+    "request_timeout_ms": 60000,
+    "ready_timeout_seconds": 300,
+    "docker_health_timeout": "30s"
+  },
+  "ordinary_recovery": {
+    "exit_code": 0,
+    "stderr_empty": true,
+    "raw_stdout_sha256": "d6b356d8dd8f5ecc9670611f729cf7360d7cc19f6ad4b96c3294cf25bedbfa12",
+    "report": {
+      "contract_version": "aionis_docker_recovery_smoke_v1",
+      "image": "sha256:a741f25f3d2051681185d6eabe588551780a008904a6feeee7c754a683c407db",
+      "platform": "linux/amd64",
+      "docker_health_required": false,
+      "request_timeout_ms": 60000,
+      "ready_timeout_seconds": 300,
+      "docker_health_timeout": "30s",
+      "pid_one": "node",
+      "sqlite_mode_0600": true,
+      "graceful_restart": {
+        "exit_zero": true,
+        "shutdown_drain_observed": true,
+        "memory_resolved": true,
+        "exact_operation_replay": true,
+        "operation_conflict_rejected": true
+      },
+      "sigkill_restart": {
+        "exit_137": true,
+        "oom_killed": false,
+        "memory_resolved": true,
+        "exact_operation_replay": true
+      },
+      "workers_healthy_after_recovery": true,
+      "offline_database_verify": true
+    }
+  },
+  "cross_version_upgrade": {
+    "exit_code": 0,
+    "stderr_empty": true,
+    "raw_stdout_sha256": "cab23cc13ce66c2cc849008aff16670039d485b28de6b9d256f71a6b71bf8447",
+    "report": {
+      "contract_version": "aionis_docker_cross_version_upgrade_smoke_v1",
+      "gate_passed": true,
+      "platform": "linux/amd64",
+      "docker_health_required": false,
+      "request_timeout_ms": 60000,
+      "ready_timeout_seconds": 300,
+      "docker_health_timeout": "30s",
+      "coordinates": {
+        "source": {
+          "image": "ghcr.io/ostinatocc/aionis@sha256:714bbf451969c233c648a266c7c1d918bc91e35dcb957e57b0e7549b7c2ab0a9",
+          "commit": "fadce2269189dae00e8b0014fc673975598bdc17",
+          "tag": "v0.3.6",
+          "schema": 2
+        },
+        "candidate": {
+          "image": "sha256:a741f25f3d2051681185d6eabe588551780a008904a6feeee7c754a683c407db",
+          "commit": "2c933f1d3f716e00bc0c5e5bdf4760043073839e",
+          "tag": "v0.3.12",
+          "schema": 6
+        }
+      },
+      "upgrade": {
+        "from": "supported_previous_v2",
+        "to": "current",
+        "replay_mode_before": "0644",
+        "replay_mode_after": "0600",
+        "counts_preserved": true,
+        "old_memory_and_operation_replay_preserved": true
+      },
+      "candidate_restart": {
+        "both_memories_resolved": true,
+        "exact_operation_replay": true,
+        "workers_healthy": true
+      },
+      "replacement_container_recovery": {
+        "manifest_contract": "aionis_lite_runtime_backup_manifest_v2",
+        "replay_snapshot_sha256": "db083f750a45e5ddadc0ee469490704c62c1a94b5f7dc9b1b6a9a7b0ba9d272e",
+        "both_memories_resolved": true,
+        "both_operation_replays_exact": true,
+        "workers_healthy": true,
+        "source_database_unchanged": true
+      },
+      "rollback": {
+        "strategy": "reattach_unmodified_full_v2_volume",
+        "original_volume_fingerprint": "449ff33dd3752c9bd91e4c897ddd51ce09514d35895f9a0ac121e5b48a890223",
+        "v036_restarted": true,
+        "pre_upgrade_memory_resolved": true,
+        "pre_upgrade_operation_replay_exact": true,
+        "post_upgrade_memory_absent": true,
+        "upgraded_v6_never_opened_by_v036": true
+      },
+      "started_at": "2026-07-20T11:26:46Z",
+      "completed_at": "2026-07-20T11:35:05Z"
+    }
+  },
+  "bounded_nonclaims": [
+    "This receipt does not publish, tag, push, or promote v0.3.12.",
+    "This receipt does not replace the workflow's native linux/amd64 Docker-health gate.",
+    "The local image ID is not a registry digest and is not a public installation coordinate.",
+    "Stable release authority still requires exact-commit GitHub CI and digest-gated publication evidence."
+  ]
+}
