@@ -1,23 +1,24 @@
-# Aionis v0.3.12 Replay Upgrade Hardening Development Notes
+# Aionis v0.3.12 Replay Upgrade Hardening Candidate Notes
 
-Release status `development`.
+Release status `candidate`.
 
-Runtime `v0.3.12` is the untagged development train for a Runtime-only Local
-Runtime Public Beta patch. A real v0.3.6-to-v0.3.11 exercise found that the old
+Runtime `v0.3.12` is the current candidate for a Runtime-only Local Runtime
+Public Beta patch. A real v0.3.6-to-v0.3.11 exercise found that the old
 image leaves `aionis-lite-replay.sqlite` at mode `0644`, while v0.3.11 correctly
 fails closed on that legacy artifact. The v0.3.11 tag and image remain
 immutable; this train adds an explicit offline replay verification and
 hardening step instead of weakening startup security or silently chmodding a
 live database.
 
-There is no v0.3.12 tag, official image, protected-provider run, or publication
-receipt yet. The last published candidate remains v0.3.11, whose immutable
-coordinates are recorded in
+Candidate status alone does not create or validate the v0.3.12 tag, official
+image, protected-provider evidence, or publication receipt. Each becomes
+release authority only after the exact-commit gates below pass. The last
+published candidate remains v0.3.11, whose immutable coordinates are recorded in
 `docs/releases/v0.3.11-publication-evidence.json`. The supported target remains
 one self-hosted Runtime process with SQLite authority; this is not a managed
 service or multi-instance HA release.
 
-## Development Coordinates
+## Candidate Coordinates
 
 - `aionis@0.3.8` — immutable source ref `v0.3.8`
 - `@aionis/create@0.3.8` — immutable source ref `v0.3.8`
@@ -27,9 +28,9 @@ service or multi-instance HA release.
 - `@aionis/aifs@0.3.4` — immutable source ref `v0.3.4`
 - `@aionis/claude-code@0.3.5` — immutable source ref `v0.3.5`
 - `@aionis/substrate@0.1.11` — immutable source ref `v0.1.11`
-- Future Runtime source tag `v0.3.12` (not created)
-- Future Docker image `ghcr.io/ostinatocc/aionis:v0.3.12` (`linux/amd64` only;
-  not published)
+- Candidate Runtime source tag `v0.3.12` (not created)
+- Candidate Docker image `ghcr.io/ostinatocc/aionis:v0.3.12` (`linux/amd64`
+  only; not published)
 - Default installer Runtime ref `v0.3.6`
 
 All eight external package coordinates remain frozen. This patch does not
@@ -57,23 +58,23 @@ publish npm packages or change the installer default.
 - Preserve business-row counts while allowing only the exact schema-v6
   authority-adoption commit delta.
 - Require real v0.3.6 upgrade, restart, recovery, and untouched-volume rollback
-  evidence before this development train can become a candidate.
+  evidence before candidate image promotion.
 
 Runtime routes, schema v6, learning posture, package contracts, and external
 package commits are unchanged. Global admission-candidate serving remains off.
 
-## Development Evidence
+## Candidate Evidence
 
-The implementation has passed typecheck, 104/104 static checks, the complete
-46/46 data-operations suite, the focused 3/3 startup security suite, the
-legacy-0644 and inode-binding security regressions, and a
-downward complexity ratchet. The repository now contains a real Docker/SQLite
+The candidate implementation has passed typecheck, 104/104 static checks, the
+complete 46/46 data-operations suite, the focused 3/3 startup security suite,
+the legacy-0644 and inode-binding security regressions, and a downward
+complexity ratchet. The repository now contains a real Docker/SQLite
 cross-version gate, but that gate still must pass against the clean, exact
 candidate digest before promotion. Local development evidence is bounded and
-cannot be represented as v0.3.11 publication evidence.
+cannot be represented as v0.3.12 publication evidence.
 
-The commands below define the future v0.3.12 candidate gate. They do not claim
-that the tag or image already exists.
+The commands below define the v0.3.12 candidate gate. They do not claim that
+the tag or image already exists.
 
 ```bash
 npm run -s typecheck
@@ -108,7 +109,7 @@ credential in this repository, logs, release notes, artifacts, or a child
 package checkout. A successful run also proves the immutable Runtime tag is
 still absent after the provider smoke completes.
 
-## Future Candidate Promotion Checklist
+## Candidate Publication Checklist
 
 For a new, not-yet-tagged release, do not create the tag until the exact
 candidate commit has passed all convergence checks, exact-main CI, and
@@ -212,6 +213,6 @@ registry readback alone marks that run failed, publication is complete only
 when a checked evidence receipt binds the exact source run and attempt, commit,
 digest, already-completed exact-digest and cross-version gates, a successful
 read-only recovery run with `registry_writes` equal to `none`, and the
-subsequent verified GitHub prerelease. The prior bounded recovery case is preserved exactly in
-`docs/releases/v0.3.11-publication-evidence.json`; it does not authorize a
-future rerun that rebuilds or overwrites an image.
+subsequent verified GitHub prerelease. The prior bounded recovery case is
+preserved exactly in `docs/releases/v0.3.11-publication-evidence.json`; it does
+not authorize a future rerun that rebuilds or overwrites an image.

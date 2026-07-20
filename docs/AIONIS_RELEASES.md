@@ -1,30 +1,32 @@
 # Aionis Releases
 
-Status: v0.3.12 Local Runtime Public Beta development.
+Status: v0.3.12 Local Runtime Public Beta candidate.
 
-v0.3.12 is the untagged Runtime-only development train for legacy replay
-database upgrade hardening. A real v0.3.6-to-v0.3.11 exercise found that the
+v0.3.12 is the Runtime-only candidate for legacy replay database upgrade
+hardening. A real v0.3.6-to-v0.3.11 exercise found that the
 old image leaves `aionis-lite-replay.sqlite` at mode `0644`, while v0.3.11
 correctly refuses to start with that artifact. This train adds an explicit
 offline verification and hardening path; it does not weaken Runtime startup or
 silently mutate a live database.
 
-There is no v0.3.12 tag, official image, protected-provider run, or publication
-receipt yet. The last published candidate remains v0.3.11. Its immutable tag,
-commit, image digest, provider evidence, and bounded recovery record are fixed
-in [`v0.3.11-publication-evidence.json`](./releases/v0.3.11-publication-evidence.json)
+Candidate status alone does not create or validate the v0.3.12 tag, official
+image, protected-provider evidence, or publication receipt. Each becomes
+release authority only after all exact-commit gates pass. The last published
+candidate remains v0.3.11. Its immutable tag, commit, image digest, provider
+evidence, and bounded recovery record are fixed in
+[`v0.3.11-publication-evidence.json`](./releases/v0.3.11-publication-evidence.json)
 at `docs/releases/v0.3.11-publication-evidence.json`.
 
 The supported release posture is one self-hosted Runtime process with SQLite
 authority on `linux/amd64`. It is not GA, a managed multi-tenant service, or a
 multi-instance HA release.
 
-## Development Coordinates
+## Current Candidate Coordinates
 
 | Artifact | Current channel | Immutable source ref | Purpose |
 |---|---:|---:|---|
-| GitHub Runtime source | `v0.3.12` future development tag | `v0.3.12` | Reserved coordinate; the tag has not been created. |
-| Docker image | `ghcr.io/ostinatocc/aionis:v0.3.12` future candidate | Runtime `v0.3.12` | Reserved `linux/amd64` coordinate; no official image has been published. |
+| GitHub Runtime source | `v0.3.12` candidate | `v0.3.12` | Becomes immutable only after all pre-tag gates pass and the tag is created. |
+| Docker image | `ghcr.io/ostinatocc/aionis:v0.3.12` candidate coordinate | Runtime `v0.3.12` | Published only after the tag workflow verifies and promotes one `linux/amd64` digest. |
 | Default installer Runtime ref | `v0.3.6` frozen | `v0.3.6` | Immutable Runtime selected by the frozen installer. |
 | `aionis` | `0.3.8` frozen | `v0.3.8` | Top-level setup and operator CLI. |
 | `@aionis/create` | `0.3.8` frozen | `v0.3.8` | One-command installer; its default remains Runtime v0.3.6. |
@@ -40,11 +42,11 @@ Runtime CI resolves SDK and Manifest from that authority; Docker release
 verification resolves all eight external repositories and fails closed on any
 checkout, tag, commit, package name, or version mismatch.
 
-Development notes: [v0.3.12 replay upgrade hardening](./releases/v0.3.12.md).
+Candidate notes: [v0.3.12 replay upgrade hardening](./releases/v0.3.12.md).
 The v0.3.11 publication receipt remains historical evidence only; it cannot be
 reused as v0.3.12 evidence.
 
-## v0.3.12 Development Scope
+## v0.3.12 Candidate Scope
 
 - Add `upgrade --replay-db PATH` while retaining the write-only form for
   deployments without replay persistence.
@@ -93,10 +95,10 @@ digest. Both runs and their relationship are preserved in
 misreported as green. That receipt does not claim that legacy v0.3.6 replay
 artifacts can be upgraded by v0.3.11.
 
-## Future Candidate Gate
+## Candidate Release Gate
 
-The commands below define the gate contract for this development train. They do
-not claim that v0.3.12 is already tagged or published.
+The commands below define the gate contract for this candidate. They do not
+claim that v0.3.12 is already tagged or published.
 
 ```bash
 npm run -s typecheck
@@ -128,7 +130,7 @@ random nonce and the runbook rejects ambiguous title matches. The provider
 workflow checks that the immutable Runtime tag is still absent after the smoke
 completes.
 
-## Future Candidate Promotion Checklist
+## Candidate Publication Checklist
 
 For a new, not-yet-tagged candidate, run this after the reviewed commit is the
 exact `origin/main` SHA and its full Runtime CI is green. This procedure obtains

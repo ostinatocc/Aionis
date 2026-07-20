@@ -1,12 +1,14 @@
 # Changelog
 
-## v0.3.12 - Replay Upgrade Hardening Development
+## v0.3.12 - Replay Upgrade Hardening Candidate
 
-Development started: 2026-07-20
+Candidate preparation: 2026-07-20
 
-This untagged Runtime-only train fixes the legacy replay-database compatibility
-gap found by a real v0.3.6-to-v0.3.11 upgrade exercise. v0.3.11 remains an
-immutable published candidate; no v0.3.12 release artifact exists yet.
+This Runtime-only candidate fixes the legacy replay-database compatibility gap
+found by a real v0.3.6-to-v0.3.11 upgrade exercise. Candidate status alone does
+not create release artifacts; the v0.3.12 tag, image, and GitHub Release become
+valid only after their exact-commit release gates pass. v0.3.11 remains an
+immutable published candidate.
 
 ### Changed
 
@@ -26,13 +28,13 @@ immutable published candidate; no v0.3.12 release artifact exists yet.
   schema-v6, learning-posture, package, or installer-default expansion is part
   of this patch.
 
-### Required Before Candidate Promotion
+### Required Before Publication
 
-- Build a clean-commit `linux/amd64` development image and prove real v0.3.6
-  upgrade, restart, recovery, and untouched-volume rollback.
-- Run the checked-in cross-version gate against the exact candidate digest
-  before image-tag promotion, then run full exact-main CI and protected
-  provider evidence on the later candidate commit.
+- Require full exact-main CI and protected provider evidence on the candidate
+  commit before creating the immutable source tag.
+- Require the tag workflow to build one native `linux/amd64` digest and prove
+  real v0.3.6 upgrade, restart, recovery, and untouched-volume rollback before
+  image-tag promotion and the verified GitHub prerelease.
 
 ## v0.3.11 - Docker Lifecycle Recovery Candidate
 

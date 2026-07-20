@@ -1,6 +1,6 @@
 {
   "schema_version": "aionis_release_train_v1",
-  "status": "development",
+  "status": "candidate",
   "runtime": {
     "version": "0.3.12",
     "source_tag": "v0.3.12",

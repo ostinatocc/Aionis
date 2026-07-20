@@ -43,12 +43,13 @@ rehydrated later, and why each decision was made.
 npx aionis setup
 ```
 
-Current development train: **Runtime v0.3.12 / SDK v0.3.19 / Manifest v0.1.1**.
+Current candidate: **Runtime v0.3.12 / SDK v0.3.19 / Manifest v0.1.1**.
 The frozen `aionis` installer still installs Runtime v0.3.6; the command above
-does not install this development train. v0.3.12 is an untagged Runtime-only
-patch for strict, identity-bound upgrade of legacy replay SQLite artifacts; it
-has no official image or publication receipt yet. The last published candidate
-is Runtime v0.3.11, whose immutable tag-and-digest chain is recorded in
+does not install this candidate. v0.3.12 is a Runtime-only candidate for
+strict, identity-bound upgrade of legacy replay SQLite artifacts. Candidate
+status alone does not create an official tag, image, or publication receipt.
+The last published candidate is Runtime v0.3.11, whose immutable
+tag-and-digest chain is recorded in
 [`docs/releases/v0.3.11-publication-evidence.json`](docs/releases/v0.3.11-publication-evidence.json).
 Both trains are intended for a single self-hosted Runtime process with
 same-host Agent clients.
@@ -97,7 +98,7 @@ writes the generated Runtime `.env`, delegates the install to `@aionis/create`,
 then prints the next Runtime start and SDK/API/MCP/AIFS connection commands.
 It installs for real Agent integration without running optional verification
 flows by default. The frozen installer currently selects Runtime v0.3.6; it is
-the default published-beta install path, not the v0.3.12 development path.
+the default published-beta install path, not the v0.3.12 candidate path.
 
 For non-interactive installs, set the provider key in the environment:
 
@@ -116,8 +117,9 @@ Runtime fact source. Aionis still performs final scope, lifecycle, authority,
 admission, and rehydrate governance after candidates are loaded.
 
 The last published candidate tag is `ghcr.io/ostinatocc/aionis:v0.3.11`.
-The release-train coordinate `ghcr.io/ostinatocc/aionis:v0.3.12` is reserved
-but not published; do not pull or deploy it yet. For an exact v0.3.11
+The candidate coordinate `ghcr.io/ostinatocc/aionis:v0.3.12` is reserved but
+not published; do not pull or deploy it until the immutable tag workflow has
+verified and promoted its digest. For an exact v0.3.11
 deployment, pin the verified digest recorded in
 `docs/releases/v0.3.11-publication-evidence.json`:
 
