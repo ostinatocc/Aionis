@@ -161,11 +161,58 @@ assert_memory_resolves() {
 
 assert_runtime_health() {
   docker exec "$1" node --input-type=module -e '
-    const response = await fetch("http://127.0.0.1:3001/health", { signal: AbortSignal.timeout(Number(process.env.AIONIS_SMOKE_REQUEST_TIMEOUT_MS)) }); const body = await response.json();
-    const stores = body?.lite?.stores; const projection = stores?.write?.projections; const learning = stores?.learning_control_worker?.backlog;
+    const timeout = Number(process.env.AIONIS_SMOKE_REQUEST_TIMEOUT_MS);
+    const request = async (pathname) => {
+      const response = await fetch(`http://127.0.0.1:3001${pathname}`, {
+        signal: AbortSignal.timeout(timeout),
+      });
+      return { response, body: await response.json() };
+    };
+    const record = (value) => value !== null && typeof value === "object" && !Array.isArray(value);
+    const timestamp = (value) => {
+      if (typeof value !== "string") return false;
+      try { return new Date(value).toISOString() === value; } catch { return false; }
+    };
+    const healthz = await request("/healthz");
+    if (!healthz.response.ok || healthz.body?.ok !== true) {
+      throw new Error(`healthz failed: ${JSON.stringify(healthz.body)}`);
+    }
+    const readyz = await request("/readyz");
+    if (!readyz.response.ok
+      || readyz.body?.ready !== true
+      || readyz.body?.checks?.learning_control_worker !== true) {
+      throw new Error(`readyz learning-control check failed: ${JSON.stringify(readyz.body)}`);
+    }
+    const { response, body } = await request("/health");
+    const stores = body?.lite?.stores;
+    const projection = stores?.write?.projections;
+    const worker = stores?.learning_control_worker;
+    const learning = worker?.backlog;
     if (!response.ok || body?.ok !== true) throw new Error(`Runtime health failed: ${JSON.stringify(body)}`);
     for (const field of ["dead_letter", "provider_mismatch", "legacy_pending_unrecoverable"]) if (projection?.[field] !== 0) throw new Error(`unsafe projection backlog: ${JSON.stringify(projection)}`);
-    for (const field of ["dead_letter", "exhausted"]) if (learning?.[field] !== 0) throw new Error(`unsafe learning backlog: ${JSON.stringify(learning)}`);
+    if (!record(worker)
+      || typeof worker.running !== "boolean"
+      || worker.closed !== false
+      || worker.last_error_code !== null
+      || !timestamp(worker.last_started_at)
+      || !timestamp(worker.last_succeeded_at)
+      || !record(worker.last_drain)
+      || !record(learning)) {
+      throw new Error(`learning-control worker is unhealthy: ${JSON.stringify(worker)}`);
+    }
+    for (const field of ["pending", "leased", "expired_leases", "completed", "dead_letter", "exhausted"]) {
+      if (!Number.isSafeInteger(learning[field]) || learning[field] < 0) {
+        throw new Error(`invalid learning-control backlog ${field}: ${JSON.stringify(learning)}`);
+      }
+    }
+    for (const field of ["oldest_available_at", "oldest_lease_expiry"]) {
+      if (learning[field] !== null && !timestamp(learning[field])) {
+        throw new Error(`invalid learning-control backlog ${field}: ${JSON.stringify(learning)}`);
+      }
+    }
+    if (learning.dead_letter !== 0 || learning.exhausted !== 0) {
+      throw new Error(`unsafe learning backlog: ${JSON.stringify(learning)}`);
+    }
   '
 }
 

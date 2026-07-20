@@ -129,35 +129,27 @@ test("Runtime CI pins candidate SDK contracts separately from frozen release art
   const workflow = read(path.join(ROOT, ".github", "workflows", "ci.yml"));
   const resolver = workflowStep(workflow, "Resolve standalone SDK ref");
   const contractCheckout = workflowStep(workflow, "Checkout standalone SDK contracts");
-  const releaseCheckout = workflowStep(workflow, "Checkout frozen SDK release artifact");
+  const releaseCheckout = workflowStep(workflow, "Checkout exact release artifacts and stable authority");
   const releaseGate = workflowStep(workflow, "Release artifact gate");
+  const packageSupport = read(path.join(ROOT, "scripts", "ci", "release-package-artifacts.sh"));
 
   assert.match(workflow, /sdk_ref:/);
   assert.doesNotMatch(workflow, /sdk_ref:[\s\S]*?default: "main"/);
   assert.match(resolver, /ci-dependencies\.json/);
   assert.match(resolver, /dependencies\.sdk\?\.contract_commit/);
-  assert.match(resolver, /releaseTrain\.packages\?\.sdk\?\.source_ref/);
   assert.match(resolver, /contract_ref=\$\{process\.env\.SDK_REF_OVERRIDE \|\| contractCommit\}/);
-  assert.match(resolver, /release_ref=\$\{releaseRef\}/);
   assert.doesNotMatch(resolver, /\|\| "main"/);
-  assert.doesNotMatch(resolver, /releaseTrain\.status === "candidate"/);
-  assert.doesNotMatch(resolver, /release\/sdk-/);
 
   assert.match(contractCheckout, /repository: \$\{\{ steps\.sdk-ref\.outputs\.repository \}\}/);
   assert.match(contractCheckout, /ref: \$\{\{ steps\.sdk-ref\.outputs\.contract_ref \}\}/);
   assert.match(contractCheckout, /path: external\/aionis-sdk/);
-  assert.match(releaseCheckout, /repository: \$\{\{ steps\.sdk-ref\.outputs\.repository \}\}/);
-  assert.match(releaseCheckout, /ref: \$\{\{ steps\.sdk-ref\.outputs\.release_ref \}\}/);
-  assert.match(releaseCheckout, /path: external\/release\/aionis-sdk/);
-  assert.equal(
-    (workflow.match(/repository: \$\{\{ steps\.sdk-ref\.outputs\.repository \}\}/g) ?? []).length,
-    2,
-  );
+  assert.match(releaseCheckout, /release-package-artifacts\.sh checkout release-train\.json external\/release-artifacts/);
+  assert.match(packageSupport, /sdk: \["https:\/\/github\.com\/ostinatocc\/aionis-sdk\.git", "aionis-sdk"\]/);
   assert.equal((workflow.match(/path: external\/aionis-sdk/g) ?? []).length, 1);
-  assert.equal((workflow.match(/path: external\/release\/aionis-sdk/g) ?? []).length, 1);
 
   assert.match(workflow, /AIONIS_SDK_REPO:.*external\/aionis-sdk/);
-  assert.match(releaseGate, /AIONIS_RELEASE_SDK_REPO:.*external\/release\/aionis-sdk/);
+  assert.match(releaseGate, /AIONIS_RELEASE_SDK_REPO:.*external\/release-artifacts\/aionis-sdk/);
+  assert.match(releaseGate, /--pretag --require-package-roots/);
   assert.doesNotMatch(releaseGate, /AIONIS_RELEASE_SDK_REPO:.*external\/aionis-sdk$/m);
 });
 

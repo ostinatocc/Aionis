@@ -25,10 +25,13 @@ jobs:
     timeout-minutes: 20
     env:
       AIONIS_SDK_REPO: ${{ github.workspace }}/external/aionis-sdk
-      AIONIS_MANIFEST_REPO: ${{ github.workspace }}/external/AionisManifest
+      AIONIS_MANIFEST_REPO: ${{ github.workspace }}/external/release-artifacts/AionisManifest
     steps:
       - name: Checkout
         uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          persist-credentials: false
 
       - name: Set up Node.js
         uses: actions/setup-node@v4
@@ -54,7 +57,6 @@ jobs:
               return normalized;
             };
             const dependencies = JSON.parse(fs.readFileSync("ci-dependencies.json", "utf8"));
-            const releaseTrain = JSON.parse(fs.readFileSync("release-train.json", "utf8"));
             if (dependencies.schema_version !== "aionis_ci_dependency_lock_v1") {
               throw new Error("unsupported ci-dependencies.json schema_version");
             }
@@ -66,16 +68,11 @@ jobs:
             if (!/^[a-f0-9]{40}$/i.test(contractCommit)) {
               throw new Error("ci-dependencies.sdk.contract_commit must be a 40-character commit");
             }
-            const releaseRef = requiredString(
-              releaseTrain.packages?.sdk?.source_ref,
-              "release-train.packages.sdk.source_ref",
-            );
             fs.appendFileSync(process.env.GITHUB_OUTPUT, `repository=${repository}\n`);
             fs.appendFileSync(
               process.env.GITHUB_OUTPUT,
               `contract_ref=${process.env.SDK_REF_OVERRIDE || contractCommit}\n`,
             );
-            fs.appendFileSync(process.env.GITHUB_OUTPUT, `release_ref=${releaseRef}\n`);
           '
 
       - name: Checkout standalone SDK contracts
@@ -84,29 +81,10 @@ jobs:
           repository: ${{ steps.sdk-ref.outputs.repository }}
           ref: ${{ steps.sdk-ref.outputs.contract_ref }}
           path: external/aionis-sdk
+          persist-credentials: false
 
-      - name: Checkout frozen SDK release artifact
-        uses: actions/checkout@v4
-        with:
-          repository: ${{ steps.sdk-ref.outputs.repository }}
-          ref: ${{ steps.sdk-ref.outputs.release_ref }}
-          path: external/release/aionis-sdk
-
-      - name: Resolve standalone Manifest ref
-        id: manifest-ref
-        run: |
-          node --input-type=module -e '
-            import fs from "node:fs";
-            const releaseTrain = JSON.parse(fs.readFileSync("release-train.json", "utf8"));
-            fs.appendFileSync(process.env.GITHUB_OUTPUT, `ref=${releaseTrain.packages.manifest.source_ref}\n`);
-          '
-
-      - name: Checkout standalone Manifest
-        uses: actions/checkout@v4
-        with:
-          repository: ostinatocc/AionisManifest
-          ref: ${{ steps.manifest-ref.outputs.ref }}
-          path: external/AionisManifest
+      - name: Checkout exact release artifacts and stable authority
+        run: bash scripts/ci/release-package-artifacts.sh checkout release-train.json external/release-artifacts
 
       - name: Install dependencies
         run: npm ci
@@ -115,13 +93,20 @@ jobs:
         run: npm run -s typecheck
 
       - name: Release artifact gate
-        run: node scripts/ci/release-artifact-gate.mjs --check
+        run: node scripts/ci/release-artifact-gate.mjs --check --pretag --require-package-roots
         env:
-          AIONIS_RELEASE_SDK_REPO: ${{ github.workspace }}/external/release/aionis-sdk
-          AIONIS_RELEASE_MANIFEST_REPO: ${{ github.workspace }}/external/AionisManifest
+          AIONIS_RELEASE_CLI_REPO: ${{ github.workspace }}/external/release-artifacts/aionis-cli
+          AIONIS_RELEASE_CREATE_REPO: ${{ github.workspace }}/external/release-artifacts/aionis-create
+          AIONIS_RELEASE_SDK_REPO: ${{ github.workspace }}/external/release-artifacts/aionis-sdk
+          AIONIS_RELEASE_MANIFEST_REPO: ${{ github.workspace }}/external/release-artifacts/AionisManifest
+          AIONIS_RELEASE_MCP_REPO: ${{ github.workspace }}/external/release-artifacts/aionis-mcp
+          AIONIS_RELEASE_AIFS_REPO: ${{ github.workspace }}/external/release-artifacts/aionis-aifs
+          AIONIS_RELEASE_CLAUDE_CODE_REPO: ${{ github.workspace }}/external/release-artifacts/aionis-claude-code
+          AIONIS_RELEASE_SUBSTRATE_REPO: ${{ github.workspace }}/external/release-artifacts/AionisSubstrate
+          AIONIS_RELEASE_EVALUATION_REPO: ${{ github.workspace }}/external/release-artifacts/AionisRuntime-evals
 
       - name: Verify standalone Manifest
-        working-directory: external/AionisManifest
+        working-directory: external/release-artifacts/AionisManifest
         run: |
           npm ci --ignore-scripts
           npm run -s verify

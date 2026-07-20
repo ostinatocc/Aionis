@@ -1,5 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
+import { createHash } from "node:crypto";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
@@ -14,49 +15,12 @@ import {
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..", "..");
 const COLLECTOR = path.join(ROOT, "scripts", "ci", "runtime-complexity-budget.mjs");
 const BUDGET = path.join(ROOT, "docs", "architecture", "runtime-complexity-budget.json");
-const EXPECTED_BASELINE_COMMIT = "f15cb3054ed3a909f4946c69bfe724450f578780";
+const EXPECTED_BUDGET_SHA256 = "50fd08083ab31b1a3a4fb837ced4643107a7423ef40cac020939279c8f1ba8a8";
 const CODE_EXTENSIONS = ["ts", "tsx", "mts", "cts", "js", "mjs", "cjs"];
 const RESOURCE_EXTENSIONS = ["sql", "json"];
 const SCRIPT_ARTIFACT_EXTENSIONS = [...CODE_EXTENSIONS, "sh", "json"];
 const WORKFLOW_ARTIFACT_EXTENSIONS = ["yml", "yaml"];
 const ACTION_ARTIFACT_EXTENSIONS = [...SCRIPT_ARTIFACT_EXTENSIONS, ...WORKFLOW_ARTIFACT_EXTENSIONS];
-const EXPECTED_THRESHOLDS = {
-  source_files: 339,
-  source_lines: 171284,
-  runtime_entry_source_files: 285,
-  runtime_entry_source_lines: 140330,
-  non_entry_source_files: 54,
-  non_entry_source_lines: 30954,
-  tool_source_files: 7,
-  tool_source_lines: 15401,
-  runtime_resource_files: 2,
-  runtime_resource_lines: 2755,
-  focused_runtime_artifact_lines: 174039,
-  authority_package_source_files: 13,
-  authority_package_source_lines: 11319,
-  authority_package_resource_files: 0,
-  authority_package_resource_lines: 0,
-  authority_package_artifact_lines: 11319,
-  authority_package_import_cycles: 0,
-  authority_package_largest_file_lines: 1704,
-  ci_artifact_files: 231,
-  ci_artifact_lines: 140298,
-  ci_largest_file_lines: 10285,
-  workflow_artifact_files: 4,
-  workflow_artifact_lines: 1251,
-  workflow_largest_file_lines: 673,
-  e2e_source_files: 50,
-  e2e_source_lines: 22112,
-  e2e_largest_file_lines: 1547,
-  operational_script_files: 8,
-  operational_script_lines: 2448,
-  operational_script_largest_file_lines: 663,
-  route_matrix_entries: 21,
-  env_schema_fields: 177,
-  import_cycles: 0,
-  largest_file_lines: 5234,
-};
-
 function runCollector(args = []) {
   return spawnSync(process.execPath, [COLLECTOR, ...args], {
     cwd: ROOT,
@@ -209,24 +173,13 @@ function assertReportShape(report) {
 }
 
 function assertBudgetMetadata(budget) {
+  assert.equal(createHash("sha256").update(fs.readFileSync(BUDGET)).digest("hex"), EXPECTED_BUDGET_SHA256);
   assert.deepEqual(Object.keys(budget).sort(), ["baseline_commit", "intent", "schema_version", "thresholds"]);
   assert.equal(budget.schema_version, "aionis_runtime_complexity_budget_v4");
   assert.match(budget.baseline_commit, /^[0-9a-f]{40}$/);
-  assert.equal(budget.baseline_commit, EXPECTED_BASELINE_COMMIT);
   assert.equal(typeof budget.intent, "string");
   assert.equal(budget.intent, budget.intent.trim());
-  assert.match(budget.intent, /downward ratchet/);
-  assert.match(budget.intent, /Runtime entry transitive closure/);
-  assert.match(budget.intent, /non-entry src/);
-  assert.match(budget.intent, /tools/);
-  assert.match(budget.intent, /Runtime resources/);
-  assert.match(budget.intent, /learning-authority package/);
-  assert.match(budget.intent, /CI/);
-  assert.match(budget.intent, /workflow orchestration/);
-  assert.match(budget.intent, /e2e laboratory/);
-  assert.match(budget.intent, /operational-script/);
-  assert.match(budget.intent, /no new route/);
-  assert.deepEqual(budget.thresholds, EXPECTED_THRESHOLDS);
+  for (const token of ["downward ratchet", "Runtime entry transitive closure", "non-entry src", "tools", "Runtime resources", "learning-authority package", "CI", "workflow orchestration", "e2e laboratory", "operational-script", "no new route"]) assert.match(budget.intent, new RegExp(token));
 }
 
 function moduleSources(directory) {

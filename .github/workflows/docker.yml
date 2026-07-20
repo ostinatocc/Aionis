@@ -14,11 +14,9 @@ on:
         required: true
         default: false
         type: boolean
-      recovery_run_id: { description: Failed tag-push run whose verified digest exists, required: false, default: "", type: string }
-      recovery_run_attempt: { description: Exact failed attempt that verified the digest, required: false, default: "", type: string }
-      recovery_digest: { description: Exact digest shared by build subject and release tag, required: false, default: "", type: string }
 concurrency:
   group: docker-release-${{ github.event_name == 'workflow_dispatch' && inputs.release_ref || github.ref_name }}
+  queue: max
   cancel-in-progress: false
 permissions:
   contents: read
@@ -33,15 +31,19 @@ jobs:
       AIONIS_MANIFEST_REPO: ${{ github.workspace }}/external/AionisManifest
     outputs:
       release_status: ${{ steps.release-metadata.outputs.release_status }}
-      publish_latest: ${{ steps.release-metadata.outputs.publish_latest }}
       runtime_tag: ${{ steps.release-metadata.outputs.runtime_tag }}
       runtime_commit: ${{ steps.release-metadata.outputs.runtime_commit }}
+      stable_promotion_authorized: ${{ steps.release-gate.outputs.stable_promotion_authorized }}
+      previous_latest_digest: ${{ steps.release-gate.outputs.previous_latest_digest }}
+      previous_latest_version: ${{ steps.release-gate.outputs.previous_latest_version }}
+      previous_latest_commit: ${{ steps.release-gate.outputs.previous_latest_commit }}
     steps:
       - name: Checkout Runtime
         uses: actions/checkout@v4
         with:
           ref: ${{ github.event_name == 'workflow_dispatch' && inputs.release_ref || github.ref_name }}
           fetch-depth: 0
+          persist-credentials: false
       - name: Verify release commit is on main first-parent history
         run: |
           set -euo pipefail
@@ -55,11 +57,7 @@ jobs:
               "${release_commit}" "${main_commit}" >&2
             exit 1
           fi
-      - name: Set up Node.js
-        uses: actions/setup-node@v4
-        with:
-          node-version: "24"
-          cache: npm
+      - { name: Set up Node.js, uses: actions/setup-node@v4, with: { node-version: "24", cache: npm } }
       - name: Verify protected exact-main embedding evidence
         env:
           GH_TOKEN: ${{ github.token }}
@@ -85,20 +83,6 @@ jobs:
           const payload = JSON.parse(fs.readFileSync(process.env.EVIDENCE_FILE, "utf8"));
           const commit = process.env.RELEASE_COMMIT;
           const train = JSON.parse(fs.readFileSync("release-train.json", "utf8"));
-          const versionMatch = /^(\d+)\.(\d+)\.(\d+)$/.exec(String(train.runtime?.version ?? ""));
-          if (!versionMatch) throw new Error("release-train Runtime version must be semantic x.y.z");
-          const version = versionMatch.slice(1).map(Number);
-          const minimum = [0, 3, 11];
-          const firstDifference = version.findIndex((part, index) => part !== minimum[index]);
-          const requiresEvidence = firstDifference === -1
-            || version[firstDifference] > minimum[firstDifference];
-          if (!requiresEvidence) {
-            fs.appendFileSync(
-              process.env.GITHUB_STEP_SUMMARY,
-              `- Protected embedding evidence: not required for legacy Runtime v${train.runtime.version}\n`,
-            );
-            process.exit(0);
-          }
           if (!["candidate", "stable"].includes(train.status)) {
             throw new Error(`protected embedding evidence requires candidate or stable status; got ${train.status}`);
           }
@@ -141,87 +125,130 @@ jobs:
             if (!["development", "candidate", "stable"].includes(train.status)) {
               throw new Error(`unsupported release-train status: ${train.status}`);
             }
-            for (const key of ["cli", "create", "sdk", "manifest", "mcp", "aifs", "claude_code", "substrate"]) {
-              fs.appendFileSync(output, `${key}_ref=${train.packages[key].source_ref}\n`);
-            }
+            fs.appendFileSync(output, `create_version=${train.packages.create.version}\n`);
+            fs.appendFileSync(output, `create_commit=${train.packages.create.source_commit}\n`);
             fs.appendFileSync(output, `runtime_tag=${train.runtime.source_tag}\n`);
             fs.appendFileSync(output, `release_status=${train.status}\n`);
-            fs.appendFileSync(output, `publish_latest=${train.status === "stable"}\n`);
           '
           echo "runtime_commit=$(git rev-parse HEAD)" >> "${GITHUB_OUTPUT}"
-      - name: Checkout CLI package
-        uses: actions/checkout@v4
-        with:
-          repository: ostinatocc/aionis-cli
-          ref: ${{ steps.release-metadata.outputs.cli_ref }}
-          path: external/aionis-cli
-      - name: Checkout installer package
-        uses: actions/checkout@v4
-        with:
-          repository: ostinatocc/aionis-create
-          ref: ${{ steps.release-metadata.outputs.create_ref }}
-          path: external/aionis-create
-      - name: Checkout standalone SDK
-        uses: actions/checkout@v4
-        with:
-          repository: ostinatocc/aionis-sdk
-          ref: ${{ steps.release-metadata.outputs.sdk_ref }}
-          path: external/aionis-sdk
-      - name: Checkout standalone Manifest
-        uses: actions/checkout@v4
-        with:
-          repository: ostinatocc/AionisManifest
-          ref: ${{ steps.release-metadata.outputs.manifest_ref }}
-          path: external/AionisManifest
-      - name: Checkout MCP package
-        uses: actions/checkout@v4
-        with:
-          repository: ostinatocc/aionis-mcp
-          ref: ${{ steps.release-metadata.outputs.mcp_ref }}
-          path: external/aionis-mcp
-      - name: Checkout AIFS package
-        uses: actions/checkout@v4
-        with:
-          repository: ostinatocc/aionis-aifs
-          ref: ${{ steps.release-metadata.outputs.aifs_ref }}
-          path: external/aionis-aifs
-      - name: Checkout Claude Code package
-        uses: actions/checkout@v4
-        with:
-          repository: ostinatocc/aionis-claude-code
-          ref: ${{ steps.release-metadata.outputs.claude_code_ref }}
-          path: external/aionis-claude-code
-      - name: Checkout Substrate package
-        uses: actions/checkout@v4
-        with:
-          repository: ostinatocc/AionisSubstrate
-          ref: ${{ steps.release-metadata.outputs.substrate_ref }}
-          path: external/AionisSubstrate
-      - name: Checkout dispatch verification harness
-        if: github.event_name == 'workflow_dispatch'
-        uses: actions/checkout@v4
-        with:
-          ref: ${{ github.sha }}
-          path: external/release-harness
-          fetch-depth: 0
-      - name: Verify dispatch harness commit
-        if: github.event_name == 'workflow_dispatch'
+      - name: Fetch sanitized stable workflow evidence
+        if: steps.release-metadata.outputs.release_status == 'stable'
         env:
-          EXPECTED_RUNTIME_COMMIT: ${{ steps.release-metadata.outputs.runtime_commit }}
+          EVALS_ACTIONS_READ_TOKEN: ${{ secrets.AIONIS_EVALS_ACTIONS_READ_TOKEN }}
+          WORKFLOW_EVIDENCE: ${{ runner.temp }}/aionis-workflow-evidence.json
         run: |
-          set -euo pipefail
-          actual_harness_commit="$(git -C external/release-harness rev-parse HEAD)"
-          test "${actual_harness_commit}" = "${GITHUB_SHA}"
-          while IFS= read -r changed_path; do
-            case "${changed_path}" in
-              .github/workflows/docker.yml|.github/workflows/exact-main-embedding-smoke.yml|scripts/ci/release-workflow-contract.test.mjs|scripts/ci/docker-recovery-smoke.sh|scripts/e2e/external-package-entrypoint-smoke.ts|scripts/e2e/fresh-install-smoke.ts)
-                ;;
-              *)
-                printf 'dispatch harness contains non-verification change: %s\n' "${changed_path}" >&2
-                exit 1
-                ;;
-            esac
-          done < <(git -C external/release-harness diff --name-only "${EXPECTED_RUNTIME_COMMIT}" "${actual_harness_commit}")
+          node --input-type=module <<'NODE'
+          import { createHash } from "node:crypto";
+          import fs from "node:fs";
+          import path from "node:path";
+          const root = fs.realpathSync(".");
+          const readBoundJson = (binding, label) => {
+            const relative = binding?.path;
+            if (!/^docs\/releases\/[0-9A-Za-z._-]+\.json$/.test(relative ?? "")) throw new Error(`${label} path is invalid`);
+            let target = root;
+            for (const component of relative.split("/")) {
+              target = path.join(target, component);
+              if (fs.lstatSync(target).isSymbolicLink()) throw new Error(`${label} path contains a symlink`);
+            }
+            if (!fs.lstatSync(target).isFile()) throw new Error(`${label} is not a regular file`);
+            const raw = fs.readFileSync(target);
+            const digest = createHash("sha256").update(raw).digest("hex");
+            if (!/^[a-f0-9]{64}$/.test(binding.sha256 ?? "") || digest !== binding.sha256) throw new Error(`${label} hash mismatch`);
+            return JSON.parse(raw);
+          };
+          const token = process.env.EVALS_ACTIONS_READ_TOKEN;
+          if (!token) throw new Error("stable release requires AIONIS_EVALS_ACTIONS_READ_TOKEN");
+          const train = JSON.parse(fs.readFileSync("release-train.json", "utf8"));
+          const soak = readBoundJson(train.stable_promotion?.bounded_soak, "bounded soak receipt");
+          const artifact = readBoundJson(soak.protocol?.artifact_bundle_manifest, "artifact manifest");
+          const sources = [soak.pilot?.source_workflow, artifact.source_workflow, artifact.publisher_workflow];
+          const phaseContracts = [
+            ["pilot", "paid-preflight", "bounded-soak"],
+            ["soak", "paid-preflight", "bounded-soak"],
+            ["publisher", "evidence-publisher", "bounded-soak-publisher"],
+          ];
+          const pick = (value, keys) => Object.fromEntries(keys.map((key) => [key, value?.[key]]));
+          const sourceKeys = ["repository", "run_id", "run_attempt", "head_sha", "phase", "job", "environment"];
+          const runKeys = ["id", "run_attempt", "event", "status", "conclusion", "head_sha", "path", "created_at", "updated_at"];
+          const jobKeys = ["id", "run_id", "run_attempt", "head_sha", "name", "status", "conclusion", "labels", "runner_id", "runner_group_name", "started_at", "completed_at"];
+          if (!/^[a-f0-9]{40}$/.test(soak.harness?.commit ?? "") || artifact.harness_commit !== soak.harness.commit) throw new Error("soak harness commit is invalid");
+          if (sourceKeys.some((key) => soak.execution?.source_workflow?.[key] !== artifact.source_workflow?.[key])) throw new Error("soak producer source drifted from the receipt");
+          for (const [index, source] of sources.entries()) {
+            const [phase, job, environment] = phaseContracts[index];
+            const expected = { repository: "ostinatocc/AionisRuntime-evals", head_sha: soak.harness.commit, phase, job, environment };
+            if (Object.keys(source ?? {}).sort().join() !== [...sourceKeys].sort().join()) throw new Error(`${phase} source keys are invalid`);
+            for (const [key, value] of Object.entries(expected)) if (source[key] !== value) throw new Error(`${phase} source ${key} is invalid`);
+            if (!Number.isInteger(source.run_id) || source.run_id < 1 || !Number.isInteger(source.run_attempt) || source.run_attempt < 1) throw new Error(`${phase} run identity is invalid`);
+          }
+          const identities = sources.map((source) => `${source.run_id}:${source.run_attempt}`);
+          if (identities[0] === identities[1] || identities[1] !== identities[2]) throw new Error("pilot, soak, and publisher run identities are invalid");
+          const releaseTags = new Set(artifact.entries.map((entry) => (
+            new URL(entry.uri).pathname.split("/").filter(Boolean).at(-2)
+          )));
+          const releaseTag = [...releaseTags][0];
+          if (releaseTags.size !== 1 || releaseTag !== `soak-${soak.candidate?.tag}-${soak.harness.commit}`) throw new Error("soak release tag is invalid");
+          const headers = {
+            Accept: "application/vnd.github+json",
+            Authorization: `Bearer ${token}`,
+            "X-GitHub-Api-Version": "2022-11-28",
+          };
+          const api = async (url) => {
+            const response = await fetch(`https://api.github.com${url}`, { headers, redirect: "error", signal: AbortSignal.timeout(120_000) });
+            if (!response.ok) throw new Error(`GitHub workflow evidence fetch failed with HTTP ${response.status}`);
+            return response.json();
+          };
+          const records = [];
+          for (const source of sources) {
+            const runId = encodeURIComponent(String(source.run_id));
+            const attempt = encodeURIComponent(String(source.run_attempt));
+            const base = `/repos/ostinatocc/AionisRuntime-evals/actions/runs/${runId}/attempts/${attempt}`;
+            const [run, jobs] = await Promise.all([api(base), api(`${base}/jobs?per_page=100`)]);
+            const name = source.phase === "publisher" ? "Protected evidence publisher" : `Protected ${source.phase} preflight`;
+            const matches = jobs.jobs?.filter((job) => job.name === name) ?? [];
+            if (matches.length !== 1) throw new Error(`expected exactly one ${name} job`);
+            const job = matches[0];
+            records.push({
+              source: pick(source, sourceKeys),
+              run: { ...pick(run, runKeys), repository: run.repository?.full_name },
+              job: pick(job, jobKeys),
+            });
+          }
+          const producer = artifact.source_workflow;
+          const expectedArtifactNames = new Set(artifact.entries.map((entry) => (
+            `soak-${entry.kind}-${artifact.harness_commit}-${producer.run_id}-${producer.run_attempt}-${entry.sha256}`
+          )));
+          const actionsResponse = await api(`/repos/ostinatocc/AionisRuntime-evals/actions/runs/${encodeURIComponent(String(producer.run_id))}/artifacts?per_page=100`);
+          const artifacts = (actionsResponse.artifacts ?? [])
+            .filter((entry) => expectedArtifactNames.has(entry.name))
+            .map((entry) => ({
+              ...pick(entry, ["id", "name", "size_in_bytes", "digest", "expired", "created_at", "updated_at", "expires_at"]),
+              workflow_run_id: entry.workflow_run?.id,
+              workflow_run_head_sha: entry.workflow_run?.head_sha,
+            }));
+          if (artifacts.length !== 6) throw new Error("expected exactly six run-owned Actions artifacts");
+          const release = await api(`/repos/ostinatocc/AionisRuntime-evals/releases/tags/${encodeURIComponent(releaseTag)}`);
+          if (release.assets?.length !== 6) throw new Error("expected exactly six soak release assets");
+          const assets = release.assets.map((asset) => ({
+            ...pick(asset, ["id", "name", "size", "digest", "state", "created_at", "updated_at"]),
+            uploader: asset.uploader?.login,
+            download_url: asset.browser_download_url,
+          }));
+          const releaseEvidence = {
+            ...pick(release, ["id", "tag_name", "target_commitish", "draft", "prerelease", "immutable", "created_at", "published_at"]),
+            author: release.author?.login,
+          };
+          fs.writeFileSync(process.env.WORKFLOW_EVIDENCE, `${JSON.stringify({
+            schema_version: "aionis_workflow_run_evidence_v1",
+            repository: "ostinatocc/AionisRuntime-evals",
+            fetched_at: new Date().toISOString(),
+            records,
+            artifacts,
+            assets,
+            release: releaseEvidence,
+          }, null, 2)}\n`, { mode: 0o600, flag: "wx" });
+          NODE
+      - name: Checkout exact packages and stable evaluation authority
+        run: bash scripts/ci/release-package-artifacts.sh checkout release-train.json external
       - name: Install protected-close ACL verifier
         run: |
           sudo apt-get update
@@ -229,14 +256,26 @@ jobs:
       - name: Install dependencies
         run: npm ci
       - name: Verify release metadata and exact tag
+        id: release-gate
         run: |
           set -euo pipefail
           actual_tag="$(git describe --tags --exact-match HEAD)"
           test "${actual_tag}" = "${AIONIS_RELEASE_EXPECTED_TAG}"
+          gate_json="${RUNNER_TEMP}/aionis-release-gate.json"
           node scripts/ci/release-artifact-gate.mjs \
             --check \
             --require-package-roots \
-            --expect-tag "${AIONIS_RELEASE_EXPECTED_TAG}"
+            --expect-tag "${AIONIS_RELEASE_EXPECTED_TAG}" | tee "${gate_json}"
+          GATE_JSON="${gate_json}" node --input-type=module <<'NODE'
+          import fs from "node:fs";
+          const gate = JSON.parse(fs.readFileSync(process.env.GATE_JSON, "utf8"));
+          const previous = gate.promotion_authority?.expected_previous_latest;
+          if (gate.status === "stable" && previous === undefined) {
+            throw new Error("stable release gate returned no previous-latest authority");
+          }
+          fs.appendFileSync(process.env.GITHUB_OUTPUT, `stable_promotion_authorized=${gate.status === "stable" && previous !== undefined}\n`);
+          for (const key of ["digest", "version", "commit"]) fs.appendFileSync(process.env.GITHUB_OUTPUT, `previous_latest_${key}=${previous?.[key] ?? ""}\n`);
+          NODE
         env:
           AIONIS_RELEASE_EXPECTED_TAG: ${{ github.event_name == 'workflow_dispatch' && inputs.release_ref || github.ref_name }}
           AIONIS_RELEASE_CLI_REPO: ${{ github.workspace }}/external/aionis-cli
@@ -247,6 +286,8 @@ jobs:
           AIONIS_RELEASE_AIFS_REPO: ${{ github.workspace }}/external/aionis-aifs
           AIONIS_RELEASE_CLAUDE_CODE_REPO: ${{ github.workspace }}/external/aionis-claude-code
           AIONIS_RELEASE_SUBSTRATE_REPO: ${{ github.workspace }}/external/AionisSubstrate
+          AIONIS_RELEASE_EVALUATION_REPO: ${{ steps.release-metadata.outputs.release_status == 'stable' && format('{0}/external/AionisRuntime-evals', github.workspace) || '' }}
+          AIONIS_RELEASE_WORKFLOW_EVIDENCE: ${{ steps.release-metadata.outputs.release_status == 'stable' && format('{0}/aionis-workflow-evidence.json', runner.temp) || '' }}
       - name: Typecheck
         run: npm run -s typecheck
       - name: SDK and structural gates
@@ -293,48 +334,7 @@ jobs:
       - name: Manifest product integration
         run: npm run -s lite:test:core:manifest
       - name: Lite public smoke
-        run: |
-          set -euo pipefail
-          command -v setsid >/dev/null
-          smoke_pid=""
-          cleanup_smoke_group() {
-            if [[ -z "${smoke_pid}" ]]; then
-              return 0
-            fi
-            kill -TERM -- "-${smoke_pid}" >/dev/null 2>&1 || true
-            for _ in $(seq 1 50); do
-              if ! kill -0 -- "-${smoke_pid}" >/dev/null 2>&1; then
-                smoke_pid=""
-                return 0
-              fi
-              sleep 0.1
-            done
-            kill -KILL -- "-${smoke_pid}" >/dev/null 2>&1 || true
-            for _ in $(seq 1 20); do
-              if ! kill -0 -- "-${smoke_pid}" >/dev/null 2>&1; then
-                smoke_pid=""
-                return 0
-              fi
-              sleep 0.1
-            done
-            echo "Lite smoke process group ${smoke_pid} did not terminate" >&2
-            return 1
-          }
-          trap 'cleanup_smoke_group || true' EXIT
-          setsid npm run -s lite:smoke &
-          smoke_pid=$!
-          if wait "${smoke_pid}"; then
-            smoke_status=0
-          else
-            smoke_status=$?
-          fi
-          cleanup_status=0
-          cleanup_smoke_group || cleanup_status=$?
-          trap - EXIT
-          if [[ "${smoke_status}" -ne 0 ]]; then
-            exit "${smoke_status}"
-          fi
-          exit "${cleanup_status}"
+        run: npm run -s lite:smoke
       - name: Cross-package Runtime, SDK, MCP, and installer smoke
         run: |
           set -euo pipefail
@@ -369,118 +369,89 @@ jobs:
           AIONIS_EXTERNAL_SMOKE_SDK_SPEC="${{ steps.package-artifacts.outputs.sdk_spec }}" \
           AIONIS_EXTERNAL_SMOKE_MCP_SPEC="${{ steps.package-artifacts.outputs.mcp_spec }}" \
           AIONIS_EXTERNAL_SMOKE_CREATE_SPEC="${{ steps.package-artifacts.outputs.create_spec }}" \
-          node --import tsx "${GITHUB_WORKSPACE}/${{ github.event_name == 'workflow_dispatch' && 'external/release-harness/scripts/e2e/external-package-entrypoint-smoke.ts' || 'scripts/e2e/external-package-entrypoint-smoke.ts' }}"
-      - name: Fresh install from the exact Runtime tag
+          node --import tsx "${GITHUB_WORKSPACE}/scripts/e2e/external-package-entrypoint-smoke.ts"
+      - name: Fresh install through the declared installer authority
         if: github.ref_type == 'tag' || github.event_name == 'workflow_dispatch'
-        run: |
-          AIONIS_FRESH_INSTALL_CREATE_SPEC="${{ steps.package-artifacts.outputs.create_spec }}" \
-          AIONIS_FRESH_INSTALL_MCP_SPEC="${{ steps.package-artifacts.outputs.mcp_spec }}" \
-          AIONIS_FRESH_INSTALL_SDK_SPEC="${{ steps.package-artifacts.outputs.sdk_spec }}" \
-          AIONIS_FRESH_INSTALL_REPO="https://github.com/${GITHUB_REPOSITORY}.git" \
-          AIONIS_FRESH_INSTALL_RUNTIME_REF="${{ steps.release-metadata.outputs.runtime_tag }}" \
-          AIONIS_FRESH_INSTALL_EXPECTED_RUNTIME_COMMIT="${{ steps.release-metadata.outputs.runtime_commit }}" \
-          AIONIS_FRESH_INSTALL_VERIFIED_RUNTIME_SOURCE="${GITHUB_WORKSPACE}" \
-          node --import tsx "${GITHUB_WORKSPACE}/${{ github.event_name == 'workflow_dispatch' && 'external/release-harness/scripts/e2e/fresh-install-smoke.ts' || 'scripts/e2e/fresh-install-smoke.ts' }}"
-  release-core:
-    name: Release core TypeScript (${{ matrix.shard }})
-    needs: verify
-    runs-on: ubuntu-latest
-    timeout-minutes: ${{ matrix.timeout_minutes }}
-    strategy:
-      fail-fast: false
-      max-parallel: 5
-      matrix:
-        include:
-          - shard: bucket-0
-            timeout_minutes: 40
-          - shard: bucket-1
-            timeout_minutes: 30
-          - shard: bucket-2
-            timeout_minutes: 40
-          - shard: external-evidence
-            timeout_minutes: 25
-          - shard: deployment-authority
-            timeout_minutes: 90
-    steps:
-      - name: Checkout verified Runtime release candidate
-        uses: actions/checkout@v4
-        with:
-          ref: ${{ needs.verify.outputs.runtime_commit }}
-      - name: Verify release core source commit
         env:
-          EXPECTED_RUNTIME_COMMIT: ${{ needs.verify.outputs.runtime_commit }}
+          LOCAL_CREATE_SPEC: ${{ steps.package-artifacts.outputs.create_spec }}
+          CREATE_VERSION: ${{ steps.release-metadata.outputs.create_version }}
+          CREATE_COMMIT: ${{ steps.release-metadata.outputs.create_commit }}
+          MCP_SPEC: ${{ steps.package-artifacts.outputs.mcp_spec }}
+          SDK_SPEC: ${{ steps.package-artifacts.outputs.sdk_spec }}
+          RELEASE_STATUS: ${{ steps.release-metadata.outputs.release_status }}
+          RUNTIME_TAG: ${{ steps.release-metadata.outputs.runtime_tag }}
+          RUNTIME_COMMIT: ${{ steps.release-metadata.outputs.runtime_commit }}
         run: |
           set -euo pipefail
-          actual_commit="$(git rev-parse 'HEAD^{commit}')"
-          test "${actual_commit}" = "${EXPECTED_RUNTIME_COMMIT}"
-      - name: Set up Node.js
-        uses: actions/setup-node@v4
-        with:
-          node-version: "24"
-          cache: npm
-      - name: Install protected-close ACL verifier
-        run: |
-          sudo apt-get update
-          sudo apt-get install --yes --no-install-recommends acl
-      - name: Install dependencies
-        run: npm ci
-      - name: Run release core shard
-        run: npm run -s lite:test:core:${{ matrix.shard }}
-  release-recovery:
-    name: Release provisioning recovery (${{ matrix.shard }})
+          harness="${GITHUB_WORKSPACE}/scripts/e2e/fresh-install-smoke.ts"
+          common=(
+            "AIONIS_FRESH_INSTALL_MCP_SPEC=${MCP_SPEC}"
+            "AIONIS_FRESH_INSTALL_SDK_SPEC=${SDK_SPEC}"
+            "AIONIS_FRESH_INSTALL_EXPECTED_RUNTIME_COMMIT=${RUNTIME_COMMIT}"
+          )
+          if [[ "${RELEASE_STATUS}" == "stable" ]]; then
+            public_create_spec="@aionis/create@${CREATE_VERSION}"
+            bash scripts/ci/release-package-artifacts.sh verify-published-create \
+              "${public_create_spec}" "${CREATE_VERSION}" "${CREATE_COMMIT}" "${LOCAL_CREATE_SPEC}"
+            env "${common[@]}" \
+              "AIONIS_FRESH_INSTALL_CREATE_SPEC=${public_create_spec}" \
+              node --import tsx "${harness}"
+          else
+            env "${common[@]}" \
+              "AIONIS_FRESH_INSTALL_CREATE_SPEC=${LOCAL_CREATE_SPEC}" \
+              "AIONIS_FRESH_INSTALL_RUNTIME_REF=${RUNTIME_TAG}" \
+              "AIONIS_FRESH_INSTALL_VERIFIED_RUNTIME_SOURCE=${GITHUB_WORKSPACE}" \
+              node --import tsx "${harness}"
+          fi
+  release-tests:
+    name: Release ${{ matrix.suite }} (${{ matrix.shard }})
     needs: verify
     runs-on: ubuntu-latest
     timeout-minutes: ${{ matrix.timeout_minutes }}
     strategy:
       fail-fast: false
-      max-parallel: 4
+      max-parallel: 9
       matrix:
         include:
-          - shard: bootstrap
-            timeout_minutes: 35
-          - shard: receipt
-            timeout_minutes: 25
-          - shard: durable
-            timeout_minutes: 30
-          - shard: terminal
-            timeout_minutes: 25
+          - { suite: core, shard: bucket-0, timeout_minutes: 40 }
+          - { suite: core, shard: bucket-1, timeout_minutes: 30 }
+          - { suite: core, shard: bucket-2, timeout_minutes: 40 }
+          - { suite: core, shard: external-evidence, timeout_minutes: 25 }
+          - { suite: core, shard: deployment-authority, timeout_minutes: 90 }
+          - { suite: recovery, shard: bootstrap, timeout_minutes: 35 }
+          - { suite: recovery, shard: receipt, timeout_minutes: 25 }
+          - { suite: recovery, shard: durable, timeout_minutes: 30 }
+          - { suite: recovery, shard: terminal, timeout_minutes: 25 }
     steps:
       - name: Checkout exact Runtime release candidate
         uses: actions/checkout@v4
         with:
           ref: ${{ needs.verify.outputs.runtime_commit }}
-      - name: Verify release recovery source commit
+          persist-credentials: false
+      - name: Verify release-test source commit
         env:
           EXPECTED_RUNTIME_COMMIT: ${{ needs.verify.outputs.runtime_commit }}
         run: |
           set -euo pipefail
           actual_commit="$(git rev-parse 'HEAD^{commit}')"
           test "${actual_commit}" = "${EXPECTED_RUNTIME_COMMIT}"
-      - name: Set up Node.js
-        uses: actions/setup-node@v4
-        with:
-          node-version: "24"
-          cache: npm
+      - { name: Set up Node.js, uses: actions/setup-node@v4, with: { node-version: "24", cache: npm } }
       - name: Install protected-close ACL verifier
         run: |
           sudo apt-get update
           sudo apt-get install --yes --no-install-recommends acl
       - name: Install dependencies
         run: npm ci
-      - name: Run release recovery shard
-        run: npm run -s lite:test:recovery:${{ matrix.shard }}
+      - name: Run release-test shard
+        run: npm run -s lite:test:${{ matrix.suite }}:${{ matrix.shard }}
   publish:
     name: Build once, verify digest, and publish Docker image
-    needs: [verify, release-core, release-recovery]
+    needs: [verify, release-tests]
     if: >-
       needs.verify.result == 'success' &&
-      needs['release-core'].result == 'success' &&
-      needs['release-recovery'].result == 'success' &&
+      needs['release-tests'].result == 'success' &&
       (needs.verify.outputs.release_status == 'candidate' ||
       needs.verify.outputs.release_status == 'stable') &&
-      (github.event_name != 'workflow_dispatch' ||
-      (inputs.recovery_run_id == '' && inputs.recovery_run_attempt == '' &&
-      inputs.recovery_digest == '')) &&
       (github.ref_type == 'tag' ||
       (github.event_name == 'workflow_dispatch' && inputs.publish == true))
     runs-on: ubuntu-latest
@@ -488,13 +459,12 @@ jobs:
     permissions:
       contents: read
       packages: write
+    outputs:
+      verified_digest: ${{ steps.build.outputs.digest }}
     env:
       REGISTRY_IMAGE: ghcr.io/${{ github.repository_owner }}/aionis
     steps:
-      - name: Checkout exact Runtime release source
-        uses: actions/checkout@v4
-        with:
-          ref: ${{ needs.verify.outputs.runtime_tag }}
+      - { name: Checkout exact Runtime release source, uses: actions/checkout@v4, with: { ref: "${{ needs.verify.outputs.runtime_tag }}", persist-credentials: false } }
       - name: Verify Docker source commit
         env:
           EXPECTED_RUNTIME_COMMIT: ${{ needs.verify.outputs.runtime_commit }}
@@ -502,23 +472,20 @@ jobs:
           set -euo pipefail
           actual_commit="$(git rev-parse HEAD)"
           test "${actual_commit}" = "${EXPECTED_RUNTIME_COMMIT}"
-      - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@v3
+      - { name: Set up Docker Buildx, uses: docker/setup-buildx-action@v3 }
       - name: Log in to GHCR
         uses: docker/login-action@v3
         with:
           registry: ghcr.io
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
-      - name: Docker metadata
-        id: meta
+      - name: Define OCI release metadata
+        id: metadata
         uses: docker/metadata-action@v5
         with:
           images: ${{ env.REGISTRY_IMAGE }}
           flavor: latest=false
-          tags: |
-            type=raw,value=${{ needs.verify.outputs.runtime_tag }}
-            type=raw,value=latest,enable=${{ needs.verify.outputs.publish_latest == 'true' }}
+          tags: type=raw,value=${{ needs.verify.outputs.runtime_tag }}
           labels: |
             org.opencontainers.image.version=${{ needs.verify.outputs.runtime_tag }}
             org.opencontainers.image.revision=${{ needs.verify.outputs.runtime_commit }}
@@ -544,7 +511,7 @@ jobs:
           platforms: linux/amd64
           tags: ${{ steps.build-subject.outputs.ref }}
           push: true
-          labels: ${{ steps.meta.outputs.labels }}
+          labels: ${{ steps.metadata.outputs.labels }}
           provenance: mode=max
           sbom: true
           cache-from: type=gha
@@ -567,107 +534,135 @@ jobs:
             echo "${BUILD_SUBJECT_REF} points to ${subject_digest}, expected ${VERIFIED_DIGEST}" >&2
             exit 1
           fi
-      - name: Smoke the exact published digest
+      - name: Recover the exact published digest across process death
         env:
           VERIFIED_IMAGE_REF: ${{ env.REGISTRY_IMAGE }}@${{ steps.build.outputs.digest }}
-        run: bash scripts/ci/docker-release-smoke.sh "${VERIFIED_IMAGE_REF}"
-      - { name: Recover the exact published digest across process death, env: { VERIFIED_IMAGE_REF: "${{ env.REGISTRY_IMAGE }}@${{ steps.build.outputs.digest }}" }, run: 'bash scripts/ci/docker-recovery-smoke.sh "${VERIFIED_IMAGE_REF}"' }
-      - { name: Upgrade v0.3.6 data through the exact digest, env: { VERIFIED_IMAGE_REF: "${{ env.REGISTRY_IMAGE }}@${{ steps.build.outputs.digest }}", EXPECTED_RUNTIME_COMMIT: "${{ needs.verify.outputs.runtime_commit }}", EXPECTED_RUNTIME_TAG: "${{ needs.verify.outputs.runtime_tag }}" }, run: 'bash scripts/ci/docker-recovery-smoke.sh --cross-version "${VERIFIED_IMAGE_REF}" "${EXPECTED_RUNTIME_COMMIT}" "${EXPECTED_RUNTIME_TAG}"' }
-      - name: Promote the verified digest to release tags
+        run: bash scripts/ci/docker-recovery-smoke.sh "${VERIFIED_IMAGE_REF}"
+      - name: Upgrade v0.3.6 data through the exact digest
         env:
-          VERIFIED_DIGEST: ${{ steps.build.outputs.digest }}
-          RELEASE_TAGS: ${{ steps.meta.outputs.tags }}
+          VERIFIED_IMAGE_REF: ${{ env.REGISTRY_IMAGE }}@${{ steps.build.outputs.digest }}
+          EXPECTED_RUNTIME_COMMIT: ${{ needs.verify.outputs.runtime_commit }}
+          EXPECTED_RUNTIME_TAG: ${{ needs.verify.outputs.runtime_tag }}
+        run: >-
+          bash scripts/ci/docker-recovery-smoke.sh --cross-version
+          "${VERIFIED_IMAGE_REF}" "${EXPECTED_RUNTIME_COMMIT}" "${EXPECTED_RUNTIME_TAG}"
+  promote-version:
+    name: Promote the verified digest to its immutable version tag
+    needs: [verify, publish]
+    if: needs.publish.result == 'success'
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions: { contents: read, packages: write }
+    outputs:
+      verified_digest: ${{ steps.promote.outputs.verified_digest }}
+    env: { REGISTRY_IMAGE: "ghcr.io/${{ github.repository_owner }}/aionis" }
+    steps:
+      - { name: Set up Docker Buildx, uses: docker/setup-buildx-action@v3 }
+      - name: Log in to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - name: Promote and verify the immutable version tag
+        id: promote
+        env:
+          VERIFIED_DIGEST: ${{ needs.publish.outputs.verified_digest }}
+          RUNTIME_TAG: ${{ needs.verify.outputs.runtime_tag }}
         run: |
           set -euo pipefail
           if [[ ! "${VERIFIED_DIGEST}" =~ ^sha256:[0-9a-f]{64}$ ]]; then echo "invalid verified image digest: ${VERIFIED_DIGEST}" >&2; exit 1; fi
-          tag_args=()
-          release_tags=()
-          while IFS= read -r tag; do
-            if [[ -n "${tag}" ]]; then tag_args+=(--tag "${tag}"); release_tags+=("${tag}"); fi
-          done <<< "${RELEASE_TAGS}"
-          if [[ ${#release_tags[@]} -eq 0 ]]; then echo "Docker metadata produced no release tags" >&2; exit 1; fi
+          version_ref="${REGISTRY_IMAGE}:${RUNTIME_TAG}"
+          inspect_error="$(mktemp)"
+          if inspect_output="$(docker buildx imagetools inspect "${version_ref}" 2>"${inspect_error}")"; then
+            existing_digest="$(awk '$1 == "Digest:" { print $2; exit }' <<<"${inspect_output}")"
+            if [[ ! "${existing_digest}" =~ ^sha256:[0-9a-f]{64}$ ]]; then echo "${version_ref} returned an invalid digest" >&2; exit 1; fi
+          elif grep -Fqx "ERROR: ${version_ref}: not found" "${inspect_error}" ||
+            grep -Fqx "ERROR: ${version_ref}: manifest unknown" "${inspect_error}"; then
+            existing_digest=""
+          else
+            cat "${inspect_error}" >&2
+            echo "failed to inspect immutable ${version_ref}" >&2
+            exit 1
+          fi
+          if [[ -n "${existing_digest}" && "${existing_digest}" != "${VERIFIED_DIGEST}" ]]; then echo "refusing to replace existing ${version_ref} digest ${existing_digest} with ${VERIFIED_DIGEST}" >&2; exit 1; fi
           verified_image="${REGISTRY_IMAGE}@${VERIFIED_DIGEST}"
-          for tag in "${release_tags[@]}"; do
-            existing_digest="$(docker buildx imagetools inspect "${tag}" 2>/dev/null | awk '$1 == "Digest:" { print $2; exit }' || true)"
-            if [[ -n "${existing_digest}" && "${existing_digest}" != "${VERIFIED_DIGEST}" ]]; then echo "refusing to replace existing ${tag} digest ${existing_digest} with ${VERIFIED_DIGEST}" >&2; exit 1; fi
+          [[ "${existing_digest}" == "${VERIFIED_DIGEST}" ]] || docker buildx imagetools create --tag "${version_ref}" "${verified_image}"
+          promoted_digest=""
+          for _ in $(seq 1 30); do
+            promoted_digest="$(docker buildx imagetools inspect "${version_ref}" 2>/dev/null | awk '$1 == "Digest:" { print $2; exit }' || true)"
+            if [[ -n "${promoted_digest}" && "${promoted_digest}" != "${VERIFIED_DIGEST}" ]]; then echo "${version_ref} points to conflicting ${promoted_digest}, expected ${VERIFIED_DIGEST}" >&2; exit 1; fi
+            [[ "${promoted_digest}" == "${VERIFIED_DIGEST}" ]] && break
+            sleep 1
           done
-          docker buildx imagetools create "${tag_args[@]}" "${verified_image}"
-          for tag in "${release_tags[@]}"; do
-            promoted_digest=""
-            for _ in $(seq 1 30); do
-              promoted_digest="$(docker buildx imagetools inspect "${tag}" 2>/dev/null | awk '$1 == "Digest:" { print $2; exit }' || true)"
-              if [[ -n "${promoted_digest}" && "${promoted_digest}" != "${VERIFIED_DIGEST}" ]]; then echo "${tag} points to conflicting ${promoted_digest}, expected ${VERIFIED_DIGEST}" >&2; exit 1; fi
-              [[ "${promoted_digest}" == "${VERIFIED_DIGEST}" ]] && break
-              sleep 1
-            done
-            if [[ "${promoted_digest}" != "${VERIFIED_DIGEST}" ]]; then echo "${tag} points to ${promoted_digest}, expected ${VERIFIED_DIGEST}" >&2; exit 1; fi
-          done
-  recover:
-    name: Verify an existing promoted digest without registry writes
-    needs: [verify, release-core, release-recovery]
+          if [[ "${promoted_digest}" != "${VERIFIED_DIGEST}" ]]; then echo "${version_ref} points to ${promoted_digest}, expected ${VERIFIED_DIGEST}" >&2; exit 1; fi
+          echo "verified_digest=${VERIFIED_DIGEST}" >> "${GITHUB_OUTPUT}"
+  promote-latest:
+    name: Promote stable Docker latest from its receipt-bound predecessor
+    needs: [verify, promote-version]
     if: >-
-      needs.verify.result == 'success' && needs['release-core'].result == 'success' && needs['release-recovery'].result == 'success' && (needs.verify.outputs.release_status == 'candidate' ||
-      needs.verify.outputs.release_status == 'stable') && github.event_name == 'workflow_dispatch' &&
-      (inputs.recovery_run_id != '' || inputs.recovery_run_attempt != '' || inputs.recovery_digest != '')
+      always() && needs.verify.result == 'success' &&
+      needs.verify.outputs.release_status == 'stable' &&
+      needs['promote-version'].result == 'success'
     runs-on: ubuntu-latest
-    timeout-minutes: 60
-    permissions: { contents: read, actions: read, packages: read }
+    environment: stable-release
+    timeout-minutes: 15
+    concurrency: { group: docker-latest-promotion, queue: max, cancel-in-progress: false }
+    permissions: { contents: read, packages: write }
     env: { REGISTRY_IMAGE: "ghcr.io/${{ github.repository_owner }}/aionis" }
     steps:
-      - { name: Checkout exact Runtime recovery source, uses: actions/checkout@v4, with: { ref: "${{ needs.verify.outputs.runtime_tag }}" } }
-      - name: Verify recovery source commit
-        env: { EXPECTED_RUNTIME_COMMIT: "${{ needs.verify.outputs.runtime_commit }}" }
-        run: test "$(git rev-parse 'HEAD^{commit}')" = "${EXPECTED_RUNTIME_COMMIT}"
-      - { name: Set up Node.js, uses: actions/setup-node@v4, with: { node-version: "24" } }
       - { name: Set up Docker Buildx, uses: docker/setup-buildx-action@v3 }
-      - { name: Log in to GHCR read-only, uses: docker/login-action@v3, with: { registry: ghcr.io, username: "${{ github.actor }}", password: "${{ secrets.GITHUB_TOKEN }}" } }
-      - name: Bind failed source run evidence
-        id: recovery
-        env: { GH_TOKEN: "${{ github.token }}", PUBLISH_REQUESTED: "${{ inputs.publish }}", SOURCE_RUN_ID: "${{ inputs.recovery_run_id }}", SOURCE_RUN_ATTEMPT: "${{ inputs.recovery_run_attempt }}", EXPECTED_DIGEST: "${{ inputs.recovery_digest }}", RUNTIME_TAG: "${{ needs.verify.outputs.runtime_tag }}", RUNTIME_COMMIT: "${{ needs.verify.outputs.runtime_commit }}" }
+      - { name: Log in to GHCR, uses: docker/login-action@v3, with: { registry: ghcr.io, username: "${{ github.actor }}", password: "${{ secrets.GITHUB_TOKEN }}" } }
+      - name: Promote latest only from the expected stable predecessor
+        env:
+          AUTHORIZED: ${{ needs.verify.outputs.stable_promotion_authorized }}
+          TARGET_DIGEST: ${{ needs['promote-version'].outputs.verified_digest }}
+          RUNTIME_TAG: ${{ needs.verify.outputs.runtime_tag }}
+          RUNTIME_COMMIT: ${{ needs.verify.outputs.runtime_commit }}
+          PREVIOUS_DIGEST: ${{ needs.verify.outputs.previous_latest_digest }}
+          PREVIOUS_VERSION: ${{ needs.verify.outputs.previous_latest_version }}
+          PREVIOUS_COMMIT: ${{ needs.verify.outputs.previous_latest_commit }}
         run: |
-          node --input-type=module <<'NODE'
-          import fs from "node:fs"; import { execFileSync } from "node:child_process";
-          const need = (ok, message) => { if (!ok) throw new Error(message); }; const api = (path) => JSON.parse(execFileSync("gh", ["api", path], { encoding: "utf8" }));
-          need(process.env.PUBLISH_REQUESTED === "true", "recovery requires explicit publish approval"); need(/^[1-9][0-9]*$/.test(process.env.SOURCE_RUN_ID) && /^[1-9][0-9]*$/.test(process.env.SOURCE_RUN_ATTEMPT), "recovery source run identity is invalid"); need(/^sha256:[0-9a-f]{64}$/.test(process.env.EXPECTED_DIGEST), "recovery digest is invalid");
-          const base = `/repos/${process.env.GITHUB_REPOSITORY}/actions/runs/${process.env.SOURCE_RUN_ID}/attempts/${process.env.SOURCE_RUN_ATTEMPT}`;
-          const run = api(base); const jobs = api(`${base}/jobs?per_page=100`).jobs ?? []; const current = api(`/repos/${process.env.GITHUB_REPOSITORY}/actions/runs/${process.env.GITHUB_RUN_ID}`);
-          need(run.id === Number(process.env.SOURCE_RUN_ID) && run.run_attempt === Number(process.env.SOURCE_RUN_ATTEMPT), "recovery source run or attempt mismatch"); need(run.path === ".github/workflows/docker.yml" && run.event === "push" && run.status === "completed" && run.conclusion === "failure", "recovery source must be a completed failed tag-push Docker run"); need(run.head_sha === process.env.RUNTIME_COMMIT && run.head_branch === process.env.RUNTIME_TAG && Date.parse(run.updated_at) <= Date.parse(current.created_at), "recovery source tag, commit, or causal order mismatch");
-          const matches = jobs.filter((job) => job.name === "Build once, verify digest, and publish Docker image"); const source = matches[0];
-          need(matches.length === 1 && source.head_sha === process.env.RUNTIME_COMMIT && source.conclusion === "failure", "recovery source publish job mismatch"); need(jobs.every((job) => job === source || job.conclusion === "success"), "recovery source has another non-successful job");
-          const steps = new Map(source.steps.map((step) => [step.name, step.conclusion]));
-          for (const name of ["Verify Docker source commit", "Build immutable amd64 release artifact", "Verify immutable build subject digest", "Smoke the exact published digest", "Recover the exact published digest across process death", "Upgrade v0.3.6 data through the exact digest"]) need(steps.get(name) === "success", `recovery source step was not successful: ${name}`);
-          need(steps.get("Promote the verified digest to release tags") === "failure" && source.steps.filter((step) => step.conclusion === "failure").every((step) => step.name === "Promote the verified digest to release tags"), "recovery source must fail only at promotion verification");
-          const subject = `${process.env.REGISTRY_IMAGE}:build-${process.env.RUNTIME_TAG}-${process.env.RUNTIME_COMMIT}-${process.env.SOURCE_RUN_ID}-${process.env.SOURCE_RUN_ATTEMPT}`;
-          fs.appendFileSync(process.env.GITHUB_OUTPUT, `digest=${process.env.EXPECTED_DIGEST}\nsubject_ref=${subject}\n`);
-          NODE
-      - name: Verify tag, immutable subject, labels, and provenance
-        env: { EXPECTED_DIGEST: "${{ steps.recovery.outputs.digest }}", SUBJECT_REF: "${{ steps.recovery.outputs.subject_ref }}", RUNTIME_TAG: "${{ needs.verify.outputs.runtime_tag }}", RUNTIME_COMMIT: "${{ needs.verify.outputs.runtime_commit }}", SOURCE_RUN_ID: "${{ inputs.recovery_run_id }}", SOURCE_RUN_ATTEMPT: "${{ inputs.recovery_run_attempt }}" }
-        run: |
-          node --input-type=module <<'NODE'
-          import fs from "node:fs"; import { execFileSync } from "node:child_process"; import { setTimeout as delay } from "node:timers/promises";
+          set -euo pipefail
+          [[ "${AUTHORIZED}" == "true" ]] || { echo "stable latest promotion authority is missing" >&2; exit 1; }
+          for digest in "${TARGET_DIGEST}" "${PREVIOUS_DIGEST}"; do [[ "${digest}" =~ ^sha256:[0-9a-f]{64}$ ]] || { echo "invalid promotion digest: ${digest}" >&2; exit 1; }; done
+          [[ "${RUNTIME_TAG}" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ && "${PREVIOUS_VERSION}" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ && "${PREVIOUS_COMMIT}" =~ ^[0-9a-f]{40}$ ]] || { echo "invalid stable version lineage" >&2; exit 1; }
+          version_ref="${REGISTRY_IMAGE}:${RUNTIME_TAG}"; previous_ref="${REGISTRY_IMAGE}:${PREVIOUS_VERSION}"; latest_ref="${REGISTRY_IMAGE}:latest"
+          version_json="$(docker buildx imagetools inspect --format '{{json .}}' "${version_ref}")"
+          previous_json="$(docker buildx imagetools inspect --format '{{json .}}' "${previous_ref}")"
+          VERSION_JSON="${version_json}" PREVIOUS_JSON="${previous_json}" node --input-type=module <<'NODE'
           const need = (ok, message) => { if (!ok) throw new Error(message); };
-          const inspect = (ref, format) => JSON.parse(execFileSync("docker", ["buildx", "imagetools", "inspect", "--format", format, ref], { encoding: "utf8", stdio: ["ignore", "pipe", "ignore"] }));
-          const digest = (ref) => { try { return inspect(ref, "{{json .Manifest.Digest}}"); } catch { return null; } };
-          const release = `${process.env.REGISTRY_IMAGE}:${process.env.RUNTIME_TAG}`; let subjectDigest; let releaseDigest;
-          for (let attempt = 0; attempt < 30; attempt += 1) {
-            subjectDigest = digest(process.env.SUBJECT_REF); releaseDigest = digest(release); for (const actual of [subjectDigest, releaseDigest]) need(actual === null || actual === process.env.EXPECTED_DIGEST, `recovery refuses conflicting digest ${actual}`);
-            if (subjectDigest === process.env.EXPECTED_DIGEST && releaseDigest === process.env.EXPECTED_DIGEST) break;
-            await delay(1_000);
-          }
-          need(subjectDigest === process.env.EXPECTED_DIGEST && releaseDigest === process.env.EXPECTED_DIGEST, "recovery digest was not stably readable");
-          const image = inspect(release, "{{json .}}"); const provenance = inspect(release, "{{json .Provenance.SLSA}}"); const labels = image.image?.config?.Labels ?? {};
-          need(image.manifest?.digest === process.env.EXPECTED_DIGEST && image.image?.architecture === "amd64" && image.image?.os === "linux", "release manifest or platform mismatch");
-          need(labels["org.opencontainers.image.revision"] === process.env.RUNTIME_COMMIT && labels["org.opencontainers.image.version"] === process.env.RUNTIME_TAG, "release OCI labels mismatch");
-          const objects = []; const visit = (value) => { if (!value || typeof value !== "object") return; objects.push(value); for (const child of Object.values(value)) visit(child); }; visit(provenance);
-          const github = objects.find((value) => value.github_run_id === process.env.SOURCE_RUN_ID);
-          need(github?.github_run_attempt === process.env.SOURCE_RUN_ATTEMPT && github?.github_repository === process.env.GITHUB_REPOSITORY, "provenance run binding mismatch"); need(github?.github_event_name === "push" && github?.github_job === "publish" && github?.github_ref === `refs/tags/${process.env.RUNTIME_TAG}`, "provenance tag workflow binding mismatch"); need(github?.github_workflow_ref === `${process.env.GITHUB_REPOSITORY}/.github/workflows/docker.yml@refs/tags/${process.env.RUNTIME_TAG}` && github?.github_workflow_sha === process.env.RUNTIME_COMMIT, "provenance workflow source mismatch");
-          need(provenance.runDetails?.builder?.id === `https://github.com/${process.env.GITHUB_REPOSITORY}/actions/runs/${process.env.SOURCE_RUN_ID}/attempts/${process.env.SOURCE_RUN_ATTEMPT}` && provenance.runDetails?.metadata?.buildkit_metadata?.vcs?.revision === process.env.RUNTIME_COMMIT, "provenance builder or VCS mismatch");
-          fs.appendFileSync(process.env.GITHUB_STEP_SUMMARY, `- Read-only recovery source: [run ${process.env.SOURCE_RUN_ID} attempt ${process.env.SOURCE_RUN_ATTEMPT}](https://github.com/${process.env.GITHUB_REPOSITORY}/actions/runs/${process.env.SOURCE_RUN_ID}/attempts/${process.env.SOURCE_RUN_ATTEMPT})\n- Immutable subject: \`${process.env.SUBJECT_REF}\`\n- Verified digest: \`${process.env.EXPECTED_DIGEST}\`\n- Registry writes: none\n`);
+          const target = JSON.parse(process.env.VERSION_JSON);
+          const previous = JSON.parse(process.env.PREVIOUS_JSON);
+          const labels = (image) => image.image?.config?.Labels ?? {};
+          const assertOciIdentity = (image, digest, version, revision, field) => {
+            const values = labels(image);
+            need(image.manifest?.digest === digest, `${field} digest mismatch`);
+            need(values["org.opencontainers.image.version"] === version, `${field} version label mismatch`);
+            need(values["org.opencontainers.image.revision"] === revision, `${field} revision label mismatch`);
+            need(values["org.opencontainers.image.source"] === `https://github.com/${process.env.GITHUB_REPOSITORY}`, `${field} source label mismatch`);
+            need(values["org.opencontainers.image.url"] === `https://github.com/${process.env.GITHUB_REPOSITORY}`, `${field} URL label mismatch`);
+            need(values["org.opencontainers.image.title"] === "Aionis", `${field} title label mismatch`);
+            need(values["org.opencontainers.image.licenses"] === "Apache-2.0", `${field} license label mismatch`);
+            need(Number.isFinite(Date.parse(values["org.opencontainers.image.created"])), `${field} created label mismatch`);
+            need(typeof values["org.opencontainers.image.description"] === "string" && values["org.opencontainers.image.description"].length > 0, `${field} description label mismatch`);
+          };
+          assertOciIdentity(target, process.env.TARGET_DIGEST, process.env.RUNTIME_TAG, process.env.RUNTIME_COMMIT, "stable version tag");
+          assertOciIdentity(previous, process.env.PREVIOUS_DIGEST, process.env.PREVIOUS_VERSION, process.env.PREVIOUS_COMMIT, "previous latest version tag");
+          const parts = (tag) => tag.slice(1).split(".").map(Number);
+          const [next, prior] = [parts(process.env.RUNTIME_TAG), parts(process.env.PREVIOUS_VERSION)];
+          need(next.some((part, index) => part !== prior[index] && part > prior[index] && next.slice(0, index).every((value, earlier) => value === prior[earlier])), "stable latest version must advance monotonically");
           NODE
-      - name: Smoke the recovered exact digest
-        env: { VERIFIED_IMAGE_REF: "${{ env.REGISTRY_IMAGE }}@${{ steps.recovery.outputs.digest }}" }
-        run: bash scripts/ci/docker-release-smoke.sh "${VERIFIED_IMAGE_REF}"
-      - name: Recover the exact digest again across process death
-        env: { VERIFIED_IMAGE_REF: "${{ env.REGISTRY_IMAGE }}@${{ steps.recovery.outputs.digest }}" }
-        run: bash scripts/ci/docker-recovery-smoke.sh "${VERIFIED_IMAGE_REF}"
-      - { name: Upgrade v0.3.6 data through the recovered exact digest, env: { VERIFIED_IMAGE_REF: "${{ env.REGISTRY_IMAGE }}@${{ steps.recovery.outputs.digest }}", EXPECTED_RUNTIME_COMMIT: "${{ needs.verify.outputs.runtime_commit }}", EXPECTED_RUNTIME_TAG: "${{ needs.verify.outputs.runtime_tag }}" }, run: 'bash scripts/ci/docker-recovery-smoke.sh --cross-version "${VERIFIED_IMAGE_REF}" "${EXPECTED_RUNTIME_COMMIT}" "${EXPECTED_RUNTIME_TAG}"' }
+          current_digest="$(docker buildx imagetools inspect "${latest_ref}" | awk '$1 == "Digest:" { print $2; exit }')"
+          [[ "${current_digest}" == "${TARGET_DIGEST}" ]] && exit 0
+          [[ "${current_digest}" == "${PREVIOUS_DIGEST}" ]] || { echo "${latest_ref} moved to unexpected ${current_digest}" >&2; exit 1; }
+          prewrite_digest="$(docker buildx imagetools inspect "${latest_ref}" | awk '$1 == "Digest:" { print $2; exit }')"
+          [[ "${prewrite_digest}" == "${PREVIOUS_DIGEST}" ]] || { echo "${latest_ref} changed before promotion to ${prewrite_digest}" >&2; exit 1; }
+          docker buildx imagetools create --tag "${latest_ref}" "${REGISTRY_IMAGE}@${TARGET_DIGEST}"
+          for _ in $(seq 1 30); do
+            promoted_digest="$(docker buildx imagetools inspect "${latest_ref}" 2>/dev/null | awk '$1 == "Digest:" { print $2; exit }' || true)"
+            [[ "${promoted_digest}" == "${TARGET_DIGEST}" ]] && exit 0
+            [[ -z "${promoted_digest}" || "${promoted_digest}" == "${PREVIOUS_DIGEST}" ]] || { echo "${latest_ref} points to conflicting ${promoted_digest}" >&2; exit 1; }
+            sleep 1
+          done
+          echo "${latest_ref} did not converge to ${TARGET_DIGEST}" >&2; exit 1
