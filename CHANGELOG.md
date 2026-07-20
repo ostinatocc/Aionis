@@ -1,5 +1,32 @@
 # Changelog
 
+## v0.3.11 - Docker Lifecycle Recovery Development
+
+Development started: 2026-07-20
+
+This patch train repairs the container process boundary found after the
+immutable v0.3.10 release. It is a development target; no v0.3.11 tag, image,
+or GitHub Release exists yet.
+
+### Changed
+
+- Docker now enters the existing signal-aware startup script directly. Its
+  final `exec` makes Runtime Node PID 1, so Docker SIGTERM reaches the awaited
+  shutdown handler instead of stopping at an npm parent process.
+- The exact-digest Docker release workflow now gates promotion on a named-volume
+  recovery test covering graceful shutdown, forced process death, fresh
+  containers, exact operation replay, conflict rejection, memory resolution,
+  worker health, protected SQLite permissions, and offline database integrity.
+
+### Compatibility
+
+- Runtime routes, data schema, external npm package coordinates, and the
+  frozen installer Runtime ref are unchanged from v0.3.10.
+- The supported image remains `linux/amd64`, one self-hosted Runtime process,
+  and SQLite authority. Multi-instance HA remains out of scope.
+- v0.3.10 remains immutable. Its tag and published digest are not moved or
+  replaced by this patch train.
+
 ## v0.3.10 - Evidence Authority and Runtime Convergence Candidate
 
 Candidate preparation: 2026-07-19

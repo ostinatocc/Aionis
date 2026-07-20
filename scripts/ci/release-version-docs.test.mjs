@@ -148,10 +148,21 @@ test("workspace @aionis/create default ref matches release-train.json", { skip: 
 test("release docs preserve the Runtime tag, frozen installer, and candidate status", () => {
   const train = releaseTrain();
   const runtimeTagCommand = `git tag -a ${train.runtime.source_tag}`;
-  if (train.status === "candidate") assert.match(read("RELEASE_NOTES.md"), /gh release create[\s\S]*?--verify-tag[\s\S]*?--prerelease[\s\S]*?--latest=false[\s\S]*?--notes-file/, "candidate GitHub Release must be a verified non-latest prerelease");
+  const candidateStatusGuard = `test "$(node -p 'require("./release-train.json").status')" = "candidate"`;
+  const localTagAbsenceGuard = `test -z "$(git tag --list ${train.runtime.source_tag})"`;
+  const remoteTagAbsenceGuard = `test -z "$(git ls-remote --tags origin refs/tags/${train.runtime.source_tag} 'refs/tags/${train.runtime.source_tag}^{}')"`;
+  if (train.status === "candidate") {
+    assert.match(read("RELEASE_NOTES.md"), /gh release create[\s\S]*?--verify-tag[\s\S]*?--prerelease[\s\S]*?--latest=false[\s\S]*?--notes-file/, "candidate GitHub Release must be a verified non-latest prerelease");
+    assert.doesNotMatch(
+      read(`docs/releases/v${train.runtime.version}.md`),
+      /not tagged or published yet|Future immutable tag|Future `linux\/amd64` artifact/,
+      "candidate release notes must not retain development-only publication claims",
+    );
+  }
 
   for (const file of ["RELEASE_NOTES.md", "docs/AIONIS_RELEASES.md"]) {
     const source = read(file);
+    const tagIndex = source.indexOf(runtimeTagCommand);
     assert.ok(source.includes(runtimeTagCommand), `${file} must include the Runtime tag command`);
     assert.ok(source.includes("git fetch origin main --tags"), `${file} must refresh origin/main before tagging`);
     assert.ok(source.includes("git switch main"), `${file} must leave the release branch before tagging`);
@@ -159,6 +170,13 @@ test("release docs preserve the Runtime tag, frozen installer, and candidate sta
       source.includes(`${runtimeTagCommand} "$MAIN_COMMIT"`),
       `${file} must tag the verified origin/main commit explicitly`,
     );
+    for (const guard of ["set -euo pipefail", candidateStatusGuard, localTagAbsenceGuard, remoteTagAbsenceGuard]) {
+      assert.ok(source.includes(guard), `${file} must include the pre-tag guard: ${guard}`);
+      assert.ok(source.indexOf(guard) < tagIndex, `${file} must run the pre-tag guard before creating the tag: ${guard}`);
+    }
+    assert.ok(source.indexOf("docker-release-smoke.sh") > tagIndex, `${file} must run the basic digest smoke after the tag workflow`);
+    assert.ok(source.indexOf("docker-recovery-smoke.sh") > tagIndex, `${file} must run the recovery digest smoke after the tag workflow`);
+    assert.ok(source.indexOf("gh release create") > tagIndex, `${file} must create the GitHub prerelease only after tag verification`);
     assert.ok(source.includes(`Do not republish \`${train.packages.create.name}@${train.packages.create.version}\``), `${file} must explicitly hold the frozen Create package`);
     assert.doesNotMatch(
       source,

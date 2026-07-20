@@ -47,6 +47,15 @@ test("Docker process listens on the container interface while host publishing st
   assert.match(compose, /AIONIS_ALLOW_UNAUTHENTICATED_REMOTE:\s*["']true["']/);
 });
 
+test("Docker launches the signal-aware Runtime entry as PID 1", () => {
+  const dockerfile = read("Dockerfile");
+  const startScript = read("scripts/start-lite.sh");
+
+  assert.match(dockerfile, /^CMD \["bash", "scripts\/start-lite\.sh"\]$/m);
+  assert.doesNotMatch(dockerfile, /^CMD \["npm",/m);
+  assert.match(startScript, /^exec node --import tsx src\/index\.ts "\$@"$/m);
+});
+
 test("Docker docs publish loopback securely and explain the namespace boundary", () => {
   const train = JSON.parse(read("release-train.json"));
   const dockerArtifact = `${train.runtime.docker_image}:${train.runtime.docker_tag}`;

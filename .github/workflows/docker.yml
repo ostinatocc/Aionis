@@ -156,7 +156,7 @@ jobs:
           test "${actual_harness_commit}" = "${GITHUB_SHA}"
           while IFS= read -r changed_path; do
             case "${changed_path}" in
-              .github/workflows/docker.yml|scripts/ci/release-workflow-contract.test.mjs|scripts/e2e/external-package-entrypoint-smoke.ts|scripts/e2e/fresh-install-smoke.ts)
+              .github/workflows/docker.yml|scripts/ci/release-workflow-contract.test.mjs|scripts/ci/docker-recovery-smoke.sh|scripts/e2e/external-package-entrypoint-smoke.ts|scripts/e2e/fresh-install-smoke.ts)
                 ;;
               *)
                 printf 'dispatch harness contains non-verification change: %s\n' "${changed_path}" >&2
@@ -549,6 +549,11 @@ jobs:
         env:
           VERIFIED_IMAGE_REF: ${{ env.REGISTRY_IMAGE }}@${{ steps.build.outputs.digest }}
         run: bash scripts/ci/docker-release-smoke.sh "${VERIFIED_IMAGE_REF}"
+
+      - name: Recover the exact published digest across process death
+        env:
+          VERIFIED_IMAGE_REF: ${{ env.REGISTRY_IMAGE }}@${{ steps.build.outputs.digest }}
+        run: bash scripts/ci/docker-recovery-smoke.sh "${VERIFIED_IMAGE_REF}"
 
       - name: Promote the verified digest to release tags
         env:

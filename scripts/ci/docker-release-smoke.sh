@@ -28,9 +28,28 @@ if [[ ! "${HEALTH_TIMEOUT}" =~ ^[1-9][0-9]*(ms|s|m)$ ]]; then
 fi
 
 cleanup() {
-  docker rm -f "${CONTAINER_NAME}" >/dev/null 2>&1 || true
+  local original_status=$?
+  local cleanup_status=0
+  local removal_output=""
+  trap - EXIT
+  trap '' HUP INT TERM
+  set +e
+  if ! removal_output="$(docker rm -f -v "${CONTAINER_NAME}" 2>&1)"; then
+    if ! grep -F "No such container" <<<"${removal_output}" >/dev/null; then
+      printf '%s\n' "${removal_output}" >&2
+      echo "failed to remove release smoke container: ${CONTAINER_NAME}" >&2
+      cleanup_status=1
+    fi
+  fi
+  if [[ ${original_status} -ne 0 ]]; then
+    exit "${original_status}"
+  fi
+  exit "${cleanup_status}"
 }
 trap cleanup EXIT
+trap 'exit 129' HUP
+trap 'exit 130' INT
+trap 'exit 143' TERM
 
 cd "${ROOT_DIR}"
 if [[ "${IMAGE_REF}" == *@sha256:* ]]; then
@@ -71,6 +90,7 @@ fi
 
 docker exec "${CONTAINER_NAME}" node --input-type=module -e '
 const base = "http://127.0.0.1:" + (process.env.PORT || "3001");
+const fetchWithTimeout = (url, init = {}) => fetch(url, { ...init, signal: AbortSignal.timeout(10_000) });
 const isRecord = (value) => value !== null && typeof value === "object" && !Array.isArray(value);
 const hasOwn = (value, key) => Object.prototype.hasOwnProperty.call(value, key);
 const isCanonicalTimestamp = (value) => {
@@ -84,9 +104,9 @@ const isCanonicalTimestamp = (value) => {
 const fail = (message, value) => {
   throw new Error(message + ": " + JSON.stringify(value));
 };
-const health = await fetch(base + "/healthz");
+const health = await fetchWithTimeout(base + "/healthz");
 if (!health.ok || (await health.json()).ok !== true) throw new Error("healthz failed");
-const ready = await fetch(base + "/readyz");
+const ready = await fetchWithTimeout(base + "/readyz");
 const readyBody = await ready.json();
 if (!ready.ok || readyBody.ready !== true) throw new Error("readyz failed");
 if (!isRecord(readyBody.checks)
@@ -94,7 +114,7 @@ if (!isRecord(readyBody.checks)
   || readyBody.checks.learning_control_worker !== true) {
   fail("readyz learning-control worker check failed", readyBody);
 }
-const runtimeHealth = await fetch(base + "/health");
+const runtimeHealth = await fetchWithTimeout(base + "/health");
 const runtimeHealthBody = await runtimeHealth.json();
 const learningControl = runtimeHealthBody?.lite?.stores?.learning_control_worker;
 if (!runtimeHealth.ok
@@ -130,7 +150,7 @@ for (const field of ["oldest_available_at", "oldest_lease_expiry"]) {
 if (learningControlBacklog.exhausted !== 0) {
   fail("learning-control terminalization is exhausted", learningControlBacklog);
 }
-const observe = await fetch(base + "/v1/observe", {
+const observe = await fetchWithTimeout(base + "/v1/observe", {
   method: "POST",
   headers: { "content-type": "application/json" },
   body: JSON.stringify({
@@ -143,7 +163,7 @@ const observeBody = await observe.json();
 if (!observe.ok || observeBody.contract_version !== "aionis_observe_result_v1") {
   throw new Error("observe failed: " + JSON.stringify(observeBody));
 }
-const replay = await fetch(base + "/v1/observe", {
+const replay = await fetchWithTimeout(base + "/v1/observe", {
   method: "POST",
   headers: { "content-type": "application/json" },
   body: JSON.stringify({

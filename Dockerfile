@@ -57,4 +57,4 @@ VOLUME ["/data"]
 HEALTHCHECK --interval=30s --timeout=5s --start-period=15s --retries=3 \
   CMD node -e "fetch('http://127.0.0.1:' + (process.env.PORT || '3001') + '/healthz').then((r) => process.exit(r.ok ? 0 : 1)).catch(() => process.exit(1))"
 
-CMD ["npm", "run", "-s", "lite:start"]
+CMD ["bash", "scripts/start-lite.sh"]

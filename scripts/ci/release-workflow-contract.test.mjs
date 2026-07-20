@@ -146,6 +146,7 @@ test("Docker image is built once, smoked by digest, and only then promoted", () 
     /const installedRuntimeCommit = assertInstalledRuntimeCommit\([\s\S]*?const verifiedLifecycleOutput = [\s\S]*?completeVerifiedRuntimeInstall\(install\.targetDir\)/,
   );
   assert.match(workflow, /docker-release-smoke\.sh/);
+  assert.match(workflow, /docker-recovery-smoke\.sh/);
   assert.equal(buildActions.length, 1, "release workflow must perform one container build");
   assert.match(workflow, /platforms: linux\/amd64(?:\s|$)/);
   assert.doesNotMatch(workflow, /linux\/arm64/);
@@ -181,8 +182,13 @@ test("Docker image is built once, smoked by digest, and only then promoted", () 
   );
   assert.ok(
     workflow.indexOf("Smoke the exact published digest") <
+      workflow.indexOf("Recover the exact published digest across process death"),
+    "the basic digest smoke must pass before restart and crash recovery",
+  );
+  assert.ok(
+    workflow.indexOf("Recover the exact published digest across process death") <
       workflow.indexOf("Promote the verified digest to release tags"),
-    "promotion must happen after exact-digest smoke",
+    "promotion must happen after exact-digest recovery",
   );
   assert.match(workflow, /publish_latest == 'true'/);
   assert.match(workflow, /provenance: mode=max/);
@@ -193,6 +199,56 @@ test("Docker image is built once, smoked by digest, and only then promoted", () 
       workflow.indexOf("Smoke the exact published digest"),
     "the immutable provenance subject must resolve to the built digest before smoke",
   );
+});
+
+test("Docker starts Runtime as PID 1 and proves named-volume recovery", () => {
+  const dockerfile = read("Dockerfile");
+  const startScript = read("scripts/start-lite.sh");
+  const releaseSmoke = read("scripts/ci/docker-release-smoke.sh");
+  const recoverySmoke = read("scripts/ci/docker-recovery-smoke.sh");
+  const workflow = read(".github/workflows/docker.yml");
+
+  assert.match(dockerfile, /CMD \["bash", "scripts\/start-lite\.sh"\]/);
+  assert.doesNotMatch(dockerfile, /CMD \["npm", "run"/);
+  assert.match(startScript, /^exec node --import tsx src\/index\.ts "\$@"$/m);
+  assert.match(releaseSmoke, /docker rm -f -v "\$\{CONTAINER_NAME\}"/);
+  assert.match(releaseSmoke, /trap 'exit 129' HUP/);
+  assert.match(releaseSmoke, /trap 'exit 130' INT/);
+  assert.match(releaseSmoke, /trap 'exit 143' TERM/);
+  assert.match(releaseSmoke, /AbortSignal\.timeout/);
+
+  assert.doesNotMatch(recoverySmoke, /docker build/);
+  assert.match(recoverySmoke, /docker pull --platform linux\/amd64/);
+  assert.match(recoverySmoke, /trap cleanup EXIT/);
+  assert.match(recoverySmoke, /trap 'exit 129' HUP/);
+  assert.match(recoverySmoke, /trap 'exit 130' INT/);
+  assert.match(recoverySmoke, /trap 'exit 143' TERM/);
+  assert.match(recoverySmoke, /docker volume create/);
+  assert.match(recoverySmoke, /target=\/data/);
+  assert.match(recoverySmoke, /\/v1\/observe/);
+  assert.match(recoverySmoke, /\/v1\/memory\/resolve/);
+  assert.match(recoverySmoke, /\/readyz/);
+  assert.match(recoverySmoke, /AbortSignal\.timeout/);
+  assert.match(recoverySmoke, /docker stop --time/);
+  assert.match(recoverySmoke, /\.State\.ExitCode/);
+  assert.match(recoverySmoke, /draining Runtime before shutdown/);
+  assert.match(recoverySmoke, /docker kill --signal=SIGKILL/);
+  assert.match(recoverySmoke, /exact operation replay/);
+  assert.match(recoverySmoke, /scripts\/runtime-data-ops\.ts/);
+  assert.match(recoverySmoke, /--name "\$\{VERIFY_CONTAINER\}"/);
+  assert.match(recoverySmoke, /verify --db \/data\/aionis-lite-write\.sqlite/);
+  assert.match(recoverySmoke, /schema\?\.classification !== "current"/);
+  assert.match(
+    workflow,
+    /\.github\/workflows\/docker\.yml\|scripts\/ci\/release-workflow-contract\.test\.mjs\|scripts\/ci\/docker-recovery-smoke\.sh/,
+  );
+
+  const result = spawnSync("bash", ["scripts/ci/docker-recovery-smoke.sh", "aionis:mutable"], {
+    cwd: ROOT,
+    encoding: "utf8",
+  });
+  assert.equal(result.status, 2);
+  assert.match(result.stderr, /requires an immutable image digest/);
 });
 
 test("Docker release runs every core shard against the verified release commit", () => {
