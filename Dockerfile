@@ -1,60 +1,53 @@
 # syntax=docker/dockerfile:1.7@sha256:a57df69d0ea827fb7266491f2813635de6f17269be881f696fbfdf2d83dda33e
 
-FROM --platform=$BUILDPLATFORM node:24-bookworm-slim@sha256:cb4e8f7c443347358b7875e717c29e27bf9befc8f5a26cf18af3c3dec80e58c5 AS verify
+ARG NODE_IMAGE=node:24-bookworm-slim@sha256:cb4e8f7c443347358b7875e717c29e27bf9befc8f5a26cf18af3c3dec80e58c5
 
-WORKDIR /verify
-
-COPY package.json package-lock.json ./
-
-RUN npm ci
-
-COPY . .
-RUN npm run -s build && touch /tmp/aionis-build-verified
-
-FROM node:24-bookworm-slim@sha256:cb4e8f7c443347358b7875e717c29e27bf9befc8f5a26cf18af3c3dec80e58c5 AS runtime-deps
+FROM --platform=$BUILDPLATFORM ${NODE_IMAGE} AS build
 
 WORKDIR /app
 
 COPY package.json package-lock.json ./
+RUN npm ci --ignore-scripts
 
-RUN npm ci
+COPY tsconfig.json ./
+COPY LICENSE NOTICE ./
+COPY tools ./tools
+COPY src ./src
 
-FROM node:24-bookworm-slim@sha256:cb4e8f7c443347358b7875e717c29e27bf9befc8f5a26cf18af3c3dec80e58c5 AS runtime
+RUN npm run -s build \
+    && node tools/stage-continuation-runtime-v1-oci.mjs
+
+FROM ${NODE_IMAGE} AS production-dependencies
 
 WORKDIR /app
 
-# Protected learning-experiment close fails closed unless Linux ACL state can
-# be verified independently of stat.mode or a particular `ls` implementation.
-RUN apt-get update \
-    && apt-get install -y --no-install-recommends acl \
-    && rm -rf /var/lib/apt/lists/*
+COPY package.json package-lock.json ./
+RUN npm ci --omit=dev --ignore-scripts \
+    && npm cache clean --force
+
+FROM ${NODE_IMAGE} AS runtime
 
 ENV NODE_ENV=production \
     npm_config_update_notifier=false \
-    AIONIS_EDITION=lite \
-    AIONIS_MODE=local \
-    APP_ENV=dev \
-    AIONIS_LISTEN_HOST=0.0.0.0 \
-    AIONIS_ALLOW_UNAUTHENTICATED_REMOTE=true \
-    MEMORY_AUTH_MODE=off \
-    TENANT_QUOTA_ENABLED=false \
-    RATE_LIMIT_BYPASS_LOOPBACK=true \
-    LITE_WRITE_SQLITE_PATH=/data/aionis-lite-write.sqlite \
-    LITE_REPLAY_SQLITE_PATH=/data/aionis-lite-replay.sqlite \
-    LITE_LOCAL_ACTOR_ID=local-docker
+    npm_config_fund=false \
+    npm_config_audit=false
 
-COPY --chown=node:node . /app
-COPY --from=runtime-deps --chown=node:node /app/node_modules /app/node_modules
-COPY --from=verify /tmp/aionis-build-verified /tmp/aionis-build-verified
+WORKDIR /app
 
-RUN mkdir -p /data /app/.tmp && chown -R node:node /data /app/.tmp
+COPY --from=production-dependencies --chown=node:node /app/node_modules ./node_modules
+COPY --from=build --chown=node:node /app/dist-oci-runtime ./
+
+RUN mkdir -p /data /run/aionis \
+    && chown node:node /data /run/aionis \
+    && chmod 0700 /data /run/aionis
 
 USER node
 
-EXPOSE 3001
+EXPOSE 3000
 VOLUME ["/data"]
+STOPSIGNAL SIGTERM
 
-HEALTHCHECK --interval=30s --timeout=5s --start-period=15s --retries=3 \
-  CMD node -e "fetch('http://127.0.0.1:' + (process.env.PORT || '3001') + '/healthz').then((r) => process.exit(r.ok ? 0 : 1)).catch(() => process.exit(1))"
+HEALTHCHECK --interval=30s --timeout=5s --start-period=10s --retries=3 \
+  CMD node -e "fetch('http://127.0.0.1:' + (process.env.AIONIS_HTTP_PORT || '3000') + '/healthz').then((response) => process.exit(response.status === 200 ? 0 : 1)).catch(() => process.exit(1))"
 
-CMD ["bash", "scripts/start-lite.sh"]
+CMD ["node", "dist/runtime-v1/daemon-entry.js"]

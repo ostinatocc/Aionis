@@ -1,7 +1,0 @@
-{
-  "schema_version": "aionis_ci_dependency_lock_v1",
-  "sdk": {
-    "repository": "ostinatocc/aionis-sdk",
-    "contract_commit": "948cd738fea8e7bb787ef220a9b8afe53c7f48c0"
-  }
-}

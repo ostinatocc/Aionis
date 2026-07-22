@@ -1,0 +1,1809 @@
+{
+  "manifest_version": "aionis_continuation_runtime_v1_schema_manifest_v1",
+  "application_id": 1095323470,
+  "user_version": 1,
+  "tables": [
+    "authority_artifacts",
+    "authority_heads",
+    "branch_capsule_bindings",
+    "branch_revisions",
+    "capsule_revisions",
+    "durable_jobs",
+    "effect_certificate_treatment_members",
+    "effect_certificates",
+    "episode_capsule_facts",
+    "episode_events",
+    "memory_commits",
+    "memory_items",
+    "memory_relations",
+    "memory_scope_heads",
+    "observation_snapshots",
+    "operations",
+    "runtime_meta"
+  ],
+  "sqlite_schema": [
+    {
+      "type": "index",
+      "name": "idx_authority_artifacts_kind",
+      "table_name": "authority_artifacts",
+      "sql_sha256": "29e35d32659738d736003169ac31d55e9edb7075f10578203789b1917418ff0c"
+    },
+    {
+      "type": "index",
+      "name": "idx_authority_artifacts_payload",
+      "table_name": "authority_artifacts",
+      "sql_sha256": "d22d755bc1bd3168b8f1d7a7da1585402e86f6577439261abe6bd2911e3afc8e"
+    },
+    {
+      "type": "index",
+      "name": "idx_authority_artifacts_subject",
+      "table_name": "authority_artifacts",
+      "sql_sha256": "28933599654ec07fe66350e0a64a1581a5dc624d3c8e606d00e3d63861427328"
+    },
+    {
+      "type": "index",
+      "name": "idx_authority_heads_branch",
+      "table_name": "authority_heads",
+      "sql_sha256": "ccbc5a96ae166f7a2004ae4fec4cb86ee4cbe98de60ebaf286ee1102ebdedd1c"
+    },
+    {
+      "type": "index",
+      "name": "idx_branch_capsule_bindings_capsule",
+      "table_name": "branch_capsule_bindings",
+      "sql_sha256": "8599591c096732dc260aefab769d7dfb202b66667adf47231de0f9214cff913b"
+    },
+    {
+      "type": "index",
+      "name": "idx_branch_capsule_bindings_disposition",
+      "table_name": "branch_capsule_bindings",
+      "sql_sha256": "8c38a38cbd6033becaf4db27580a8b8324e49d69a574fcc191f8387d97a0b094"
+    },
+    {
+      "type": "index",
+      "name": "idx_branch_revisions_base",
+      "table_name": "branch_revisions",
+      "sql_sha256": "424f3219feb4f22145cf4cfed9f3d4de8d2835356107ee8520fae2dedd6f596f"
+    },
+    {
+      "type": "index",
+      "name": "idx_branch_revisions_state",
+      "table_name": "branch_revisions",
+      "sql_sha256": "139ab30ff3c33ce1076661df91827025f8b6e4ca2421ca19ebad94dcca99ca44"
+    },
+    {
+      "type": "index",
+      "name": "idx_capsule_revisions_applicability",
+      "table_name": "capsule_revisions",
+      "sql_sha256": "93e6f223d006803c9951c2dcc2c6896e5a78cdb86fbdadde6c3b6efaec1c431c"
+    },
+    {
+      "type": "index",
+      "name": "idx_capsule_revisions_expiry",
+      "table_name": "capsule_revisions",
+      "sql_sha256": "a78d8fe9960c9ae65fd85d6d80877c9e2f5e81471b8eeb53f4179450ce78621d"
+    },
+    {
+      "type": "index",
+      "name": "idx_capsule_revisions_source",
+      "table_name": "capsule_revisions",
+      "sql_sha256": "8b05bbfce6b95f41017ef2521246cfa1c3dc433620ebc5c7df7e77f19369f2a9"
+    },
+    {
+      "type": "index",
+      "name": "idx_durable_jobs_dequeue",
+      "table_name": "durable_jobs",
+      "sql_sha256": "c082314ceb06e8ebda1f40454f0fe1c444ed6469e1b5715b6ac3d4feb7e79364"
+    },
+    {
+      "type": "index",
+      "name": "idx_durable_jobs_lease_expiry",
+      "table_name": "durable_jobs",
+      "sql_sha256": "d0ba21547f311c0b3b5c81365848ba816036703822fbdc2d81cae4ad69040eab"
+    },
+    {
+      "type": "index",
+      "name": "idx_durable_jobs_live_lease_token",
+      "table_name": "durable_jobs",
+      "sql_sha256": "0523a097e1104abd9d7307cf065776c980add714ca9b9d3f389f153d82fdcb66"
+    },
+    {
+      "type": "index",
+      "name": "idx_effect_certificate_treatment_members_capsule",
+      "table_name": "effect_certificate_treatment_members",
+      "sql_sha256": "a2779bb4a37b9871c23d34d087cbd339fa72e35bc8032ebe46c0ae7f0cf8b27f"
+    },
+    {
+      "type": "index",
+      "name": "idx_effect_certificates_candidate",
+      "table_name": "effect_certificates",
+      "sql_sha256": "a1029f3e313ddd2c9e33ce468e6407fb36756b780cf95313b639098099e4adc6"
+    },
+    {
+      "type": "index",
+      "name": "idx_effect_certificates_subject",
+      "table_name": "effect_certificates",
+      "sql_sha256": "ae2b43b11f1f1dde86d7e675cff688d6ceed5f772a8a0a964a5ce0014c4d0bc1"
+    },
+    {
+      "type": "index",
+      "name": "idx_episode_capsule_facts_capsule",
+      "table_name": "episode_capsule_facts",
+      "sql_sha256": "27cb27de490b60b59649da4bbd580ef87f4eb9636da9038c7d6e85f29b486c09"
+    },
+    {
+      "type": "index",
+      "name": "idx_episode_events_authority",
+      "table_name": "episode_events",
+      "sql_sha256": "df1f33b1c61c08fb70526e8ca6adce36507630115eb3af327d605767749f506e"
+    },
+    {
+      "type": "index",
+      "name": "idx_episode_events_cohort_arm",
+      "table_name": "episode_events",
+      "sql_sha256": "aeaf67b1b95ece742ed435ec347e50f74a0ea8275930d1cbb7b5d10d0e97c740"
+    },
+    {
+      "type": "index",
+      "name": "idx_episode_events_decision_exposure",
+      "table_name": "episode_events",
+      "sql_sha256": "8ef7c417d7d21b0a21e2d49274bf73813743863f6a40d638e612e2ab64c72bdf"
+    },
+    {
+      "type": "index",
+      "name": "idx_episode_events_decision_receipt",
+      "table_name": "episode_events",
+      "sql_sha256": "a2bfc3d2bf8bc74e7624121074fc0ab6fff0364ef282cf9b2ec8d72fb81ecb7b"
+    },
+    {
+      "type": "index",
+      "name": "idx_episode_events_effect_member_decision",
+      "table_name": "episode_events",
+      "sql_sha256": "50b3726151811986a6bbda3142f0762bbe60a76e472d3168c4deaf6abbfd0776"
+    },
+    {
+      "type": "index",
+      "name": "idx_episode_events_effect_member_sequence",
+      "table_name": "episode_events",
+      "sql_sha256": "2b0c53f47fb711611bc8daa75bde09fdd521007b025a4c4825e3808d9ff29c39"
+    },
+    {
+      "type": "index",
+      "name": "idx_episode_events_kind",
+      "table_name": "episode_events",
+      "sql_sha256": "c6f24537e43e6885cbfe697030c07dc5f81ba8332c8f4797882bda8eeebd0dc9"
+    },
+    {
+      "type": "index",
+      "name": "idx_episode_events_operation_event",
+      "table_name": "episode_events",
+      "sql_sha256": "1f5919145f6afa80123a5b03c171f6b748df7d88169063e3b64d854f83c9b2c0"
+    },
+    {
+      "type": "index",
+      "name": "idx_episode_events_run",
+      "table_name": "episode_events",
+      "sql_sha256": "bd407d6301cccbd1d44c3ec16c1ccb895a1993e9529fbc919a1a9552f44756d0"
+    },
+    {
+      "type": "index",
+      "name": "idx_memory_commits_created",
+      "table_name": "memory_commits",
+      "sql_sha256": "c3b51203abd2f82acc931638334a67f2fdd79f3082f08eb77c298dd1b238efff"
+    },
+    {
+      "type": "index",
+      "name": "idx_memory_items_commit",
+      "table_name": "memory_items",
+      "sql_sha256": "d298e2dde937c2d35df5df499814459dcf9a1dc80757969127a7a396d7c96b31"
+    },
+    {
+      "type": "index",
+      "name": "idx_memory_items_expiry",
+      "table_name": "memory_items",
+      "sql_sha256": "727761d4a8ad7a7a74b2ab3aee8d298b4192403c3b42ccabf1a9d7fe77e49421"
+    },
+    {
+      "type": "index",
+      "name": "idx_memory_items_lifecycle",
+      "table_name": "memory_items",
+      "sql_sha256": "338c5d7ecd777745b58a0d17cbe59fbfe36f9a6b4fd79199adde4184a5cbf037"
+    },
+    {
+      "type": "index",
+      "name": "idx_memory_relations_source",
+      "table_name": "memory_relations",
+      "sql_sha256": "fc31e3e3cad48d6cf6294073a4a917519eabd1903e720193aa74b2c7ad34ba29"
+    },
+    {
+      "type": "index",
+      "name": "idx_memory_relations_target",
+      "table_name": "memory_relations",
+      "sql_sha256": "024f3779850f501ccfb629eb3707ebc1b8f4723cf65715b6cd0091683c87cf1d"
+    },
+    {
+      "type": "index",
+      "name": "idx_observation_snapshots_expiry",
+      "table_name": "observation_snapshots",
+      "sql_sha256": "1a3c6582ddb924e040cc1a5117829a6e8183cbf572fc16e29021c7f9737f5278"
+    },
+    {
+      "type": "index",
+      "name": "idx_observation_snapshots_task",
+      "table_name": "observation_snapshots",
+      "sql_sha256": "383792ff91aff1afb26596ddc14136a9c32596b8a135b486932fafd2cf9aec9e"
+    },
+    {
+      "type": "index",
+      "name": "idx_operations_completed",
+      "table_name": "operations",
+      "sql_sha256": "4298ed8a28bf979946a01f39b11dc6430d36ddfdd807f1225a413a4a5ece4425"
+    },
+    {
+      "type": "index",
+      "name": "sqlite_autoindex_authority_artifacts_1",
+      "table_name": "authority_artifacts",
+      "sql_sha256": null
+    },
+    {
+      "type": "index",
+      "name": "sqlite_autoindex_authority_artifacts_2",
+      "table_name": "authority_artifacts",
+      "sql_sha256": null
+    },
+    {
+      "type": "index",
+      "name": "sqlite_autoindex_authority_artifacts_3",
+      "table_name": "authority_artifacts",
+      "sql_sha256": null
+    },
+    {
+      "type": "index",
+      "name": "sqlite_autoindex_authority_artifacts_4",
+      "table_name": "authority_artifacts",
+      "sql_sha256": null
+    },
+    {
+      "type": "index",
+      "name": "sqlite_autoindex_authority_heads_1",
+      "table_name": "authority_heads",
+      "sql_sha256": null
+    },
+    {
+      "type": "index",
+      "name": "sqlite_autoindex_authority_heads_2",
+      "table_name": "authority_heads",
+      "sql_sha256": null
+    },
+    {
+      "type": "index",
+      "name": "sqlite_autoindex_branch_capsule_bindings_1",
+      "table_name": "branch_capsule_bindings",
+      "sql_sha256": null
+    },
+    {
+      "type": "index",
+      "name": "sqlite_autoindex_branch_capsule_bindings_2",
+      "table_name": "branch_capsule_bindings",
+      "sql_sha256": null
+    },
+    {
+      "type": "index",
+      "name": "sqlite_autoindex_branch_capsule_bindings_3",
+      "table_name": "branch_capsule_bindings",
+      "sql_sha256": null
+    },
+    {
+      "type": "index",
+      "name": "sqlite_autoindex_branch_revisions_1",
+      "table_name": "branch_revisions",
+      "sql_sha256": null
+    },
+    {
+      "type": "index",
+      "name": "sqlite_autoindex_branch_revisions_2",
+      "table_name": "branch_revisions",
+      "sql_sha256": null
+    },
+    {
+      "type": "index",
+      "name": "sqlite_autoindex_branch_revisions_3",
+      "table_name": "branch_revisions",
+      "sql_sha256": null
+    },
+    {
+      "type": "index",
+      "name": "sqlite_autoindex_branch_revisions_4",
+      "table_name": "branch_revisions",
+      "sql_sha256": null
+    },
+    {
+      "type": "index",
+      "name": "sqlite_autoindex_branch_revisions_5",
+      "table_name": "branch_revisions",
+      "sql_sha256": null
+    },
+    {
+      "type": "index",
+      "name": "sqlite_autoindex_branch_revisions_6",
+      "table_name": "branch_revisions",
+      "sql_sha256": null
+    },
+    {
+      "type": "index",
+      "name": "sqlite_autoindex_capsule_revisions_1",
+      "table_name": "capsule_revisions",
+      "sql_sha256": null
+    },
+    {
+      "type": "index",
+      "name": "sqlite_autoindex_capsule_revisions_2",
+      "table_name": "capsule_revisions",
+      "sql_sha256": null
+    },
+    {
+      "type": "index",
+      "name": "sqlite_autoindex_capsule_revisions_3",
+      "table_name": "capsule_revisions",
+      "sql_sha256": null
+    },
+    {
+      "type": "index",
+      "name": "sqlite_autoindex_durable_jobs_1",
+      "table_name": "durable_jobs",
+      "sql_sha256": null
+    },
+    {
+      "type": "index",
+      "name": "sqlite_autoindex_durable_jobs_2",
+      "table_name": "durable_jobs",
+      "sql_sha256": null
+    },
+    {
+      "type": "index",
+      "name": "sqlite_autoindex_effect_certificate_treatment_members_1",
+      "table_name": "effect_certificate_treatment_members",
+      "sql_sha256": null
+    },
+    {
+      "type": "index",
+      "name": "sqlite_autoindex_effect_certificate_treatment_members_2",
+      "table_name": "effect_certificate_treatment_members",
+      "sql_sha256": null
+    },
+    {
+      "type": "index",
+      "name": "sqlite_autoindex_effect_certificate_treatment_members_3",
+      "table_name": "effect_certificate_treatment_members",
+      "sql_sha256": null
+    },
+    {
+      "type": "index",
+      "name": "sqlite_autoindex_effect_certificates_1",
+      "table_name": "effect_certificates",
+      "sql_sha256": null
+    },
+    {
+      "type": "index",
+      "name": "sqlite_autoindex_effect_certificates_2",
+      "table_name": "effect_certificates",
+      "sql_sha256": null
+    },
+    {
+      "type": "index",
+      "name": "sqlite_autoindex_effect_certificates_3",
+      "table_name": "effect_certificates",
+      "sql_sha256": null
+    },
+    {
+      "type": "index",
+      "name": "sqlite_autoindex_effect_certificates_4",
+      "table_name": "effect_certificates",
+      "sql_sha256": null
+    },
+    {
+      "type": "index",
+      "name": "sqlite_autoindex_episode_capsule_facts_1",
+      "table_name": "episode_capsule_facts",
+      "sql_sha256": null
+    },
+    {
+      "type": "index",
+      "name": "sqlite_autoindex_episode_capsule_facts_2",
+      "table_name": "episode_capsule_facts",
+      "sql_sha256": null
+    },
+    {
+      "type": "index",
+      "name": "sqlite_autoindex_episode_capsule_facts_3",
+      "table_name": "episode_capsule_facts",
+      "sql_sha256": null
+    },
+    {
+      "type": "index",
+      "name": "sqlite_autoindex_episode_events_1",
+      "table_name": "episode_events",
+      "sql_sha256": null
+    },
+    {
+      "type": "index",
+      "name": "sqlite_autoindex_episode_events_2",
+      "table_name": "episode_events",
+      "sql_sha256": null
+    },
+    {
+      "type": "index",
+      "name": "sqlite_autoindex_episode_events_3",
+      "table_name": "episode_events",
+      "sql_sha256": null
+    },
+    {
+      "type": "index",
+      "name": "sqlite_autoindex_episode_events_4",
+      "table_name": "episode_events",
+      "sql_sha256": null
+    },
+    {
+      "type": "index",
+      "name": "sqlite_autoindex_episode_events_5",
+      "table_name": "episode_events",
+      "sql_sha256": null
+    },
+    {
+      "type": "index",
+      "name": "sqlite_autoindex_episode_events_6",
+      "table_name": "episode_events",
+      "sql_sha256": null
+    },
+    {
+      "type": "index",
+      "name": "sqlite_autoindex_memory_commits_1",
+      "table_name": "memory_commits",
+      "sql_sha256": null
+    },
+    {
+      "type": "index",
+      "name": "sqlite_autoindex_memory_commits_2",
+      "table_name": "memory_commits",
+      "sql_sha256": null
+    },
+    {
+      "type": "index",
+      "name": "sqlite_autoindex_memory_commits_3",
+      "table_name": "memory_commits",
+      "sql_sha256": null
+    },
+    {
+      "type": "index",
+      "name": "sqlite_autoindex_memory_commits_4",
+      "table_name": "memory_commits",
+      "sql_sha256": null
+    },
+    {
+      "type": "index",
+      "name": "sqlite_autoindex_memory_items_1",
+      "table_name": "memory_items",
+      "sql_sha256": null
+    },
+    {
+      "type": "index",
+      "name": "sqlite_autoindex_memory_items_2",
+      "table_name": "memory_items",
+      "sql_sha256": null
+    },
+    {
+      "type": "index",
+      "name": "sqlite_autoindex_memory_items_3",
+      "table_name": "memory_items",
+      "sql_sha256": null
+    },
+    {
+      "type": "index",
+      "name": "sqlite_autoindex_memory_relations_1",
+      "table_name": "memory_relations",
+      "sql_sha256": null
+    },
+    {
+      "type": "index",
+      "name": "sqlite_autoindex_memory_relations_2",
+      "table_name": "memory_relations",
+      "sql_sha256": null
+    },
+    {
+      "type": "index",
+      "name": "sqlite_autoindex_memory_relations_3",
+      "table_name": "memory_relations",
+      "sql_sha256": null
+    },
+    {
+      "type": "index",
+      "name": "sqlite_autoindex_memory_scope_heads_1",
+      "table_name": "memory_scope_heads",
+      "sql_sha256": null
+    },
+    {
+      "type": "index",
+      "name": "sqlite_autoindex_memory_scope_heads_2",
+      "table_name": "memory_scope_heads",
+      "sql_sha256": null
+    },
+    {
+      "type": "index",
+      "name": "sqlite_autoindex_memory_scope_heads_3",
+      "table_name": "memory_scope_heads",
+      "sql_sha256": null
+    },
+    {
+      "type": "index",
+      "name": "sqlite_autoindex_observation_snapshots_1",
+      "table_name": "observation_snapshots",
+      "sql_sha256": null
+    },
+    {
+      "type": "index",
+      "name": "sqlite_autoindex_observation_snapshots_2",
+      "table_name": "observation_snapshots",
+      "sql_sha256": null
+    },
+    {
+      "type": "index",
+      "name": "sqlite_autoindex_observation_snapshots_3",
+      "table_name": "observation_snapshots",
+      "sql_sha256": null
+    },
+    {
+      "type": "index",
+      "name": "sqlite_autoindex_operations_1",
+      "table_name": "operations",
+      "sql_sha256": null
+    },
+    {
+      "type": "index",
+      "name": "sqlite_autoindex_operations_2",
+      "table_name": "operations",
+      "sql_sha256": null
+    },
+    {
+      "type": "index",
+      "name": "sqlite_autoindex_operations_3",
+      "table_name": "operations",
+      "sql_sha256": null
+    },
+    {
+      "type": "index",
+      "name": "sqlite_autoindex_operations_4",
+      "table_name": "operations",
+      "sql_sha256": null
+    },
+    {
+      "type": "index",
+      "name": "sqlite_autoindex_runtime_meta_1",
+      "table_name": "runtime_meta",
+      "sql_sha256": null
+    },
+    {
+      "type": "table",
+      "name": "authority_artifacts",
+      "table_name": "authority_artifacts",
+      "sql_sha256": "80ea09ede7e32a7bffac687035a2cc7c0727c8d54b365d49a0be59e9a20c5852"
+    },
+    {
+      "type": "table",
+      "name": "authority_heads",
+      "table_name": "authority_heads",
+      "sql_sha256": "f0aefa9586a2d1a668f8d314ddde046ead4e2a0a1242d5cb603a3ca52ed45a3d"
+    },
+    {
+      "type": "table",
+      "name": "branch_capsule_bindings",
+      "table_name": "branch_capsule_bindings",
+      "sql_sha256": "b901e3a5cb3e8565bad96ec13e460220ef1f9c4db213ce3d3a797b772871c168"
+    },
+    {
+      "type": "table",
+      "name": "branch_revisions",
+      "table_name": "branch_revisions",
+      "sql_sha256": "b399268c634e1aa8899cff972f052607513e801b965698d1742b8ceb419c5110"
+    },
+    {
+      "type": "table",
+      "name": "capsule_revisions",
+      "table_name": "capsule_revisions",
+      "sql_sha256": "ccde497e0344e18a7b1e1623223eb7c77f91c6cb74daa1d78b7476ef8fccdeb3"
+    },
+    {
+      "type": "table",
+      "name": "durable_jobs",
+      "table_name": "durable_jobs",
+      "sql_sha256": "27ce3e32f9a632578d1b8d945846f0a3573d76f20f51bd1f2c633f0a050aa553"
+    },
+    {
+      "type": "table",
+      "name": "effect_certificate_treatment_members",
+      "table_name": "effect_certificate_treatment_members",
+      "sql_sha256": "7e6e25cfaa310c2af9af6c60f9434ffe53ab0f23a7c50f7d7570a0f55b81ad1c"
+    },
+    {
+      "type": "table",
+      "name": "effect_certificates",
+      "table_name": "effect_certificates",
+      "sql_sha256": "07a21b3227b20070c52d1d87fc9ea9c9f22dddb7c64efcd0e3e5325c7deb49f5"
+    },
+    {
+      "type": "table",
+      "name": "episode_capsule_facts",
+      "table_name": "episode_capsule_facts",
+      "sql_sha256": "bf46d89021f5e97083f77b156207eb79b76c3a977bc6f377fd02ee32e3faa12d"
+    },
+    {
+      "type": "table",
+      "name": "episode_events",
+      "table_name": "episode_events",
+      "sql_sha256": "f0513115a53c6e3438a7bf76b18ebfa12ea6bea93ca934d8c67e30fedd1c8589"
+    },
+    {
+      "type": "table",
+      "name": "memory_commits",
+      "table_name": "memory_commits",
+      "sql_sha256": "0c62a95efb239e0fc742e78002ec4f8dc363187a1129b3c5dcefd96a6f30fa0a"
+    },
+    {
+      "type": "table",
+      "name": "memory_items",
+      "table_name": "memory_items",
+      "sql_sha256": "e805709734c4143b0c642a0956b9e8eab7eed93552d2b053b1672fa1c0f8ec15"
+    },
+    {
+      "type": "table",
+      "name": "memory_relations",
+      "table_name": "memory_relations",
+      "sql_sha256": "e9e3008a890673540df16b26b52ed34a02c28683ff43fba225723ea3a4ea19d0"
+    },
+    {
+      "type": "table",
+      "name": "memory_scope_heads",
+      "table_name": "memory_scope_heads",
+      "sql_sha256": "e5d3aa4673ed9877a1be0c5e068a0ab3d72b0e87ea711e4ceb50b2a2732649c7"
+    },
+    {
+      "type": "table",
+      "name": "observation_snapshots",
+      "table_name": "observation_snapshots",
+      "sql_sha256": "ff129c7c3924aa1b30d5e9823e9a8aeb6906bb97bb9dd9000f07352dfecb3c87"
+    },
+    {
+      "type": "table",
+      "name": "operations",
+      "table_name": "operations",
+      "sql_sha256": "75573391d1237917a4eb8fce74afd13fa11fa8cc71bb59225575b7a45d4a7403"
+    },
+    {
+      "type": "table",
+      "name": "runtime_meta",
+      "table_name": "runtime_meta",
+      "sql_sha256": "a14ec6c01096fe904a9cdbb6679afefee1cf8991caaee0d3e1cbb4adfacf5cae"
+    },
+    {
+      "type": "trigger",
+      "name": "authority_artifacts_experiment_cohort_guard",
+      "table_name": "authority_artifacts",
+      "sql_sha256": "80234d24ed50629a2d1cc7e760e4f7124bac9350a4ca96bae84613b0395cab3f"
+    },
+    {
+      "type": "trigger",
+      "name": "authority_artifacts_experiment_cohort_learning_pair_guard",
+      "table_name": "authority_artifacts",
+      "sql_sha256": "daed13929b98cf7699699f3d6e5b4d074ff4cf777f826af06f89d55e2ca913a8"
+    },
+    {
+      "type": "trigger",
+      "name": "authority_artifacts_experiment_cohort_overlap_guard",
+      "table_name": "authority_artifacts",
+      "sql_sha256": "67b2b059853b176e5533e38b961d241c58e996a23553e7cbe324e6d01fe9961f"
+    },
+    {
+      "type": "trigger",
+      "name": "authority_artifacts_no_delete",
+      "table_name": "authority_artifacts",
+      "sql_sha256": "2329c5d6cf9ff29bbffe9e866153e45947e42109535c2dea90d87f6447eeacb6"
+    },
+    {
+      "type": "trigger",
+      "name": "authority_artifacts_no_update",
+      "table_name": "authority_artifacts",
+      "sql_sha256": "995086feddb1f6103cd6dc8a9d4a54d178e601f6846b4ece4ab0532945876e7f"
+    },
+    {
+      "type": "trigger",
+      "name": "authority_artifacts_source_operation_fence",
+      "table_name": "authority_artifacts",
+      "sql_sha256": "8bf67c974621ab30adc2c636e39c9f3841e61f98ba10334cf3f34603d339f8ec"
+    },
+    {
+      "type": "trigger",
+      "name": "authority_heads_active_cohort_freeze_guard",
+      "table_name": "authority_heads",
+      "sql_sha256": "b59d41df4024e36a6e89c0b621f35c02117c0539fc8cc19df78ba2379d564b1c"
+    },
+    {
+      "type": "trigger",
+      "name": "authority_heads_advance_guard",
+      "table_name": "authority_heads",
+      "sql_sha256": "39fc028951223ccc2fd15da7a29a78633835a12b963203c3ee161be2b86ffdb6"
+    },
+    {
+      "type": "trigger",
+      "name": "authority_heads_insert_guard",
+      "table_name": "authority_heads",
+      "sql_sha256": "7ee045be496536b610e9861694aea748832360820a00bc6f2b2a274610f7dffc"
+    },
+    {
+      "type": "trigger",
+      "name": "authority_heads_no_delete",
+      "table_name": "authority_heads",
+      "sql_sha256": "71f8b0d08fd0b8e16313772a650f2e93b6cc55f5ccc1673b91bf38ff148821b8"
+    },
+    {
+      "type": "trigger",
+      "name": "authority_heads_policy_rotation_bindings_guard",
+      "table_name": "authority_heads",
+      "sql_sha256": "92356c5acc3de914d08b1b4c6afaeb940b37479a0267aadde6fac3e5cc77386b"
+    },
+    {
+      "type": "trigger",
+      "name": "authority_heads_source_operation_insert_fence",
+      "table_name": "authority_heads",
+      "sql_sha256": "1a6a33380c12e04561aeffb84ef77331e2b11836d76abc194293447841ce3350"
+    },
+    {
+      "type": "trigger",
+      "name": "authority_heads_source_operation_update_fence",
+      "table_name": "authority_heads",
+      "sql_sha256": "c317cbfc9752c5d92e7b8f27db1fdc7bf665913143322f5f1684656f1fc4e25c"
+    },
+    {
+      "type": "trigger",
+      "name": "branch_capsule_bindings_learning_capacity_guard",
+      "table_name": "branch_capsule_bindings",
+      "sql_sha256": "fb81d08ae17297579ef0f4772cf4f21e1dda06934d3e1a32ce132cbb25e663c7"
+    },
+    {
+      "type": "trigger",
+      "name": "branch_capsule_bindings_learning_only_guard",
+      "table_name": "branch_capsule_bindings",
+      "sql_sha256": "7ab2ac21dc4018f466c0afc9f6578069ca8dab1a44977cf4ee24308c850391b9"
+    },
+    {
+      "type": "trigger",
+      "name": "branch_capsule_bindings_no_delete",
+      "table_name": "branch_capsule_bindings",
+      "sql_sha256": "e82b79a202a88ac126b30ea179cf2d7f86e475c1eb4afd200ab3b8df279c28f6"
+    },
+    {
+      "type": "trigger",
+      "name": "branch_capsule_bindings_no_update",
+      "table_name": "branch_capsule_bindings",
+      "sql_sha256": "36394cd28f5df94642d6a94ea897e683fd2613d5e5845c98923d2b5f34a2f950"
+    },
+    {
+      "type": "trigger",
+      "name": "branch_capsule_bindings_source_operation_fence",
+      "table_name": "branch_capsule_bindings",
+      "sql_sha256": "4ecb957355bf963ac4f491468ee991c4ea805dedd298612fe4fb8370bdfc4c18"
+    },
+    {
+      "type": "trigger",
+      "name": "branch_revisions_active_cohort_freeze_guard",
+      "table_name": "branch_revisions",
+      "sql_sha256": "80928b4cdcab33fc7529180766febe941856a7446039f68454acb311f7068ea1"
+    },
+    {
+      "type": "trigger",
+      "name": "branch_revisions_authoritative_certificate_guard",
+      "table_name": "branch_revisions",
+      "sql_sha256": "2b5f4a1f35e94e616f2e8d9e02ee4074387c74715b3355f3bad058de3460cdd7"
+    },
+    {
+      "type": "trigger",
+      "name": "branch_revisions_merge_certificate_guard",
+      "table_name": "branch_revisions",
+      "sql_sha256": "6c20226c5039ab35a5e034a96fb7b527d87c0cda7089a128cba103484ad99b27"
+    },
+    {
+      "type": "trigger",
+      "name": "branch_revisions_no_delete",
+      "table_name": "branch_revisions",
+      "sql_sha256": "ec4b5acc51e7b2205ca66d652a41c8894ff2e8873ce67181496f9814a862ce25"
+    },
+    {
+      "type": "trigger",
+      "name": "branch_revisions_no_update",
+      "table_name": "branch_revisions",
+      "sql_sha256": "ffc47e1bf0692e1d9f9db47c9a0699262aaaf44a60f2d233684be1ca85982974"
+    },
+    {
+      "type": "trigger",
+      "name": "branch_revisions_policy_rotation_artifact_guard",
+      "table_name": "branch_revisions",
+      "sql_sha256": "a0d6085e3ec0207fe0a291d1982924e636d0d046c9b5ec6c569482e53ac6fd34"
+    },
+    {
+      "type": "trigger",
+      "name": "branch_revisions_source_operation_fence",
+      "table_name": "branch_revisions",
+      "sql_sha256": "b300fa9cdfcf4ef47a18d951bca915a201d48b00b3e9cb3d71dae0c248833c96"
+    },
+    {
+      "type": "trigger",
+      "name": "branch_revisions_transition_guard",
+      "table_name": "branch_revisions",
+      "sql_sha256": "8d2efaa22a8ee2b03abf0f9b4c64b8e41d6400b1760e627e9186c4ffe2355196"
+    },
+    {
+      "type": "trigger",
+      "name": "branch_revisions_trusted_observation_admission_guard",
+      "table_name": "branch_revisions",
+      "sql_sha256": "1f040827286246fd920b20fd0413f51e1a7277c1d1b2eb2841d814cb9070d0b9"
+    },
+    {
+      "type": "trigger",
+      "name": "capsule_revisions_no_delete",
+      "table_name": "capsule_revisions",
+      "sql_sha256": "3588f0b048445a5464323917ddc1796300b9b56580aeed94d3f046fa83b5235c"
+    },
+    {
+      "type": "trigger",
+      "name": "capsule_revisions_no_update",
+      "table_name": "capsule_revisions",
+      "sql_sha256": "3300fa7814d09b355a5ea2dea856815e23c9d3c54a7e93013a2b4046d51da16c"
+    },
+    {
+      "type": "trigger",
+      "name": "durable_jobs_completion_operation_fence",
+      "table_name": "durable_jobs",
+      "sql_sha256": "d6e73400d38b08c9b85b0e760314aedd50d946a9b898a6a484b70bec9317544e"
+    },
+    {
+      "type": "trigger",
+      "name": "durable_jobs_effect_cohort_authority_guard",
+      "table_name": "durable_jobs",
+      "sql_sha256": "393d543dc097b2f3e97fd8a0fdf58a8948322c45d8de61f92b51a012a3192134"
+    },
+    {
+      "type": "trigger",
+      "name": "durable_jobs_insert_guard",
+      "table_name": "durable_jobs",
+      "sql_sha256": "28410580e6a72676159ac88f96d35b606e9dfeea7e48a5d31fc2110b43dc44a0"
+    },
+    {
+      "type": "trigger",
+      "name": "durable_jobs_no_delete",
+      "table_name": "durable_jobs",
+      "sql_sha256": "e9939d9ed2f1e5de3ebe87dd1547bb693e7573cbf7b8b17b671d555f6a5a37e3"
+    },
+    {
+      "type": "trigger",
+      "name": "durable_jobs_source_operation_fence",
+      "table_name": "durable_jobs",
+      "sql_sha256": "a0d1a64eb14703fe00306e86352f42e483bcd09bce244af2b2a4da4dd089d9f3"
+    },
+    {
+      "type": "trigger",
+      "name": "durable_jobs_transition_guard",
+      "table_name": "durable_jobs",
+      "sql_sha256": "b9dee835810fbbc3af7ca1a36b674d7e3ba27814aa07562676695191ef3b2d13"
+    },
+    {
+      "type": "trigger",
+      "name": "effect_certificate_treatment_members_no_delete",
+      "table_name": "effect_certificate_treatment_members",
+      "sql_sha256": "f7489aad4514ac6c6df16fa0ce6b130cd8f6375747cf4fb3f2933ce04c0f53a3"
+    },
+    {
+      "type": "trigger",
+      "name": "effect_certificate_treatment_members_no_update",
+      "table_name": "effect_certificate_treatment_members",
+      "sql_sha256": "b1b5a5f452570c792097bac6a1c9126f8da0795586d919227f570d42ffa42264"
+    },
+    {
+      "type": "trigger",
+      "name": "effect_certificate_treatment_members_source_operation_fence",
+      "table_name": "effect_certificate_treatment_members",
+      "sql_sha256": "d0972036f1413afd9f1f1d44ef2f11cbc086d170974429a8eb2bc1b91e49349c"
+    },
+    {
+      "type": "trigger",
+      "name": "effect_certificates_no_delete",
+      "table_name": "effect_certificates",
+      "sql_sha256": "d3a04ee699309963cd0debdc963098d6fa798d6b023fdcc7f8d8edb41a746688"
+    },
+    {
+      "type": "trigger",
+      "name": "effect_certificates_no_update",
+      "table_name": "effect_certificates",
+      "sql_sha256": "57c0fa842f00ff1e5fc3cc2dacad2be54a6b871644c867087982f2ea56dc8db3"
+    },
+    {
+      "type": "trigger",
+      "name": "effect_certificates_source_operation_fence",
+      "table_name": "effect_certificates",
+      "sql_sha256": "af6ca775c244f911d7c1408ea8c25f3a66c50b982a53ac472995f4d827d095aa"
+    },
+    {
+      "type": "trigger",
+      "name": "episode_capsule_facts_event_guard",
+      "table_name": "episode_capsule_facts",
+      "sql_sha256": "35ff2950db3cf48aab942d1ff3678983b411f23d54211a5d603b466d53e991af"
+    },
+    {
+      "type": "trigger",
+      "name": "episode_capsule_facts_no_delete",
+      "table_name": "episode_capsule_facts",
+      "sql_sha256": "3fc09903635231d3976952b7115b0f8b5148c5f179aa91d8d6d33cd64b35c6c0"
+    },
+    {
+      "type": "trigger",
+      "name": "episode_capsule_facts_no_update",
+      "table_name": "episode_capsule_facts",
+      "sql_sha256": "a5712fb09bb8e80322b900245d5489202f19ce1538330f6882157b425c9a8b24"
+    },
+    {
+      "type": "trigger",
+      "name": "episode_capsule_facts_source_operation_fence",
+      "table_name": "episode_capsule_facts",
+      "sql_sha256": "0024e1656dcc6a35daeaf13e10d1724f8c7772b5634db99cbab4a701c7550665"
+    },
+    {
+      "type": "trigger",
+      "name": "episode_capsule_facts_use_guard",
+      "table_name": "episode_capsule_facts",
+      "sql_sha256": "1a1ba8916e892da0119aeb60c3a2c729e7cb67dbe9ea9cbff0ffaf949c4b9497"
+    },
+    {
+      "type": "trigger",
+      "name": "episode_events_chain_guard",
+      "table_name": "episode_events",
+      "sql_sha256": "4084d8cfd6b597d5fd5b955f30a8c56d2cf1da353e6129c499414a220c6f763b"
+    },
+    {
+      "type": "trigger",
+      "name": "episode_events_decision_cause_guard",
+      "table_name": "episode_events",
+      "sql_sha256": "0c1cfc44a6d361037c460aff86369090ef5753b4cc29eff9299cd2f7cde34f47"
+    },
+    {
+      "type": "trigger",
+      "name": "episode_events_effect_binding_guard",
+      "table_name": "episode_events",
+      "sql_sha256": "54fc663c85f431430ae420151f4f7b86019ce633693b7f9d2e903edea313f5d1"
+    },
+    {
+      "type": "trigger",
+      "name": "episode_events_no_delete",
+      "table_name": "episode_events",
+      "sql_sha256": "cbadc9c4957a2d2bc3173a04e582ae54908236ee85883d302414411d7db67b4e"
+    },
+    {
+      "type": "trigger",
+      "name": "episode_events_no_update",
+      "table_name": "episode_events",
+      "sql_sha256": "6f9c50a8cf1fc08176ff6d17bfe31791566eefb4785b60e0c1618eb10e60a12c"
+    },
+    {
+      "type": "trigger",
+      "name": "episode_events_record_outcome_operation_guard",
+      "table_name": "episode_events",
+      "sql_sha256": "4bec37204cd8987aa35dfd66dfff106b5d237eb3ccef290ded229860e261cd7f"
+    },
+    {
+      "type": "trigger",
+      "name": "episode_events_serving_authority_guard",
+      "table_name": "episode_events",
+      "sql_sha256": "86fe27a6e138fc4b6a6824b2ff648643cd60383558a7e50b71469a8ce8d3d173"
+    },
+    {
+      "type": "trigger",
+      "name": "episode_events_source_operation_fence",
+      "table_name": "episode_events",
+      "sql_sha256": "c49a11c55423ec1157994522c4a52f63e45a67c06a77015b31a5bfcd7106149e"
+    },
+    {
+      "type": "trigger",
+      "name": "memory_commits_no_delete",
+      "table_name": "memory_commits",
+      "sql_sha256": "acfd08f22def1f9331f4a5352d453820967b43c82583710ee57c73f959e3f246"
+    },
+    {
+      "type": "trigger",
+      "name": "memory_commits_no_update",
+      "table_name": "memory_commits",
+      "sql_sha256": "11c2674fe00265c3146a83ad1f69574de7eef3104df90c38928e1fdc374b8a6b"
+    },
+    {
+      "type": "trigger",
+      "name": "memory_commits_source_operation_fence",
+      "table_name": "memory_commits",
+      "sql_sha256": "88b06c03a88f4f3b253603f6f22beae06ffd1736381b03b48f15cedcbe079f57"
+    },
+    {
+      "type": "trigger",
+      "name": "memory_items_no_delete",
+      "table_name": "memory_items",
+      "sql_sha256": "73f23b266e9b610b72e13e8d823fae7427e4d936370a344b9d904ee8958552bc"
+    },
+    {
+      "type": "trigger",
+      "name": "memory_items_update_guard",
+      "table_name": "memory_items",
+      "sql_sha256": "b63e2f597b730b50955c4ddca6386dde0409e47d9f527e21f309f70ca25cbf48"
+    },
+    {
+      "type": "trigger",
+      "name": "memory_relations_update_guard",
+      "table_name": "memory_relations",
+      "sql_sha256": "3d04c684349004e7a8704169e8787fe2fddadd90457d30a132264a2ad2625358"
+    },
+    {
+      "type": "trigger",
+      "name": "memory_scope_heads_advance_guard",
+      "table_name": "memory_scope_heads",
+      "sql_sha256": "252ceadefd7f97a6dfb8fd7e77fc84cfb6c231312437d5dae3ab4f7259240665"
+    },
+    {
+      "type": "trigger",
+      "name": "memory_scope_heads_insert_guard",
+      "table_name": "memory_scope_heads",
+      "sql_sha256": "3f85438d833d8087084b0b1b2d37f9f7bd804af64c3276ba27928c78e2c1740d"
+    },
+    {
+      "type": "trigger",
+      "name": "memory_scope_heads_no_delete",
+      "table_name": "memory_scope_heads",
+      "sql_sha256": "1431b5debe345005d84053797cd325e58e43bb37bc056b700060e31f5771ed23"
+    },
+    {
+      "type": "trigger",
+      "name": "memory_scope_heads_source_operation_insert_fence",
+      "table_name": "memory_scope_heads",
+      "sql_sha256": "39a76213ee29886bd1cde282258859528a29a0c0edb96aad844e4ed018349969"
+    },
+    {
+      "type": "trigger",
+      "name": "memory_scope_heads_source_operation_update_fence",
+      "table_name": "memory_scope_heads",
+      "sql_sha256": "fb7ccb6df166fad420f2700aea5ac8640790d14a211578df6a2c75b903d8800d"
+    },
+    {
+      "type": "trigger",
+      "name": "observation_snapshots_no_delete",
+      "table_name": "observation_snapshots",
+      "sql_sha256": "45712d591e1c2e533237af99f660ce18997dd4fe55778c6bd85694660221da7f"
+    },
+    {
+      "type": "trigger",
+      "name": "observation_snapshots_no_update",
+      "table_name": "observation_snapshots",
+      "sql_sha256": "5d45df95f9f5999640ef804208c13e798e4c1f3e51f9a73917e97c1e8011a005"
+    },
+    {
+      "type": "trigger",
+      "name": "observation_snapshots_source_operation_fence",
+      "table_name": "observation_snapshots",
+      "sql_sha256": "129661a3ab3b4ef75c9583a2648314b18a25ba1c5ee0c498380441f95c5bf3f6"
+    },
+    {
+      "type": "trigger",
+      "name": "operations_effect_certificate_sets_guard",
+      "table_name": "operations",
+      "sql_sha256": "3cf5427d4f0e87989acc788af3242899793c6d29242718995f887e28f4b2c448"
+    },
+    {
+      "type": "trigger",
+      "name": "operations_effect_job_certificate_authority_guard",
+      "table_name": "operations",
+      "sql_sha256": "f07d873d5b860d9eaef221d8571b828dc52597b88bcfbb718f7dc521b73861fa"
+    },
+    {
+      "type": "trigger",
+      "name": "operations_episode_event_sets_guard",
+      "table_name": "operations",
+      "sql_sha256": "43a78d9525b87b5dd230742d28a121c265debd9509e1cb55af43c1653893e765"
+    },
+    {
+      "type": "trigger",
+      "name": "operations_experiment_cohort_install_before_open_guard",
+      "table_name": "operations",
+      "sql_sha256": "ef93e3c9353de65b659a0738cb89089e0f90f76f96171dc47b129a25abbf43ad"
+    },
+    {
+      "type": "trigger",
+      "name": "operations_experiment_cohort_principal_guard",
+      "table_name": "operations",
+      "sql_sha256": "78e361c50db1cb084bdff1a9793f4171009fc1d2e81d4dea523fa8932515aca1"
+    },
+    {
+      "type": "trigger",
+      "name": "operations_experiment_cohort_settlement_guard",
+      "table_name": "operations",
+      "sql_sha256": "d35a8d796bfd69fe640212486286faba9e2f03c511f1b94adf14b573a0339e4b"
+    },
+    {
+      "type": "trigger",
+      "name": "operations_no_delete",
+      "table_name": "operations",
+      "sql_sha256": "b6163e1a40e7bd2fd412cc03a57095eec9ab951e084eb2b199894e120f67399a"
+    },
+    {
+      "type": "trigger",
+      "name": "operations_no_update",
+      "table_name": "operations",
+      "sql_sha256": "e4c1a91479c24ecf2c10f77b436cb56d445cb79f2ac8bb3e066603a53eb580d3"
+    },
+    {
+      "type": "trigger",
+      "name": "operations_policy_rotation_bindings_guard",
+      "table_name": "operations",
+      "sql_sha256": "34fbb245f7e71168c99ce51362d568af43e579b7d8237c81b18971e3e426c527"
+    },
+    {
+      "type": "trigger",
+      "name": "operations_worker_completion_job_guard",
+      "table_name": "operations",
+      "sql_sha256": "17d9bb22897a144b0fb045b28102fc0c7d3263c7aee66251c7e04ab5bec3cc71"
+    },
+    {
+      "type": "trigger",
+      "name": "runtime_meta_no_delete",
+      "table_name": "runtime_meta",
+      "sql_sha256": "9b8b7556e93c3e0d859f8530c4818391667e4a09b17201e49c2c5d351cb31182"
+    },
+    {
+      "type": "trigger",
+      "name": "runtime_meta_no_update",
+      "table_name": "runtime_meta",
+      "sql_sha256": "ffe2fefcd60064f4a3cb0a48fcf814ec9d7c6190a21e40214e7660165bff5ac6"
+    }
+  ],
+  "table_xinfo": [
+    {
+      "table_name": "authority_artifacts",
+      "row_count": 21,
+      "rows_sha256": "a01f429704cc36e98d1312089ba9638c5f951a5af0c388e92db014c76a53fdc4"
+    },
+    {
+      "table_name": "authority_heads",
+      "row_count": 14,
+      "rows_sha256": "a7b92445be22b90809bf16c2839d9d6e87997693cc4d8f441c26d6fa6a0e9729"
+    },
+    {
+      "table_name": "branch_capsule_bindings",
+      "row_count": 14,
+      "rows_sha256": "80385db9ef6714c4588103bb52fe332b14c2b322fa468d7849434529043479ed"
+    },
+    {
+      "table_name": "branch_revisions",
+      "row_count": 49,
+      "rows_sha256": "6e839ab1f5b5dd8426e737a5beb4ddb591ae72f13941a0f8d14b2dd86c4bd88b"
+    },
+    {
+      "table_name": "capsule_revisions",
+      "row_count": 34,
+      "rows_sha256": "688bcc4e2cdff0ff24599013b12ceb4240f0c16e45fd25509b52473f6d9a2e04"
+    },
+    {
+      "table_name": "durable_jobs",
+      "row_count": 33,
+      "rows_sha256": "c985e9edc5e338c48d597fde429574d9926e4f6ca2e2a89770c9edb878770a5c"
+    },
+    {
+      "table_name": "effect_certificate_treatment_members",
+      "row_count": 10,
+      "rows_sha256": "ff5c25ae60b022dadddc5295936a1ecf82a3f234427c18fec0d7e2313a8da8c7"
+    },
+    {
+      "table_name": "effect_certificates",
+      "row_count": 53,
+      "rows_sha256": "f30dfb074ca192c26bc4064b0f1dd4b7d2e9aa848017b7f4c193ad64b69eead4"
+    },
+    {
+      "table_name": "episode_capsule_facts",
+      "row_count": 15,
+      "rows_sha256": "bc3e39e004ca7d1e99e4a201f87a7b6de2681cf236ee00a29eba37ffcadeaf23"
+    },
+    {
+      "table_name": "episode_events",
+      "row_count": 35,
+      "rows_sha256": "a50b1025c47f23d9e43578fd28ea7d455d9776fb4b3537368d78849cfc7c9db2"
+    },
+    {
+      "table_name": "memory_commits",
+      "row_count": 17,
+      "rows_sha256": "e77670bdd219c841bf22887e7e0a356acf5528f3fc81f2cd085dfcd4953b23e2"
+    },
+    {
+      "table_name": "memory_items",
+      "row_count": 17,
+      "rows_sha256": "57b6faddc3f5ad6181fe56dc407769f1dc2cda69daff47600e439c3d7c9040eb"
+    },
+    {
+      "table_name": "memory_relations",
+      "row_count": 15,
+      "rows_sha256": "d5b2c64fb54862548e705ec3ce19d6c62e0e9e0df51a91e273fd26ace2ade3a7"
+    },
+    {
+      "table_name": "memory_scope_heads",
+      "row_count": 10,
+      "rows_sha256": "5db20e841e4dde02edbac70571adbc2c4287d127ccce6c9955f27cc32cd4725e"
+    },
+    {
+      "table_name": "observation_snapshots",
+      "row_count": 17,
+      "rows_sha256": "3f23a9a83b57d00bd5efb2783e0670482695b654f8e1d5f73e329d79aa5fc5ae"
+    },
+    {
+      "table_name": "operations",
+      "row_count": 11,
+      "rows_sha256": "67bb068f613e47560205ce8336bd5c5b2d19dcbe4d0724ee97a875571b5887ea"
+    },
+    {
+      "table_name": "runtime_meta",
+      "row_count": 6,
+      "rows_sha256": "cf62c52bcc4a9ed1b38a4c2a11c8b8bb9991cea174cbd48500091684fcf35775"
+    }
+  ],
+  "index_xinfo": [
+    {
+      "index_name": "idx_authority_artifacts_kind",
+      "row_count": 5,
+      "rows_sha256": "804e8bfec4496032e9daabfb8c6a45c4097c9c9c6edcbe83a8bb48228fbc4dd1"
+    },
+    {
+      "index_name": "idx_authority_artifacts_payload",
+      "row_count": 4,
+      "rows_sha256": "5f56a5ac27eaaea71016874304384fe34672972a8d64147fa777f667b04e9602"
+    },
+    {
+      "index_name": "idx_authority_artifacts_subject",
+      "row_count": 5,
+      "rows_sha256": "32b23d3a8b44cb1fdae69518d6acb17bd85ea69f7f3abef941cd18af605eb1d4"
+    },
+    {
+      "index_name": "idx_authority_heads_branch",
+      "row_count": 6,
+      "rows_sha256": "26fb438a1e750c38fb82e4b09dbb0411fe72abcadf29697206689d96124a4c73"
+    },
+    {
+      "index_name": "idx_branch_capsule_bindings_capsule",
+      "row_count": 8,
+      "rows_sha256": "d197055197a779ea15a6f5652a114953ab049219d744b740bf2b66e52a562a9c"
+    },
+    {
+      "index_name": "idx_branch_capsule_bindings_disposition",
+      "row_count": 8,
+      "rows_sha256": "b4423abfd4fb1594a5fa14980b2ea01aae25bef423e60bc67d3943d8eddaa7c9"
+    },
+    {
+      "index_name": "idx_branch_revisions_base",
+      "row_count": 7,
+      "rows_sha256": "1ab9530c9b8df04f65895843c7e0e68774f7c5dfc7291e64d9417b64ea86711e"
+    },
+    {
+      "index_name": "idx_branch_revisions_state",
+      "row_count": 8,
+      "rows_sha256": "812bcd78d1c338823c7355395d75df830fef543ef16e11f06fa3a2db599fc42b"
+    },
+    {
+      "index_name": "idx_capsule_revisions_applicability",
+      "row_count": 8,
+      "rows_sha256": "89ee0fb811053d380128a32c9d2341f16679d6c83435bdb181192e054b48432c"
+    },
+    {
+      "index_name": "idx_capsule_revisions_expiry",
+      "row_count": 5,
+      "rows_sha256": "d88d430fe8c49061cf5f5b27d826b2554f14538c294abd489c2d6ddcac33f954"
+    },
+    {
+      "index_name": "idx_capsule_revisions_source",
+      "row_count": 7,
+      "rows_sha256": "07a372a2c3a97ee0101fca589df10c9ed08ac51fb19d5fe433fece1d630d1af7"
+    },
+    {
+      "index_name": "idx_durable_jobs_dequeue",
+      "row_count": 8,
+      "rows_sha256": "bcbc56dee1549b1046548d974bd29f5f157e4022e55059544a53f21206b794f8"
+    },
+    {
+      "index_name": "idx_durable_jobs_lease_expiry",
+      "row_count": 7,
+      "rows_sha256": "c1fb1aa04ae871d2f26f09052b14b9edf4881fa285d42fbeaf0dafcdf865c25f"
+    },
+    {
+      "index_name": "idx_durable_jobs_live_lease_token",
+      "row_count": 2,
+      "rows_sha256": "fe8b820685ae3be9c7e63d6cf6c71a7c101d6fdc5bc18d4aa875bc8d6cfbe4ed"
+    },
+    {
+      "index_name": "idx_effect_certificate_treatment_members_capsule",
+      "row_count": 6,
+      "rows_sha256": "01ef3170477397c9ac13224bdb1777a7ce5b11639e76c4a797350b9a3760e7eb"
+    },
+    {
+      "index_name": "idx_effect_certificates_candidate",
+      "row_count": 6,
+      "rows_sha256": "b14a3a2c90396412015deb6a3e95a0375f557bcfc4c5ba1168af5a89bdfafc14"
+    },
+    {
+      "index_name": "idx_effect_certificates_subject",
+      "row_count": 6,
+      "rows_sha256": "2bb168edd8ebfdfc5b7fa8a23564783252a9ae3ed039903e9e57c8081685fae0"
+    },
+    {
+      "index_name": "idx_episode_capsule_facts_capsule",
+      "row_count": 7,
+      "rows_sha256": "0b5682b6503df8577d9b17d886214b2bc99b2e66964076f79befcc7075861119"
+    },
+    {
+      "index_name": "idx_episode_events_authority",
+      "row_count": 6,
+      "rows_sha256": "1e817d2f61830c6a4dff3d28abfa8949d599d6c1542bcabefd938f7ce3b8c29d"
+    },
+    {
+      "index_name": "idx_episode_events_cohort_arm",
+      "row_count": 7,
+      "rows_sha256": "0caffb45dbba411381b81bf7edd44db649913a9e261e6dd5364a13de861bb85b"
+    },
+    {
+      "index_name": "idx_episode_events_decision_exposure",
+      "row_count": 4,
+      "rows_sha256": "fe396f6615adf89ee1764c452fc381b06f7028729af3c8881d04718f053130e8"
+    },
+    {
+      "index_name": "idx_episode_events_decision_receipt",
+      "row_count": 5,
+      "rows_sha256": "b3b14c28256a1bace19673a0be9aa987a9d447e6bf6b60fefe8dc4d7334aad27"
+    },
+    {
+      "index_name": "idx_episode_events_effect_member_decision",
+      "row_count": 5,
+      "rows_sha256": "32c4f93a1f23b3cbc87550c87e7d44b62e9e4cd91371872610257fbf490ec842"
+    },
+    {
+      "index_name": "idx_episode_events_effect_member_sequence",
+      "row_count": 4,
+      "rows_sha256": "5e466450ce8227f49ba5de08a835cdcaae962a68de9a5794556c5e2eaa8b5607"
+    },
+    {
+      "index_name": "idx_episode_events_kind",
+      "row_count": 7,
+      "rows_sha256": "2eaff66d4618e70999636fc2745b2197da3c4532a940c17581f590dc66b294a2"
+    },
+    {
+      "index_name": "idx_episode_events_operation_event",
+      "row_count": 6,
+      "rows_sha256": "3560c3775556b2c6bb921e529f53363a730de4a3d8a59a7a0c86fcfaf4f1e67d"
+    },
+    {
+      "index_name": "idx_episode_events_run",
+      "row_count": 7,
+      "rows_sha256": "b36278493753f4b495ff8f1bd8c7cd52182b20bf6be57377bfc33d780c8a56b5"
+    },
+    {
+      "index_name": "idx_memory_commits_created",
+      "row_count": 5,
+      "rows_sha256": "df9b8fc546155fb9729cd12a93b3a6c1584ea581e108ca43fb861fbd3699a9a9"
+    },
+    {
+      "index_name": "idx_memory_items_commit",
+      "row_count": 5,
+      "rows_sha256": "a08752eb1ae5fdd33e3332dcca75f2769b4909bc8e02907a8ff2248ac1483098"
+    },
+    {
+      "index_name": "idx_memory_items_expiry",
+      "row_count": 5,
+      "rows_sha256": "59b7a972bd3d26b8cf7298ebfe25cc3c510542c1a03f61bd343ec8ae8e0ac6c0"
+    },
+    {
+      "index_name": "idx_memory_items_lifecycle",
+      "row_count": 6,
+      "rows_sha256": "10f38405ed72b44e8e648dfc67dcdb1e46970317fdc2f57b46f5887551d5a95b"
+    },
+    {
+      "index_name": "idx_memory_relations_source",
+      "row_count": 6,
+      "rows_sha256": "ab74da1c5ad48dbc2e57fd4f081329770bd08409b89b21b49f1cd020ba58fe46"
+    },
+    {
+      "index_name": "idx_memory_relations_target",
+      "row_count": 6,
+      "rows_sha256": "6c8d47d1e03dd7bce91a87d7c4e06d6599c5db265013203d4b01cf85c32a21e8"
+    },
+    {
+      "index_name": "idx_observation_snapshots_expiry",
+      "row_count": 5,
+      "rows_sha256": "e42bcf7611d524b37d3842973cd4f884e4c94cd4f43935f2aedbb9be2e60eef9"
+    },
+    {
+      "index_name": "idx_observation_snapshots_task",
+      "row_count": 6,
+      "rows_sha256": "66a292e7ffe97b6e8453c7a9298c97f39b1fdefb64987e51f4189258cb4c9369"
+    },
+    {
+      "index_name": "idx_operations_completed",
+      "row_count": 5,
+      "rows_sha256": "db31fa34b6eda2fed534798085f3ff823d4e94891defbc42e86f5cdc024ed1c0"
+    },
+    {
+      "index_name": "sqlite_autoindex_authority_artifacts_1",
+      "row_count": 4,
+      "rows_sha256": "9708fc9ac20fc9f42a6518c77618950552c9cf7739c75b3f9985f98736a72a7b"
+    },
+    {
+      "index_name": "sqlite_autoindex_authority_artifacts_2",
+      "row_count": 3,
+      "rows_sha256": "513e7a1d120ece4d4fe9c5a94c4ee6630a3d1b0ea8785f2b5b45eaf266e7f499"
+    },
+    {
+      "index_name": "sqlite_autoindex_authority_artifacts_3",
+      "row_count": 5,
+      "rows_sha256": "641832c2fb578a6b8d51aa2f11d45eae6698e822f083e12b680d70830cc617cd"
+    },
+    {
+      "index_name": "sqlite_autoindex_authority_artifacts_4",
+      "row_count": 6,
+      "rows_sha256": "da1d3b343f2da27568cfcfc0f61ca398e1c65ddccab8849bc8ed412329b8bcde"
+    },
+    {
+      "index_name": "sqlite_autoindex_authority_heads_1",
+      "row_count": 3,
+      "rows_sha256": "e37596d709729830db8a458262dc7a83ce64c1ed63ec7b9bb25764099cd260b2"
+    },
+    {
+      "index_name": "sqlite_autoindex_authority_heads_2",
+      "row_count": 5,
+      "rows_sha256": "a53a42d1840b0558a097bae1012500b2e0a4116a14ce9f2868ff03f6b5cee505"
+    },
+    {
+      "index_name": "sqlite_autoindex_branch_capsule_bindings_1",
+      "row_count": 8,
+      "rows_sha256": "fd9cb16a1859bd0076c67d2961cd053252385ac1f74705e2f8fb5cdbaae6cb9e"
+    },
+    {
+      "index_name": "sqlite_autoindex_branch_capsule_bindings_2",
+      "row_count": 7,
+      "rows_sha256": "9425c30a92e458dc2f2685924b2fef8753e10731f17a6fa7729abddddf848909"
+    },
+    {
+      "index_name": "sqlite_autoindex_branch_capsule_bindings_3",
+      "row_count": 4,
+      "rows_sha256": "af0123e9481f3e2f219a2112e406c8adcdbcc853f3d5e254ac32a97a0acd2088"
+    },
+    {
+      "index_name": "sqlite_autoindex_branch_revisions_1",
+      "row_count": 5,
+      "rows_sha256": "18d7c32c2c0b59ed64044eb2dbcf6747b1bcde307d8ea058aa15821a5516fff4"
+    },
+    {
+      "index_name": "sqlite_autoindex_branch_revisions_2",
+      "row_count": 4,
+      "rows_sha256": "b5cfb79618b1aff8d176b864d0e1ae867a32536bddadef428a3882947e545762"
+    },
+    {
+      "index_name": "sqlite_autoindex_branch_revisions_3",
+      "row_count": 6,
+      "rows_sha256": "67c9c73dc489755a2dae745365380c26fa4ea4e127af5879d7b69de08c523deb"
+    },
+    {
+      "index_name": "sqlite_autoindex_branch_revisions_4",
+      "row_count": 7,
+      "rows_sha256": "680ee51e710a706740403fccd7bc9ccd1578a93673793377a52de0c6576763dd"
+    },
+    {
+      "index_name": "sqlite_autoindex_branch_revisions_5",
+      "row_count": 8,
+      "rows_sha256": "ff797b0726cfc8cac035657acb34f9cd30abd639500ae3161be9fca103414aef"
+    },
+    {
+      "index_name": "sqlite_autoindex_branch_revisions_6",
+      "row_count": 6,
+      "rows_sha256": "fabbf19642305db5991dafd4f0f85147708faf3d14c278e6facd3c19444b7579"
+    },
+    {
+      "index_name": "sqlite_autoindex_capsule_revisions_1",
+      "row_count": 5,
+      "rows_sha256": "63b6ea37bed1637e74ba10862378159dcc91eac5b380216510e888c011ca55bd"
+    },
+    {
+      "index_name": "sqlite_autoindex_capsule_revisions_2",
+      "row_count": 4,
+      "rows_sha256": "b54786708ef09734e8ba2eb100f5f5e19ae1ba0d596f57edd35476b8f30a14cf"
+    },
+    {
+      "index_name": "sqlite_autoindex_capsule_revisions_3",
+      "row_count": 6,
+      "rows_sha256": "1507188a2457adf4b4f7f1429a2810de590eae9701bd0a04d77a946dfd5e66c8"
+    },
+    {
+      "index_name": "sqlite_autoindex_durable_jobs_1",
+      "row_count": 4,
+      "rows_sha256": "1ed23e26e82a3ea07e020e25610db1b0a9493f7cf09fae84a28dc029c044700a"
+    },
+    {
+      "index_name": "sqlite_autoindex_durable_jobs_2",
+      "row_count": 5,
+      "rows_sha256": "ae8eaeac70b1a2b7e2bb4b811c5146882e689dea324f968de5f1f17b4edae095"
+    },
+    {
+      "index_name": "sqlite_autoindex_effect_certificate_treatment_members_1",
+      "row_count": 4,
+      "rows_sha256": "ad15debcaa1be07fbcc0e07985351d6c123e7aeed7419989d1471163c7b0a9a2"
+    },
+    {
+      "index_name": "sqlite_autoindex_effect_certificate_treatment_members_2",
+      "row_count": 4,
+      "rows_sha256": "e01fc72c66f22497b4f70c4748d0d956f5eb2532d374a42aca394064282a4715"
+    },
+    {
+      "index_name": "sqlite_autoindex_effect_certificate_treatment_members_3",
+      "row_count": 5,
+      "rows_sha256": "77255e45437edfdbf4582f5f35a472f7e1a82df4e83fa5fc61737b8c65ea2744"
+    },
+    {
+      "index_name": "sqlite_autoindex_effect_certificates_1",
+      "row_count": 3,
+      "rows_sha256": "ab9232dd90a50799e3210eff0b8bc2cd03ecf163d8e572a499bd4106d7409a2a"
+    },
+    {
+      "index_name": "sqlite_autoindex_effect_certificates_2",
+      "row_count": 3,
+      "rows_sha256": "c5ca618944f292a43e8b571f5e500c78e6f8b5346da76dab1776537004f948ec"
+    },
+    {
+      "index_name": "sqlite_autoindex_effect_certificates_3",
+      "row_count": 4,
+      "rows_sha256": "fca4a003372dab114b13c23f4a33f111ecf911c30dfbd596d6e706e7d9c29d33"
+    },
+    {
+      "index_name": "sqlite_autoindex_effect_certificates_4",
+      "row_count": 4,
+      "rows_sha256": "fdef90e23794572ead6de3461196363a595434b31b161db0e05ef0f2d4e5f37d"
+    },
+    {
+      "index_name": "sqlite_autoindex_episode_capsule_facts_1",
+      "row_count": 6,
+      "rows_sha256": "11e009451c8838b9246955f9a8660ebce334a1b4751392ac5025b9c40b38e15d"
+    },
+    {
+      "index_name": "sqlite_autoindex_episode_capsule_facts_2",
+      "row_count": 6,
+      "rows_sha256": "dc29caafba203a77182622b335dfd9b57089f651787b973770520edffdd1e00e"
+    },
+    {
+      "index_name": "sqlite_autoindex_episode_capsule_facts_3",
+      "row_count": 8,
+      "rows_sha256": "79312a2888f3397116558c4660d92540b11445b05f66af0e4d840bea342e2e3c"
+    },
+    {
+      "index_name": "sqlite_autoindex_episode_events_1",
+      "row_count": 5,
+      "rows_sha256": "ee54dd0039ee6c66ffbda3ff06d0ae40119292be5df9fdc11fa5aa670284a75e"
+    },
+    {
+      "index_name": "sqlite_autoindex_episode_events_2",
+      "row_count": 5,
+      "rows_sha256": "1977dd2d6a7bc49f97ac23ba7199e8798517e0dc84e7c2a1082932cf888882d4"
+    },
+    {
+      "index_name": "sqlite_autoindex_episode_events_3",
+      "row_count": 6,
+      "rows_sha256": "bdbbb0a20b1bfc1c8935b147ef094db275ff8c2b69a4536919773bdc616c807e"
+    },
+    {
+      "index_name": "sqlite_autoindex_episode_events_4",
+      "row_count": 6,
+      "rows_sha256": "a56db1e95f91ffa518b0220cc9f59fadcbaa643e0bef7f2b7470340603a32e49"
+    },
+    {
+      "index_name": "sqlite_autoindex_episode_events_5",
+      "row_count": 7,
+      "rows_sha256": "b1b978a95e235dd3f17430330f143f48d231a957c964723e20d5551dbb15a1f2"
+    },
+    {
+      "index_name": "sqlite_autoindex_episode_events_6",
+      "row_count": 8,
+      "rows_sha256": "972d947b2db4c2f890175961d50befdaa403ff4622d3d795e0ebe46437b9aa3b"
+    },
+    {
+      "index_name": "sqlite_autoindex_memory_commits_1",
+      "row_count": 4,
+      "rows_sha256": "a1bea6645ede55dbab3fa6f80a5e2bdc990ad6c862b5a6fc2cc76b388d7c1847"
+    },
+    {
+      "index_name": "sqlite_autoindex_memory_commits_2",
+      "row_count": 4,
+      "rows_sha256": "1324cc083cbafe93f39df9842d79d5b0e4ce0fc2af57510d8a5f2b1ae72fb7d1"
+    },
+    {
+      "index_name": "sqlite_autoindex_memory_commits_3",
+      "row_count": 4,
+      "rows_sha256": "272757f1837bd442f10ba9ff301e8dd373c8c631b3b4d250a59c4a2fe70b9936"
+    },
+    {
+      "index_name": "sqlite_autoindex_memory_commits_4",
+      "row_count": 6,
+      "rows_sha256": "73693657658ee6c632affaba9af2feb5b7de08ac76a93bbd4f6735a9497bc88a"
+    },
+    {
+      "index_name": "sqlite_autoindex_memory_items_1",
+      "row_count": 4,
+      "rows_sha256": "74b25ff3ebf3c85e35a45c18403d9c8bb3b58b0b6be3ffb7043215dfa45d50b5"
+    },
+    {
+      "index_name": "sqlite_autoindex_memory_items_2",
+      "row_count": 5,
+      "rows_sha256": "5ca9288cbc1c0a781a52f056368b6262019880a04923040e3e71563b4000764d"
+    },
+    {
+      "index_name": "sqlite_autoindex_memory_items_3",
+      "row_count": 4,
+      "rows_sha256": "8652ca3f656f0665d83f1dbfd2358e233812e52391692ae5178b0c3b9b20c88e"
+    },
+    {
+      "index_name": "sqlite_autoindex_memory_relations_1",
+      "row_count": 4,
+      "rows_sha256": "7a51f1df83339cbec44c941682632755837d41c46bbcfcc043840670d5da4bf5"
+    },
+    {
+      "index_name": "sqlite_autoindex_memory_relations_2",
+      "row_count": 6,
+      "rows_sha256": "980257d99fc3f4f6221971b55612b39b4138e51a63be125fe4d7352c641bf4d2"
+    },
+    {
+      "index_name": "sqlite_autoindex_memory_relations_3",
+      "row_count": 4,
+      "rows_sha256": "eba8cc248db203efae4afe8a8a6ec0e01e9414df489dfe7c2ce518cacb3a7614"
+    },
+    {
+      "index_name": "sqlite_autoindex_memory_scope_heads_1",
+      "row_count": 3,
+      "rows_sha256": "3cc231242ba338416a399c5497fcf8b7d709db9ba7ea84d073ea87d3a089c218"
+    },
+    {
+      "index_name": "sqlite_autoindex_memory_scope_heads_2",
+      "row_count": 6,
+      "rows_sha256": "a616f0d9458307eb82964dce72b0e0a3ba762b80b0d877c3e3dc9e883e986ffd"
+    },
+    {
+      "index_name": "sqlite_autoindex_memory_scope_heads_3",
+      "row_count": 4,
+      "rows_sha256": "86a1addb300959f30b482e678e09541694b393bef1d75311c54b533aef20d0b9"
+    },
+    {
+      "index_name": "sqlite_autoindex_observation_snapshots_1",
+      "row_count": 4,
+      "rows_sha256": "6ca1921d83f8a4d3f8463beb6fd82adb0821bf377c9b7bc0d2cd8ec81c005d66"
+    },
+    {
+      "index_name": "sqlite_autoindex_observation_snapshots_2",
+      "row_count": 4,
+      "rows_sha256": "130415c6ff10211081d13fea4b82ea07fe3fcd6345c572ccacc8ae1b4e588689"
+    },
+    {
+      "index_name": "sqlite_autoindex_observation_snapshots_3",
+      "row_count": 5,
+      "rows_sha256": "177414c56ea1b05a31be7dc577c5cd0cfc9f8dbc547f2c4555e3732f6d128448"
+    },
+    {
+      "index_name": "sqlite_autoindex_operations_1",
+      "row_count": 5,
+      "rows_sha256": "b60ff7bc62a2e34b887ea10d5ee2ecba8431037f09b276aefa2f646f25dd15cf"
+    },
+    {
+      "index_name": "sqlite_autoindex_operations_2",
+      "row_count": 6,
+      "rows_sha256": "871de49b074d3c87b85cf29b5ce8b2e4c6110a7f9b8539521553f227240f01f0"
+    },
+    {
+      "index_name": "sqlite_autoindex_operations_3",
+      "row_count": 8,
+      "rows_sha256": "36797d7c199c3d97d4f1d20496eb7b4c3a4fffb9f4d98b51353a8ce60374267e"
+    },
+    {
+      "index_name": "sqlite_autoindex_operations_4",
+      "row_count": 3,
+      "rows_sha256": "d48b95b5de4aaabb7dcfb86f898937453e554d8d321596ac9b4fed74c86425b6"
+    },
+    {
+      "index_name": "sqlite_autoindex_runtime_meta_1",
+      "row_count": 2,
+      "rows_sha256": "eefcf1147c677eebf3a6853f27c92e0beaa2dfca4f99691c3caa8ea087e15a70"
+    }
+  ],
+  "foreign_key_list": [
+    {
+      "table_name": "authority_artifacts",
+      "row_count": 5,
+      "rows_sha256": "30c1013edbf0103636810d4774c07534f26af4eaba0bc8d9544126524e1c441c"
+    },
+    {
+      "table_name": "authority_heads",
+      "row_count": 12,
+      "rows_sha256": "5475aa27ac9b1a706baf39afc3ae91917915efa8ccc82a1835988438b0e2b0c9"
+    },
+    {
+      "table_name": "branch_capsule_bindings",
+      "row_count": 11,
+      "rows_sha256": "def2c79381f7e91b780e4972a02347703db25a0f987df3ee85e5ec03c63da4e2"
+    },
+    {
+      "table_name": "branch_revisions",
+      "row_count": 47,
+      "rows_sha256": "63fffaec64c60af1acf734a57180166b7050c8df078b7281d8a58d7180a709e0"
+    },
+    {
+      "table_name": "capsule_revisions",
+      "row_count": 13,
+      "rows_sha256": "a5fb4a286434858e75d353fb5437e0d8efab36adaf7c51fcb6a6f643c44752f4"
+    },
+    {
+      "table_name": "durable_jobs",
+      "row_count": 15,
+      "rows_sha256": "ab9b560a450d95387a41b67544c8b82e09f7cfc467fd0ba8f2d6eff18ca342a2"
+    },
+    {
+      "table_name": "effect_certificate_treatment_members",
+      "row_count": 3,
+      "rows_sha256": "d278d03497781574914fb7860cfb49557785fb3e7cea1c24032f87388db92f04"
+    },
+    {
+      "table_name": "effect_certificates",
+      "row_count": 32,
+      "rows_sha256": "68d718be6079a2d7ceb943c0b5b8f7cdce70d7d9b69cc764ace30d583376eb6c"
+    },
+    {
+      "table_name": "episode_capsule_facts",
+      "row_count": 12,
+      "rows_sha256": "80b58c6e801844017b97487669957b57b8ab4eaecc38f9b728b4037c474b3e7a"
+    },
+    {
+      "table_name": "episode_events",
+      "row_count": 24,
+      "rows_sha256": "6834fad0664e3d6842639a782ddf12bafeebb575b24568911b4b547b4f5eb2cb"
+    },
+    {
+      "table_name": "memory_commits",
+      "row_count": 12,
+      "rows_sha256": "35bf8fe190f77158a3cb151ab30fe1c371a2d34f7d351e9cca1dcafb8fe3ea12"
+    },
+    {
+      "table_name": "memory_items",
+      "row_count": 5,
+      "rows_sha256": "44c6e12c1e998c96b481448fedbf4344187c5bda1a3f67845a9d54692688ee61"
+    },
+    {
+      "table_name": "memory_relations",
+      "row_count": 11,
+      "rows_sha256": "a0faf5a394486acd6645e165217ce1c7379f6a13ab52b7b8919b3840839837de"
+    },
+    {
+      "table_name": "memory_scope_heads",
+      "row_count": 10,
+      "rows_sha256": "6b81c6e9e9747a6e2a10a2b6d600706191f9a6f1e913e337cf5f6f7c666de47a"
+    },
+    {
+      "table_name": "observation_snapshots",
+      "row_count": 5,
+      "rows_sha256": "3c2f791925961505c9cf04a283345074c3ac6fbf158fd9dd01aaad6e25ca4377"
+    },
+    {
+      "table_name": "operations",
+      "row_count": 0,
+      "rows_sha256": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945"
+    },
+    {
+      "table_name": "runtime_meta",
+      "row_count": 0,
+      "rows_sha256": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945"
+    }
+  ],
+  "ddl_sha256": "b2f0e43aebef0059c91f031b2b25f61ba2967b2e020ca1ba95267c518aaae4a7",
+  "schema_sha256": "e5bdbcd689e647c1b4e16653d9c40b6c9d0c133cf494e14caaff5b0c4264fba2"
+}

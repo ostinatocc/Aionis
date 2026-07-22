@@ -12,6 +12,11 @@ import {
 import { basename, dirname, parse, resolve } from "node:path";
 import { pathToFileURL } from "node:url";
 
+import {
+  assertContinuationRuntimeV1Host,
+  CONTINUATION_RUNTIME_V1_NODE_VERSION_RANGE,
+} from "../continuation/host-contract.js";
+
 export type SqliteStatement = {
   run(...params: any[]): unknown;
   get<T = any>(...params: any[]): T;
@@ -43,7 +48,7 @@ export function requireSqliteStreamingStatement(
 
 export type SqliteDatabase = {
   exec(sql: string): unknown;
-  prepare<T = any>(sql: string): SqliteStatement;
+  prepare(sql: string): SqliteStatement;
   close(): void;
 };
 
@@ -58,21 +63,9 @@ const require = createRequire(import.meta.url);
 
 let cachedSqliteModule: SqliteModule | null | undefined;
 
-export const NODE_SQLITE_URL_PATH_SUPPORTED_VERSION_RANGE =
-  ">=22.15.0 <23 or >=23.10.0" as const;
-
-export function hasNodeSqliteUrlPathSupport(version: string): boolean {
-  const match = /^(\d+)\.(\d+)\.(\d+)$/u.exec(version);
-  if (!match) return false;
-  const major = Number(match[1]);
-  const minor = Number(match[2]);
-  if (!Number.isSafeInteger(major) || !Number.isSafeInteger(minor)) return false;
-  return major === 22 ? minor >= 15 : major === 23 ? minor >= 10 : major > 23;
-}
-
 function loadSqliteModule(): SqliteModule | null {
-  if (!hasNodeSqliteUrlPathSupport(process.versions.node)
-    || cachedSqliteModule !== undefined) return cachedSqliteModule ?? null;
+  assertContinuationRuntimeV1Host();
+  if (cachedSqliteModule !== undefined) return cachedSqliteModule ?? null;
   try {
     const mod = require("node:sqlite") as Partial<SqliteModule>;
     cachedSqliteModule = typeof mod.DatabaseSync === "function" ? mod as SqliteModule : null;
@@ -88,7 +81,7 @@ export function hasNodeSqliteSupport(): boolean {
 
 export function nodeSqliteSupportError(): Error {
   return new Error(
-    `Lite SQLite requires Node.js ${NODE_SQLITE_URL_PATH_SUPPORTED_VERSION_RANGE} with node:sqlite URL-path support.`,
+    `Aionis Continuation Runtime V1 requires Node.js ${CONTINUATION_RUNTIME_V1_NODE_VERSION_RANGE} with node:sqlite URL-path support.`,
   );
 }
 

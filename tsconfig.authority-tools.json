@@ -1,0 +1,21 @@
+{
+  "extends": "./tsconfig.json",
+  "compilerOptions": {
+    "declaration": false,
+    "declarationMap": false,
+    "noEmit": false,
+    "outDir": "dist-authority",
+    "rootDir": ".",
+    "sourceMap": false
+  },
+  "include": [
+    "tools/author-continuation-runtime-v1-authority.ts",
+    "tools/continuation-runtime-v1-authority-authoring.ts",
+    "tools/continuation-runtime-v1-authority-key.ts"
+  ],
+  "exclude": [
+    "dist",
+    "dist-authority",
+    "node_modules"
+  ]
+}

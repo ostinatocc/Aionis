@@ -1,31 +1,206 @@
+name: ${COMPOSE_PROJECT_NAME:-aionis-v1}
+
+x-runtime-base: &runtime-base
+  image: ${AIONIS_CONTAINER_IMAGE:-aionis-continuation-runtime-v1:local}
+  build:
+    context: .
+    target: runtime
+  init: true
+  read_only: true
+  cap_drop:
+    - ALL
+  security_opt:
+    - no-new-privileges:true
+  tmpfs:
+    - /tmp:rw,noexec,nosuid,nodev,size=67108864,mode=0700,uid=1000,gid=1000
+
+x-data-mount: &data-mount
+  type: volume
+  source: aionis-data
+  target: /data
+
+x-root-public-key-mount: &root-public-key-mount
+  type: bind
+  source: ${TRUST_ROOT_PUBLIC_KEY_FILE:-./.secrets/UNCONFIGURED_TRUST_ROOT_PUBLIC_KEY}
+  target: /run/aionis/trust-root-public.pem
+  read_only: true
+  bind:
+    create_host_path: false
+
+x-effect-private-key-mount: &effect-private-key-mount
+  type: bind
+  source: ${EFFECT_SIGNER_PRIVATE_KEY_FILE:-./.secrets/UNCONFIGURED_EFFECT_SIGNER_KEY}
+  target: /run/aionis/effect-signer-private.pem
+  read_only: true
+  bind:
+    create_host_path: false
+
+x-cohort-seed-mount: &cohort-seed-mount
+  type: bind
+  source: ${COHORT_SEED_FILE:-./.secrets/UNCONFIGURED_COHORT_SEED}
+  target: /run/aionis/cohort-assignment-seed.bin
+  read_only: true
+  bind:
+    create_host_path: false
+
+x-authority-environment: &authority-environment
+  AIONIS_DATA_PATH: /data/runtime.sqlite
+  AIONIS_TRUST_ROOT_PUBLIC_KEY_PATH: /run/aionis/trust-root-public.pem
+  AIONIS_TRUST_ROOT_SHA256: ${AIONIS_TRUST_ROOT_SHA256:-}
+
+x-worker-environment: &worker-environment
+  <<: *authority-environment
+  AIONIS_TENANT_ID: ${AIONIS_TENANT_ID:-}
+  AIONIS_JOB_POLL_MS: ${AIONIS_JOB_POLL_MS:-250}
+  AIONIS_JOB_BATCH_SIZE: ${AIONIS_JOB_BATCH_SIZE:-16}
+  AIONIS_JOB_LEASE_MS: ${AIONIS_JOB_LEASE_MS:-60000}
+  AIONIS_LOG_LEVEL: ${AIONIS_LOG_LEVEL:-info}
+  AIONIS_SHUTDOWN_TIMEOUT_MS: ${AIONIS_SHUTDOWN_TIMEOUT_MS:-30000}
+
 services:
-  aionis:
-    build:
-      context: .
-    image: ghcr.io/ostinatocc/aionis:local
+  daemon:
+    <<: *runtime-base
+    command:
+      - node
+      - dist/runtime-v1/daemon-entry.js
+    restart: unless-stopped
+    stop_grace_period: 305s
     ports:
-      # Host loopback -> all container interfaces; do not publish Lite on a public host address.
-      - "127.0.0.1:3001:3001"
+      - "${HTTP_BIND:-127.0.0.1}:${HTTP_PORT:-3000}:3000"
     environment:
-      AIONIS_EDITION: lite
-      AIONIS_MODE: local
-      APP_ENV: dev
-      AIONIS_LISTEN_HOST: 0.0.0.0
-      AIONIS_ALLOW_UNAUTHENTICATED_REMOTE: "true"
-      MEMORY_AUTH_MODE: off
-      TENANT_QUOTA_ENABLED: "false"
-      RATE_LIMIT_BYPASS_LOOPBACK: "true"
-      LITE_WRITE_SQLITE_PATH: /data/aionis-lite-write.sqlite
-      LITE_REPLAY_SQLITE_PATH: /data/aionis-lite-replay.sqlite
-      LITE_LOCAL_ACTOR_ID: local-docker
+      <<: *authority-environment
+      AIONIS_TENANT_ID: ${AIONIS_TENANT_ID:-}
+      AIONIS_HOST_PRINCIPAL_ID: ${AIONIS_HOST_PRINCIPAL_ID:-}
+      AIONIS_HOST_API_KEY: ${AIONIS_HOST_API_KEY:-}
+      AIONIS_OPERATOR_PRINCIPAL_ID: ${AIONIS_OPERATOR_PRINCIPAL_ID:-}
+      AIONIS_OPERATOR_API_KEY: ${AIONIS_OPERATOR_API_KEY:-}
+      AIONIS_HTTP_HOST: 0.0.0.0
+      AIONIS_HTTP_PORT: "3000"
+      AIONIS_HTTP_BODY_LIMIT_BYTES: ${AIONIS_HTTP_BODY_LIMIT_BYTES:-1048576}
+      AIONIS_LOG_LEVEL: ${AIONIS_LOG_LEVEL:-info}
+      AIONIS_SHUTDOWN_TIMEOUT_MS: ${AIONIS_SHUTDOWN_TIMEOUT_MS:-30000}
     volumes:
-      - aionis-data:/data
+      - *data-mount
+      - *root-public-key-mount
+
+  provision:
+    <<: *runtime-base
+    network_mode: none
+    profiles:
+      - provision
+    command:
+      - node
+      - dist/runtime-v1/provisioning-entry.js
+    stdin_open: true
+    environment:
+      <<: *authority-environment
+    volumes:
+      - *data-mount
+      - *root-public-key-mount
     healthcheck:
-      test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:' + (process.env.PORT || '3001') + '/healthz').then((r) => process.exit(r.ok ? 0 : 1)).catch(() => process.exit(1))"]
-      interval: 30s
-      timeout: 5s
-      retries: 3
-      start_period: 15s
+      disable: true
+
+  provision-cohort:
+    <<: *runtime-base
+    network_mode: none
+    profiles:
+      - provision
+    command:
+      - /bin/sh
+      - -ceu
+      - exec 3</run/aionis/cohort-assignment-seed.bin; exec node dist/runtime-v1/provisioning-entry.js
+    stdin_open: true
+    environment:
+      <<: *authority-environment
+      AIONIS_PROVISIONING_SEED_FD: "3"
+    volumes:
+      - *data-mount
+      - *root-public-key-mount
+      - *cohort-seed-mount
+    healthcheck:
+      disable: true
+
+  worker-embedding:
+    <<: *runtime-base
+    profiles:
+      - embedding
+    command:
+      - node
+      - dist/runtime-v1/worker-entry.js
+    restart: unless-stopped
+    stop_grace_period: 305s
+    environment:
+      <<: *worker-environment
+      AIONIS_WORKER_ROLE: embedding
+      AIONIS_EMBEDDING_BASE_URL: ${AIONIS_EMBEDDING_BASE_URL:-}
+      AIONIS_EMBEDDING_MODEL: ${AIONIS_EMBEDDING_MODEL:-}
+      AIONIS_EMBEDDING_DIMENSIONS: ${AIONIS_EMBEDDING_DIMENSIONS:-}
+      AIONIS_EMBEDDING_API_KEY: ${AIONIS_EMBEDDING_API_KEY:-}
+    volumes:
+      - *data-mount
+      - *root-public-key-mount
+    healthcheck:
+      disable: true
+
+  worker-ann:
+    <<: *runtime-base
+    network_mode: none
+    profiles:
+      - ann
+    command:
+      - node
+      - dist/runtime-v1/worker-entry.js
+    restart: unless-stopped
+    stop_grace_period: 305s
+    environment:
+      <<: *worker-environment
+      AIONIS_WORKER_ROLE: ann
+    volumes:
+      - *data-mount
+      - *root-public-key-mount
+    healthcheck:
+      disable: true
+
+  worker-effect:
+    <<: *runtime-base
+    network_mode: none
+    profiles:
+      - effect
+    command:
+      - node
+      - dist/runtime-v1/worker-entry.js
+    restart: unless-stopped
+    stop_grace_period: 305s
+    environment:
+      <<: *worker-environment
+      AIONIS_WORKER_ROLE: effect
+      AIONIS_EFFECT_SIGNER_PRIVATE_KEY_PATH: /run/aionis/effect-signer-private.pem
+      AIONIS_EFFECT_SIGNER_SHA256: ${AIONIS_EFFECT_SIGNER_SHA256:-}
+    volumes:
+      - *data-mount
+      - *root-public-key-mount
+      - *effect-private-key-mount
+    healthcheck:
+      disable: true
+
+  worker-retention:
+    <<: *runtime-base
+    network_mode: none
+    profiles:
+      - retention
+    command:
+      - node
+      - dist/runtime-v1/worker-entry.js
+    restart: unless-stopped
+    stop_grace_period: 305s
+    environment:
+      <<: *worker-environment
+      AIONIS_WORKER_ROLE: retention
+    volumes:
+      - *data-mount
+      - *root-public-key-mount
+    healthcheck:
+      disable: true
 
 volumes:
   aionis-data:

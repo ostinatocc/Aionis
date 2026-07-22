@@ -5,10 +5,25 @@
     "moduleResolution": "NodeNext",
     "outDir": "dist",
     "rootDir": "src",
+    "declaration": true,
+    "declarationMap": true,
+    "sourceMap": true,
+    "noEmitOnError": true,
+    "noUnusedLocals": true,
+    "noUnusedParameters": true,
     "strict": true,
     "esModuleInterop": true,
     "skipLibCheck": true,
     "resolveJsonModule": true
   },
-  "include": ["src/**/*.ts"]
+  "include": [
+    "src/continuation/**/*.ts",
+    "src/runtime-v1/**/*.ts",
+    "src/store/continuation-runtime-v1-*.ts",
+    "src/store/sqlite.ts",
+    "src/store/sqlite-schema-sql.ts",
+    "src/store/sqlite-transaction-runner.ts",
+    "src/util/crypto.ts",
+    "src/util/stable-json.ts"
+  ]
 }
