@@ -282,10 +282,42 @@ jobs:
         run: |
           docker compose --env-file /dev/null config --quiet
           docker compose --env-file /dev/null --profile provision config --quiet
-          compose_json="$(docker compose --env-file /dev/null \
+          probe_root="$(mktemp -d)"
+          probe_base="aionis-capability-${GITHUB_RUN_ID:-local}-${GITHUB_RUN_ATTEMPT:-0}"
+          existing_root="$probe_root/existing-root.pem"
+          existing_effect="$probe_root/existing-effect.pem"
+          existing_seed="$probe_root/existing-seed.bin"
+          render_root="$probe_root/render-root.pem"
+          render_effect="$probe_root/render-effect.pem"
+          render_seed="$probe_root/render-seed.bin"
+          : > "$existing_root"
+          : > "$existing_effect"
+          : > "$existing_seed"
+          probe_projects=()
+          cleanup_probe() {
+            local project
+            for project in "${probe_projects[@]}"; do
+              AIONIS_CONTAINER_IMAGE=aionis-continuation-runtime-v1:ci \
+                TRUST_ROOT_PUBLIC_KEY_FILE="$existing_root" \
+                EFFECT_SIGNER_PRIVATE_KEY_FILE="$existing_effect" \
+                COHORT_SEED_FILE="$existing_seed" \
+                docker compose --ansi never --env-file /dev/null \
+                  --project-name "$project" \
+                  --profile provision --profile embedding --profile ann \
+                  --profile effect --profile retention \
+                  down --volumes --remove-orphans >/dev/null 2>&1 || true
+            done
+            rm -rf "$probe_root"
+          }
+          trap cleanup_probe EXIT
+          compose_json="$(TRUST_ROOT_PUBLIC_KEY_FILE="$render_root" \
+            EFFECT_SIGNER_PRIVATE_KEY_FILE="$render_effect" \
+            COHORT_SEED_FILE="$render_seed" \
+            docker compose --env-file /dev/null \
             --profile provision --profile embedding --profile ann \
             --profile effect --profile retention config --format json)"
           node --input-type=module -e '
+            import fs from "node:fs";
             const config = JSON.parse(process.argv[1]);
             const services = config.services;
             const exact = (actual, expected, label) => {
@@ -293,6 +325,60 @@ jobs:
               const right = JSON.stringify([...expected].sort());
               if (left !== right) throw new Error(`${label}: ${left}`);
             };
+            const composeSource = fs.readFileSync("docker-compose.yml", "utf8");
+            const capabilityMountSources = {
+              "x-root-public-key-mount": {
+                alias: "root-public-key-mount",
+                aliasUses: 7,
+                source: "  source: ${TRUST_ROOT_PUBLIC_KEY_FILE:-./.secrets/UNCONFIGURED_TRUST_ROOT_PUBLIC_KEY}",
+                target: "/run/aionis/trust-root-public.pem",
+              },
+              "x-effect-private-key-mount": {
+                alias: "effect-private-key-mount",
+                aliasUses: 1,
+                source: "  source: ${EFFECT_SIGNER_PRIVATE_KEY_FILE:-./.secrets/UNCONFIGURED_EFFECT_SIGNER_KEY}",
+                target: "/run/aionis/effect-signer-private.pem",
+              },
+              "x-cohort-seed-mount": {
+                alias: "cohort-seed-mount",
+                aliasUses: 1,
+                source: "  source: ${COHORT_SEED_FILE:-./.secrets/UNCONFIGURED_COHORT_SEED}",
+                target: "/run/aionis/cohort-assignment-seed.bin",
+              },
+            };
+            const blockMatches = [...composeSource.matchAll(
+              /^(x-[a-z0-9-]+):[^\n]*\n((?:(?: {2}|\t).*(?:\n|$)|\n)*)/gmu,
+            )];
+            exact(composeSource.match(/^[ \t]+create_host_path:.*$/gmu) ?? [],
+              Object.keys(capabilityMountSources).map(
+                () => "    create_host_path: false"),
+              "capability create_host_path declarations");
+            for (const [name, expected] of Object.entries(capabilityMountSources)) {
+              const matches = blockMatches.filter((match) => match[1] === name);
+              if (matches.length !== 1) {
+                throw new Error(`capability mount source count: ${name}:${matches.length}`);
+              }
+              const lines = matches[0][2].split(/\r?\n/u);
+              for (const required of [
+                "  type: bind", expected.source, `  target: ${expected.target}`,
+                "  read_only: true", "  bind:", "    create_host_path: false",
+              ]) {
+                if (lines.filter((line) => line === required).length !== 1) {
+                  throw new Error(`capability mount source drift: ${name}:${required}`);
+                }
+              }
+              const aliasUses = (composeSource.match(
+                new RegExp(`^[ \\t]+- \\*${expected.alias}[ \\t]*$`, "gmu"),
+              ) ?? []).length;
+              if (aliasUses !== expected.aliasUses) {
+                throw new Error(`capability mount alias drift: ${name}:${aliasUses}`);
+              }
+            }
+            const renderedCapabilitySources = new Map([
+              ["/run/aionis/trust-root-public.pem", process.argv[2]],
+              ["/run/aionis/effect-signer-private.pem", process.argv[3]],
+              ["/run/aionis/cohort-assignment-seed.bin", process.argv[4]],
+            ]);
             const authority = [
               "AIONIS_DATA_PATH", "AIONIS_TRUST_ROOT_PUBLIC_KEY_PATH",
               "AIONIS_TRUST_ROOT_SHA256",
@@ -354,11 +440,14 @@ jobs:
               }
               for (const mount of service.volumes ?? []) {
                 if (mount.target === "/data") {
-                  if (mount.type !== "volume" || mount.read_only === true) {
+                  if (mount.type !== "volume" || mount.source !== "aionis-data"
+                    || mount.read_only === true) {
                     throw new Error(`invalid authority volume: ${name}`);
                   }
                 } else if (mount.type !== "bind" || mount.read_only !== true
-                  || mount.bind?.create_host_path !== false) {
+                  || mount.source !== renderedCapabilitySources.get(mount.target)
+                  || (Object.hasOwn(mount.bind ?? {}, "create_host_path")
+                    && mount.bind.create_host_path !== false)) {
                   throw new Error(`invalid capability mount: ${name}:${mount.target}`);
                 }
               }
@@ -384,7 +473,64 @@ jobs:
                 throw new Error(`shutdown grace drift: ${name}`);
               }
             }
-          ' "$compose_json"
+          ' "$compose_json" "$render_root" "$render_effect" "$render_seed"
+          positive_project="$probe_base-positive"
+          probe_projects+=("$positive_project")
+          AIONIS_CONTAINER_IMAGE=aionis-continuation-runtime-v1:ci \
+            TRUST_ROOT_PUBLIC_KEY_FILE="$existing_root" \
+            EFFECT_SIGNER_PRIVATE_KEY_FILE="$existing_effect" \
+            COHORT_SEED_FILE="$existing_seed" \
+            docker compose --ansi never --env-file /dev/null \
+              --project-name "$positive_project" \
+              --profile provision --profile embedding --profile ann \
+              --profile effect --profile retention \
+              create --no-build --pull never daemon
+          test -n "$(docker compose --project-name "$positive_project" \
+            ps --all --quiet daemon)"
+          probe_missing_bind() {
+            local service="$1"
+            local label="$2"
+            local missing="$3"
+            local root_file="$4"
+            local effect_file="$5"
+            local seed_file="$6"
+            local project="$probe_base-$service-$label"
+            local log="$probe_root/$service-$label.log"
+            probe_projects+=("$project")
+            if AIONIS_CONTAINER_IMAGE=aionis-continuation-runtime-v1:ci \
+              TRUST_ROOT_PUBLIC_KEY_FILE="$root_file" \
+              EFFECT_SIGNER_PRIVATE_KEY_FILE="$effect_file" \
+              COHORT_SEED_FILE="$seed_file" \
+              docker compose --ansi never --env-file /dev/null \
+                --project-name "$project" \
+                --profile provision --profile embedding --profile ann \
+                --profile effect --profile retention \
+                create --no-build --pull never "$service" >"$log" 2>&1; then
+              cat "$log"
+              echo "missing capability bind was accepted: $service:$label" >&2
+              return 1
+            fi
+            if test -e "$missing" || test -L "$missing" \
+              || ! grep -F -- "$missing" "$log" >/dev/null; then
+              cat "$log"
+              echo "missing capability bind failed open: $service:$label" >&2
+              return 1
+            fi
+          }
+          for service in daemon provision provision-cohort worker-embedding \
+            worker-ann worker-effect worker-retention; do
+            missing="$probe_root/missing-$service-root.pem"
+            probe_missing_bind "$service" root "$missing" "$missing" \
+              "$existing_effect" "$existing_seed"
+          done
+          missing="$probe_root/missing-effect.pem"
+          probe_missing_bind worker-effect effect "$missing" "$existing_root" \
+            "$missing" "$existing_seed"
+          missing="$probe_root/missing-seed.bin"
+          probe_missing_bind provision-cohort seed "$missing" "$existing_root" \
+            "$existing_effect" "$missing"
+          cleanup_probe
+          trap - EXIT
 
       - name: Verify image contains only the compiled Runtime
         run: |
