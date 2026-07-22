@@ -37,8 +37,8 @@ import { deriveContinuationRuntimeV1OperationResultV1 } from
 const TENANT = "tenant-a";
 const SCOPE = "scope-a";
 const COLLECTOR = "b".repeat(64);
+const BOOTSTRAP_TIME = "2026-07-21T09:00:00.000Z";
 const SNAPSHOT_TIME = "2026-07-21T10:03:00.000Z";
-const COMPLETED_TIME = "2026-07-21T10:04:00.000Z";
 const EXTERNAL_VERIFIER = generateKeyPairSync("ed25519");
 
 function taskEnvelopeInput(
@@ -163,16 +163,14 @@ function fixture(
 ) {
   const directory = mkdtempSync(join(tmpdir(), "aionis-v1-observations-"));
   const path = join(directory, "runtime.sqlite");
+  let authorityClock = BOOTSTRAP_TIME;
   const database = openContinuationRuntimeV1Database(path, {
     databaseInstanceId: "a".repeat(64),
-    now: () => "2026-07-21T09:00:00.000Z",
+    authorityNow: () => authorityClock,
   });
-  const store = createContinuationRuntimeV1ObservationStore(database, {
-    now: () => SNAPSHOT_TIME,
-  });
-  const operations = createContinuationRuntimeV1OperationStore(database, {
-    now: () => COMPLETED_TIME,
-  });
+  authorityClock = SNAPSHOT_TIME;
+  const store = createContinuationRuntimeV1ObservationStore(database);
+  const operations = createContinuationRuntimeV1OperationStore(database);
   return { directory, path, database, store, operations, tenantId, scope };
 }
 

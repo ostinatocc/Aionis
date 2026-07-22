@@ -19,7 +19,7 @@ if (!path || !phases.includes(targetPhase as ContinuationRuntimeV1BootstrapPhase
 }
 
 openContinuationRuntimeV1Database(path, {
-  now: () => "2026-07-21T00:00:00.000Z",
+  authorityNow: () => "2026-07-21T00:00:00.000Z",
   databaseInstanceId: "a".repeat(64),
   bootstrapFaultInjector: (phase) => {
     if (phase !== targetPhase) return;

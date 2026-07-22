@@ -86,11 +86,9 @@ function fixture() {
   const clock = { value: "2026-07-21T01:00:00.000Z" };
   const database = openContinuationRuntimeV1Database(path, {
     databaseInstanceId: sequence.toString(16).padStart(64, "0"),
-    now: () => "2026-07-21T00:00:00.000Z",
+    authorityNow: () => clock.value,
   });
-  const operations = createContinuationRuntimeV1OperationStore(database, {
-    now: () => clock.value,
-  });
+  const operations = createContinuationRuntimeV1OperationStore(database);
   const artifactProvisioner = createContinuationRuntimeV1AuthorityArtifactProvisioner(
     database,
     ROOT_KEYS.publicKey,
@@ -110,7 +108,6 @@ function fixture() {
     artifacts,
     policies,
     effects,
-    { now: () => clock.value },
   );
   return {
     root,
@@ -123,12 +120,8 @@ function fixture() {
     policies,
     effects,
     authority,
-    observations: createContinuationRuntimeV1ObservationStore(database, {
-      now: () => clock.value,
-    }),
-    memory: createContinuationRuntimeV1MemoryStore(database, {
-      now: () => clock.value,
-    }),
+    observations: createContinuationRuntimeV1ObservationStore(database),
+    memory: createContinuationRuntimeV1MemoryStore(database),
   };
 }
 
@@ -478,7 +471,9 @@ test("lazy genesis is deterministic, immutable, and survives exact reopen", asyn
     const expected = first.head;
     await database.close();
     database = null;
-    const reopened = openContinuationRuntimeV1Database(current.path);
+    const reopened = openContinuationRuntimeV1Database(current.path, {
+      authorityNow: () => current.clock.value,
+    });
     database = reopened;
     const artifacts = createContinuationRuntimeV1AuthorityArtifactReader(
       reopened,

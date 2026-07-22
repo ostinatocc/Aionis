@@ -33,9 +33,8 @@ const TEST_DATABASES = new WeakMap<object, ContinuationRuntimeV1Database>();
 
 function testOperationStore(
   database: ContinuationRuntimeV1Database,
-  options: Parameters<typeof createContinuationRuntimeV1OperationStore>[1] = {},
 ) {
-  const store = createContinuationRuntimeV1OperationStore(database, options);
+  const store = createContinuationRuntimeV1OperationStore(database);
   TEST_DATABASES.set(store, database);
   return store;
 }
@@ -43,10 +42,12 @@ function testOperationStore(
 function fixture() {
   const root = mkdtempSync(join(tmpdir(), "aionis-v1-memory-"));
   const path = join(root, "authority", "runtime.sqlite");
+  const clock = { value: "2026-07-21T09:00:00.000Z" };
   const database = openContinuationRuntimeV1Database(path, {
-    databaseInstanceId: "b".repeat(64), now: () => "2026-07-21T09:00:00.000Z",
+    databaseInstanceId: "b".repeat(64), authorityNow: () => clock.value,
   });
-  return { root, path, database };
+  clock.value = NOW;
+  return { root, path, database, clock };
 }
 
 function draft(capsuleId: string, refs: ExecutionCapsuleDraftV1["conflicts_with"] = []) {
@@ -90,10 +91,8 @@ function firstArgs(): AppendMemoryRevisionV1Args {
 test("logical archive redacts only the current materialization, remains auditable, and is terminal", async () => {
   const current = fixture();
   try {
-    const memory = createContinuationRuntimeV1MemoryStore(current.database, {
-      now: () => NOW,
-    });
-    const operations = testOperationStore(current.database, { now: () => NOW });
+    const memory = createContinuationRuntimeV1MemoryStore(current.database);
+    const operations = testOperationStore(current.database);
     await appendOwned(memory, operations, firstArgs(), "archive-seed");
     await appendOwned(memory, operations, {
       expected_head_revision: 1,
@@ -187,10 +186,8 @@ test("logical archive redacts only the current materialization, remains auditabl
 test("only active memory can be created and governed quarantine is terminal", async () => {
   const current = fixture();
   try {
-    const memory = createContinuationRuntimeV1MemoryStore(current.database, {
-      now: () => NOW,
-    });
-    const operations = testOperationStore(current.database, { now: () => NOW });
+    const memory = createContinuationRuntimeV1MemoryStore(current.database);
+    const operations = testOperationStore(current.database);
     await assert.rejects(appendOwned(memory, operations, {
       expected_head_revision: null,
       items: [{
@@ -284,9 +281,7 @@ async function appendOwned(
     operationId, request,
     produce: async (context) => {
       if (operationKind === "record_observations") {
-        await createContinuationRuntimeV1ObservationStore(database, {
-          now: () => NOW,
-        }).put(context, {
+        await createContinuationRuntimeV1ObservationStore(database).put(context, {
           host_task_envelope: {
             host_task_id: `task-${operationId}`,
             episode_id: `episode-${operationId}`,
@@ -346,8 +341,8 @@ test("memory authority appends, advances monotonically, authenticates refs, and 
   const f = fixture();
   let database: ContinuationRuntimeV1Database | null = f.database;
   try {
-    let store = createContinuationRuntimeV1MemoryStore(database, { now: () => NOW });
-    let operations = testOperationStore(database, { now: () => NOW });
+    let store = createContinuationRuntimeV1MemoryStore(database);
+    let operations = testOperationStore(database);
     const first = await appendOwned(store, operations, firstArgs(), "operation-1");
     assert.equal(first.commit.revision, 1);
     assert.equal(first.commit.created_at, NOW);
@@ -549,8 +544,8 @@ test("memory authority appends, advances monotonically, authenticates refs, and 
 test("same expected head is CAS serialized and only one concurrent append commits", async () => {
   const f = fixture();
   try {
-    const store = createContinuationRuntimeV1MemoryStore(f.database, { now: () => NOW });
-    const operations = testOperationStore(f.database, { now: () => NOW });
+    const store = createContinuationRuntimeV1MemoryStore(f.database);
+    const operations = testOperationStore(f.database);
     await assert.rejects(store.appendMemoryRevision({} as never, firstArgs()),
       /operation_transaction_required/u);
     await appendOwned(store, operations, firstArgs(), "operation-first");
@@ -576,8 +571,8 @@ test("operation credential is authority and changes commit and head identity", a
   const secondFixture = fixture();
   try {
     const append = async (database: ContinuationRuntimeV1Database, principal: string) => appendOwned(
-      createContinuationRuntimeV1MemoryStore(database, { now: () => NOW }),
-      testOperationStore(database, { now: () => NOW }),
+      createContinuationRuntimeV1MemoryStore(database),
+      testOperationStore(database),
       firstArgs(),
       "same-operation",
       { actorPrincipalSha256: principal },
@@ -600,8 +595,8 @@ test("operation credential is authority and changes commit and head identity", a
 test("operation producer nests the memory append in one transaction and rollback is total", async () => {
   const f = fixture();
   try {
-    const memory = createContinuationRuntimeV1MemoryStore(f.database, { now: () => NOW });
-    const operations = testOperationStore(f.database, { now: () => NOW });
+    const memory = createContinuationRuntimeV1MemoryStore(f.database);
+    const operations = testOperationStore(f.database);
     await assert.rejects(operations.execute({
       tenantId: "tenant", scope: "scope", operationKind: "record_observations",
       actorKind: "trusted_host",
@@ -663,8 +658,8 @@ test("operation producer nests the memory append in one transaction and rollback
 test("readHead verifies only the authenticated frontier while auditScope verifies the full chain", async () => {
   const f = fixture();
   try {
-    const memory = createContinuationRuntimeV1MemoryStore(f.database, { now: () => NOW });
-    const operations = testOperationStore(f.database, { now: () => NOW });
+    const memory = createContinuationRuntimeV1MemoryStore(f.database);
+    const operations = testOperationStore(f.database);
     await appendOwned(memory, operations, firstArgs(), "frontier-1");
     await appendOwned(memory, operations, {
       ...firstArgs(), expected_head_revision: 1,
@@ -716,8 +711,8 @@ test("readHead verifies only the authenticated frontier while auditScope verifie
 test("capsule reads independently authenticate the projection digest", async () => {
   const f = fixture();
   try {
-    const memory = createContinuationRuntimeV1MemoryStore(f.database, { now: () => NOW });
-    const operations = testOperationStore(f.database, { now: () => NOW });
+    const memory = createContinuationRuntimeV1MemoryStore(f.database);
+    const operations = testOperationStore(f.database);
     const first = await appendOwned(memory, operations, firstArgs(), "capsule-projection");
     const capsule = first.capsules[0]!;
     const { capsule_sha256: _capsuleSha256, ...capsuleBody } = capsule;
@@ -752,8 +747,8 @@ test("capsule reads independently authenticate the projection digest", async () 
 test("commit and head identities reject actor-blind canonical bodies", async () => {
   const f = fixture();
   try {
-    const memory = createContinuationRuntimeV1MemoryStore(f.database, { now: () => NOW });
-    const operations = testOperationStore(f.database, { now: () => NOW });
+    const memory = createContinuationRuntimeV1MemoryStore(f.database);
+    const operations = testOperationStore(f.database);
     const appended = await appendOwned(memory, operations, firstArgs(), "actor-bound");
     const { actor_kind: _kind, actor_principal_sha256: _principal, ...actorBlindLineage }
       = appended.commit.source_operation;
@@ -795,8 +790,8 @@ test("commit and head identities reject actor-blind canonical bodies", async () 
 test("head and commit reads reject source lineage drift and missing operation parents", async () => {
   const f = fixture();
   try {
-    const memory = createContinuationRuntimeV1MemoryStore(f.database, { now: () => NOW });
-    const operations = testOperationStore(f.database, { now: () => NOW });
+    const memory = createContinuationRuntimeV1MemoryStore(f.database);
+    const operations = testOperationStore(f.database);
     const first = await appendOwned(memory, operations, firstArgs(), "source-1");
     const second = await appendOwned(memory, operations, {
       ...firstArgs(), expected_head_revision: 1,

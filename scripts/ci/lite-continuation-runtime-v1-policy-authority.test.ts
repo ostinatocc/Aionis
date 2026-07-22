@@ -53,6 +53,7 @@ let sequence = 0;
 
 type Fixture = Readonly<{
   root: string;
+  clock: { value: string };
   database: ContinuationRuntimeV1Database;
   artifactProvisioner: ReturnType<
     typeof createContinuationRuntimeV1AuthorityArtifactProvisioner
@@ -64,11 +65,12 @@ type Fixture = Readonly<{
 function fixture(): Fixture {
   sequence += 1;
   const root = mkdtempSync(join(tmpdir(), "aionis-policy-authority-"));
+  const clock = { value: "2026-07-21T00:00:00.000Z" };
   const database = openContinuationRuntimeV1Database(
     join(root, "authority", "runtime.sqlite"),
     {
       databaseInstanceId: sequence.toString(16).padStart(64, "0"),
-      now: () => "2026-07-21T00:00:00.000Z",
+      authorityNow: () => clock.value,
     },
   );
   const artifactProvisioner = createContinuationRuntimeV1AuthorityArtifactProvisioner(
@@ -81,6 +83,7 @@ function fixture(): Fixture {
   );
   return {
     root,
+    clock,
     database,
     artifactProvisioner,
     artifacts,
@@ -173,6 +176,7 @@ function ref(artifact: SignedAuthorityArtifactV1): AuthorityArtifactRefV1 {
 
 async function persist(current: Fixture, artifact: SignedAuthorityArtifactV1): Promise<void> {
   sequence += 1;
+  current.clock.value = "2026-07-21T00:30:00.000Z";
   const bundleSubject = artifact.authority_subject_sha256 ?? SUBJECT;
   const companionKind = artifact.artifact_kind === "compiler_policy"
     ? "evidence_policy" as const
@@ -183,9 +187,7 @@ async function persist(current: Fixture, artifact: SignedAuthorityArtifactV1): P
     subject: bundleSubject,
     validFrom: "2099-01-01T00:00:00.000Z",
   });
-  await createContinuationRuntimeV1OperationStore(current.database, {
-    now: () => "2026-07-21T00:30:00.000Z",
-  }).execute({
+  await createContinuationRuntimeV1OperationStore(current.database).execute({
     tenantId: TENANT,
     scope: "scope-a",
     operationKind: "authority_decision",

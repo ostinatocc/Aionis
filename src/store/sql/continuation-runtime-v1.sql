@@ -18,6 +18,12 @@ CREATE TABLE runtime_meta (
     length(created_at) = 24
     AND created_at GLOB '[0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9]T[0-9][0-9]:[0-9][0-9]:[0-9][0-9].[0-9][0-9][0-9]Z'
     AND strftime('%Y-%m-%dT%H:%M:%fZ', created_at) = created_at
+  ),
+  authority_clock_floor_at TEXT NOT NULL CHECK (
+    length(authority_clock_floor_at) = 24
+    AND authority_clock_floor_at GLOB '[0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9]T[0-9][0-9]:[0-9][0-9]:[0-9][0-9].[0-9][0-9][0-9]Z'
+    AND strftime('%Y-%m-%dT%H:%M:%fZ', authority_clock_floor_at) = authority_clock_floor_at
+    AND authority_clock_floor_at >= created_at
   )
 ) STRICT;
 
@@ -2516,9 +2522,17 @@ CREATE INDEX idx_episode_capsule_facts_capsule
   );
 
 CREATE TRIGGER runtime_meta_no_update
-BEFORE UPDATE ON runtime_meta
+BEFORE UPDATE OF singleton, database_instance_id, schema_id, schema_version,
+  schema_manifest_sha256, created_at ON runtime_meta
 BEGIN
   SELECT RAISE(ABORT, 'runtime_meta is immutable');
+END;
+
+CREATE TRIGGER runtime_meta_clock_floor_no_regression
+BEFORE UPDATE OF authority_clock_floor_at ON runtime_meta
+WHEN NEW.authority_clock_floor_at < OLD.authority_clock_floor_at
+BEGIN
+  SELECT RAISE(ABORT, 'runtime_meta clock floor cannot regress');
 END;
 
 CREATE TRIGGER runtime_meta_no_delete
@@ -3018,7 +3032,9 @@ BEGIN
           json_extract(cohort.payload_json, '$.settlement_cutoff_at')
         AND NEW.available_at =
           json_extract(cohort.payload_json, '$.settlement_cutoff_at')
-        AND NEW.created_at = cohort.created_at
+        AND NEW.created_at >= cohort.created_at
+        AND NEW.created_at <
+          json_extract(cohort.payload_json, '$.assignment_window_opened_at')
         AND json_extract(
           NEW.payload_json, '$.experiment_cohort_ref.artifact_sha256'
         ) = cohort.artifact_sha256

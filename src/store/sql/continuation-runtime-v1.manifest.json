@@ -680,7 +680,7 @@
       "type": "table",
       "name": "runtime_meta",
       "table_name": "runtime_meta",
-      "sql_sha256": "a14ec6c01096fe904a9cdbb6679afefee1cf8991caaee0d3e1cbb4adfacf5cae"
+      "sql_sha256": "d4f46efc5c863c7be15fe639b339fe2a1b9bf6521519de6277ac499d33435d79"
     },
     {
       "type": "trigger",
@@ -866,7 +866,7 @@
       "type": "trigger",
       "name": "durable_jobs_effect_cohort_authority_guard",
       "table_name": "durable_jobs",
-      "sql_sha256": "393d543dc097b2f3e97fd8a0fdf58a8948322c45d8de61f92b51a012a3192134"
+      "sql_sha256": "33e2bb78d1724d76748c5bfe4045b65694fe47422f70bbb9f91b6820561ddb9f"
     },
     {
       "type": "trigger",
@@ -1152,6 +1152,12 @@
     },
     {
       "type": "trigger",
+      "name": "runtime_meta_clock_floor_no_regression",
+      "table_name": "runtime_meta",
+      "sql_sha256": "e450efdfbf2154dd4daafcbbb2f0c41ade66130245c7e1fab522d86a89a246f7"
+    },
+    {
+      "type": "trigger",
       "name": "runtime_meta_no_delete",
       "table_name": "runtime_meta",
       "sql_sha256": "9b8b7556e93c3e0d859f8530c4818391667e4a09b17201e49c2c5d351cb31182"
@@ -1160,7 +1166,7 @@
       "type": "trigger",
       "name": "runtime_meta_no_update",
       "table_name": "runtime_meta",
-      "sql_sha256": "ffe2fefcd60064f4a3cb0a48fcf814ec9d7c6190a21e40214e7660165bff5ac6"
+      "sql_sha256": "ec55091939720a464ef3f0f4b204df329b9f2e25166ea195d3bb9c04ef5159ca"
     }
   ],
   "table_xinfo": [
@@ -1246,8 +1252,8 @@
     },
     {
       "table_name": "runtime_meta",
-      "row_count": 6,
-      "rows_sha256": "cf62c52bcc4a9ed1b38a4c2a11c8b8bb9991cea174cbd48500091684fcf35775"
+      "row_count": 7,
+      "rows_sha256": "24700481fd79ac684a7c8ebbaa12c75a8f9189c1213581c75b0468d1de275732"
     }
   ],
   "index_xinfo": [
@@ -1804,6 +1810,6 @@
       "rows_sha256": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945"
     }
   ],
-  "ddl_sha256": "b2f0e43aebef0059c91f031b2b25f61ba2967b2e020ca1ba95267c518aaae4a7",
-  "schema_sha256": "e5bdbcd689e647c1b4e16653d9c40b6c9d0c133cf494e14caaff5b0c4264fba2"
+  "ddl_sha256": "1605bf3552f3e32e7466b57e53c3e3df0f42161b137550f7710abf5d060466ff",
+  "schema_sha256": "65c6e58f4e4b9f95b34d061c79c11a3e3fbabd36ba1293e80c6b75c872cfbf8e"
 }

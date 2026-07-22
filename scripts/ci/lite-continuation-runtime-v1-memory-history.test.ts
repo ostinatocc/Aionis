@@ -41,11 +41,13 @@ const PRINCIPAL = "1".repeat(64);
 
 function fixture() {
   const root = mkdtempSync(join(tmpdir(), "aionis-v1-memory-history-"));
+  const clock = { value: "2026-07-22T09:00:00.000Z" };
   const database = openContinuationRuntimeV1Database(join(root, "authority", "runtime.sqlite"), {
     databaseInstanceId: "b".repeat(64),
-    now: () => "2026-07-22T09:00:00.000Z",
+    authorityNow: () => clock.value,
   });
-  return { root, database };
+  clock.value = NOW;
+  return { root, database, clock };
 }
 
 function draft(args: Readonly<{
@@ -137,7 +139,7 @@ async function append(
   operationId: string,
   operationKind: "record_observations" | "authority_decision" = "record_observations",
 ): Promise<AppendMemoryRevisionV1Result> {
-  const operations = createContinuationRuntimeV1OperationStore(database, { now: () => NOW });
+  const operations = createContinuationRuntimeV1OperationStore(database);
   let result: AppendMemoryRevisionV1Result | null = null;
   const execution = await operations.execute({
     tenantId: "tenant",
@@ -149,7 +151,7 @@ async function append(
     request: { append: operationId },
     produce: async (context) => {
       if (operationKind === "record_observations") {
-        await createContinuationRuntimeV1ObservationStore(database, { now: () => NOW }).put(context, {
+        await createContinuationRuntimeV1ObservationStore(database).put(context, {
           host_task_envelope: {
             host_task_id: `task-${operationId}`,
             episode_id: `episode-${operationId}`,
@@ -184,7 +186,7 @@ async function append(
 }
 
 async function seeded(database: ContinuationRuntimeV1Database) {
-  const memory = createContinuationRuntimeV1MemoryStore(database, { now: () => NOW });
+  const memory = createContinuationRuntimeV1MemoryStore(database);
   const first = await append(database, memory, initialMutation(), "history-one");
   const second = await append(database, memory, {
     expected_head_revision: 1,

@@ -73,10 +73,6 @@ export type ContinuationRuntimeV1ObservationStore = Readonly<{
   read(input: ReadObservationSnapshotV1): Promise<PersistedObservationSnapshotV1 | null>;
 }>;
 
-export type ContinuationRuntimeV1ObservationStoreOptions = Readonly<{
-  now?: () => string;
-}>;
-
 type SnapshotRow = Readonly<{
   tenant_id: unknown;
   scope: unknown;
@@ -481,9 +477,7 @@ function readIdentity(input: unknown): ReadObservationSnapshotV1 {
 
 export function createContinuationRuntimeV1ObservationStore(
   database: ContinuationRuntimeV1Database,
-  options: ContinuationRuntimeV1ObservationStoreOptions = {},
 ): ContinuationRuntimeV1ObservationStore {
-  const now = options.now ?? (() => new Date().toISOString());
   const store: ContinuationRuntimeV1ObservationStore = Object.freeze({
     async put(context, input) {
       const binding = assertContinuationRuntimeV1AuthorityWriteContext(context, database);
@@ -548,7 +542,7 @@ export function createContinuationRuntimeV1ObservationStore(
         host_task_envelope: hostTaskEnvelope,
         collection_principal_sha256: binding.actorPrincipalSha256,
         observations: [...collectorObservations, ...signedObservations],
-        created_at: now(),
+        created_at: database.mintAuthorityTime(null),
       });
       for (const observation of snapshot.observations) {
         if (observation.observer === "trusted_host_collector"

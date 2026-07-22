@@ -99,6 +99,7 @@ let sequence = 0;
 
 type Fixture = Readonly<{
   root: string;
+  clock: { value: string };
   database: ContinuationRuntimeV1Database;
   artifacts: ReturnType<typeof createContinuationRuntimeV1AuthorityArtifactReader>;
   operations: ReturnType<typeof createContinuationRuntimeV1OperationStore>;
@@ -111,11 +112,12 @@ type Fixture = Readonly<{
 function fixture(): Fixture {
   sequence += 1;
   const root = mkdtempSync(join(tmpdir(), "aionis-v1-provisioning-"));
+  const clock = { value: "2026-07-21T02:00:00.000Z" };
   const database = openContinuationRuntimeV1Database(
     join(root, "authority", "runtime.sqlite"),
     {
       databaseInstanceId: sequence.toString(16).padStart(64, "0"),
-      now: () => "2026-07-21T00:00:00.000Z",
+      authorityNow: () => clock.value,
     },
   );
   const artifactProvisioner = createContinuationRuntimeV1AuthorityArtifactProvisioner(
@@ -126,9 +128,7 @@ function fixture(): Fixture {
     database,
     ROOT_KEYS.publicKey,
   );
-  const operations = createContinuationRuntimeV1OperationStore(database, {
-    now: () => "2026-07-21T02:00:00.000Z",
-  });
+  const operations = createContinuationRuntimeV1OperationStore(database);
   const policies = createContinuationRuntimeV1PolicyAuthority(database, artifacts);
   const effects = createContinuationRuntimeV1EffectCertificateReader(
     database,
@@ -140,16 +140,12 @@ function fixture(): Fixture {
     artifacts,
     policies,
     effects,
-    { now: () => "2026-07-21T02:00:00.000Z" },
   );
-  const observations = createContinuationRuntimeV1ObservationStore(database, {
-    now: () => "2026-07-21T02:00:00.000Z",
-  });
-  const memory = createContinuationRuntimeV1MemoryStore(database, {
-    now: () => "2026-07-21T02:00:00.000Z",
-  });
+  const observations = createContinuationRuntimeV1ObservationStore(database);
+  const memory = createContinuationRuntimeV1MemoryStore(database);
   return {
     root,
+    clock,
     database,
     artifacts,
     operations,

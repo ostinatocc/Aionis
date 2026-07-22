@@ -238,14 +238,13 @@ function command(operationId: string, capsuleCount: number) {
 
 test("recordObservations atomically emits one exact embedding job and replay cannot duplicate it", async () => {
   const root = mkdtempSync(join(tmpdir(), "aionis-v1-application-embedding-"));
+  const clock = { value: NOW };
   const database = openContinuationRuntimeV1Database(
     join(root, "authority", "runtime.sqlite"),
-    { databaseInstanceId: "8".repeat(64), now: () => NOW },
+    { databaseInstanceId: "8".repeat(64), authorityNow: () => clock.value },
   );
   try {
-    const operationStore = createContinuationRuntimeV1OperationStore(database, {
-      now: () => NOW,
-    });
+    const operationStore = createContinuationRuntimeV1OperationStore(database);
     const artifactProvisioner = createContinuationRuntimeV1AuthorityArtifactProvisioner(
       database,
       ROOT_KEYS.publicKey,
@@ -292,17 +291,10 @@ test("recordObservations atomically emits one exact embedding job and replay can
       artifactStore,
       policyAuthority,
       effectCertificateReader,
-      { now: () => NOW },
     );
-    const observationStore = createContinuationRuntimeV1ObservationStore(database, {
-      now: () => NOW,
-    });
-    const memoryStore = createContinuationRuntimeV1MemoryStore(database, {
-      now: () => NOW,
-    });
-    const durableJobStore = createContinuationRuntimeV1DurableJobEnqueuer(database, {
-      now: () => NOW,
-    });
+    const observationStore = createContinuationRuntimeV1ObservationStore(database);
+    const memoryStore = createContinuationRuntimeV1MemoryStore(database);
+    const durableJobStore = createContinuationRuntimeV1DurableJobEnqueuer(database);
     const memoryHistory = createContinuationRuntimeV1MemoryHistoryStore(database);
     const episodeStore = createContinuationRuntimeV1EpisodeStore(database);
     const experimentCohortAuthority =
@@ -344,7 +336,6 @@ test("recordObservations atomically emits one exact embedding job and replay can
       episodeStore,
       decisionAssembly,
       decisionReader,
-      now: () => NOW,
     };
 
     const mutation = command("observe-with-embedding", 64);

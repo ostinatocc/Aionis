@@ -1,7 +1,10 @@
 import assert from "node:assert/strict";
+import { mkdtempSync, rmSync } from "node:fs";
 import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
 import type { AddressInfo } from "node:net";
-import test from "node:test";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import test, { after } from "node:test";
 
 import {
   CONTINUATION_RUNTIME_V1_EMBEDDING_MAX_BATCH,
@@ -10,10 +13,29 @@ import {
   createContinuationRuntimeV1EmbeddingProvider,
   type ContinuationRuntimeV1EmbeddingBatchInput,
 } from "../../src/runtime-v1/embedding-provider.js";
+import {
+  openContinuationRuntimeV1Database,
+  type ContinuationRuntimeV1AuthorityClock,
+} from "../../src/store/continuation-runtime-v1-database.js";
 
 const MODEL = "embedding-model-v1";
 const API_KEY = "provider-secret-key-00000001";
 const DIMENSIONS = 3;
+const liveAuthorityNow = () => new Date().toISOString();
+let authoritySource = liveAuthorityNow;
+const authorityRoot = mkdtempSync(join(tmpdir(), "aionis-embedding-provider-clock-"));
+const authorityDatabase = openContinuationRuntimeV1Database(
+  join(authorityRoot, "authority", "runtime.sqlite"),
+  {
+    authorityNow: () => authoritySource(),
+    databaseInstanceId: "e".repeat(64),
+  },
+);
+const authorityClock = authorityDatabase.authorityNow;
+after(async () => {
+  await authorityDatabase.close();
+  rmSync(authorityRoot, { recursive: true, force: true });
+});
 
 type HttpHandler = (
   request: IncomingMessage,
@@ -60,13 +82,17 @@ async function requestJson(request: IncomingMessage): Promise<unknown> {
   return JSON.parse(Buffer.concat(chunks, bytes).toString("utf8")) as unknown;
 }
 
-function provider(baseUrl: string) {
+function provider(
+  baseUrl: string,
+  authorityNow: () => string = liveAuthorityNow,
+) {
+  authoritySource = authorityNow;
   return createContinuationRuntimeV1EmbeddingProvider({
     baseUrl,
     model: MODEL,
     apiKey: API_KEY,
     dimensions: DIMENSIONS,
-  });
+  }, authorityClock);
 }
 
 function input(
@@ -196,6 +222,7 @@ test("embedding provider converts adversarial reflection failures into stable re
     hostileConfig as unknown as Parameters<
       typeof createContinuationRuntimeV1EmbeddingProvider
     >[0],
+    authorityClock,
   ));
   assertProviderError(configError, "configuration_invalid");
   assert.equal(`${configError.stack ?? ""}`.includes(reflectionSecret), false);
@@ -208,6 +235,35 @@ test("embedding provider converts adversarial reflection failures into stable re
   ));
   assertProviderError(inputError, "input_invalid");
   assert.equal(`${inputError.stack ?? ""}`.includes(reflectionSecret), false);
+});
+
+test("embedding provider requires one explicit canonical authority clock", () => {
+  const config = {
+    baseUrl: "http://127.0.0.1:1/v1",
+    model: MODEL,
+    apiKey: API_KEY,
+    dimensions: DIMENSIONS,
+  };
+  const withoutClock = createContinuationRuntimeV1EmbeddingProvider as unknown as
+    (value: typeof config) => unknown;
+  assertProviderError(
+    thrownError(() => withoutClock(config)),
+    "configuration_invalid",
+  );
+  assertProviderError(
+    thrownError(() => createContinuationRuntimeV1EmbeddingProvider(
+      config,
+      null as unknown as ContinuationRuntimeV1AuthorityClock,
+    )),
+    "configuration_invalid",
+  );
+  assertProviderError(
+    thrownError(() => createContinuationRuntimeV1EmbeddingProvider(
+      config,
+      liveAuthorityNow as unknown as ContinuationRuntimeV1AuthorityClock,
+    )),
+    "configuration_invalid",
+  );
 });
 
 test("embedding provider binds both caller abort and lease deadline to the live request", async () => {
@@ -237,6 +293,26 @@ test("embedding provider binds both caller abort and lease deadline to the live 
     lease_deadline_at: new Date(Date.now() - 1_000).toISOString(),
   }));
   assertProviderError(error, "lease_deadline_exceeded");
+
+  const clock = { value: "2000-01-01T00:00:00.000Z" };
+  const deadline = "2000-01-01T00:00:05.000Z";
+  await withHttpServer((request, response) => {
+    request.resume();
+    clock.value = deadline;
+    response.writeHead(200, { "content-type": "application/json" });
+    response.end(JSON.stringify(successEnvelope([[1, 2, 3]])));
+  }, async (baseUrl) => {
+    const shifted = provider(baseUrl, () => clock.value).embed({
+      schema_version: "embedding_batch_input_v1",
+      texts: ["deadline-after-response"],
+      lease_deadline_at: deadline,
+      signal: new AbortController().signal,
+    });
+    assertProviderError(
+      await rejectedError(shifted),
+      "lease_deadline_exceeded",
+    );
+  });
 });
 
 test("embedding provider redacts provider body, source input, and key from non-2xx errors", async () => {

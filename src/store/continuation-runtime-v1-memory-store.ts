@@ -92,23 +92,13 @@ function sortedUnique<T>(values: readonly T[], key: (value: T) => string, field:
   return out;
 }
 
-function nextCommitTime(now: string, previous: string | null): string {
-  assertCanonicalUtcMillis(now, "memory.commit_time");
-  if (previous === null || now > previous) return now;
-  const next = Date.parse(previous) + 1;
-  if (!Number.isFinite(next)) throw new Error("continuation_runtime_v1_memory_commit_time_overflow");
-  return new Date(next).toISOString();
-}
-
 function headBody(head: Omit<MemoryScopeHeadV1, "head_sha256">): CanonicalObject {
   return { schema_version: "memory_scope_head_v1", ...head };
 }
 
 export function createContinuationRuntimeV1MemoryStore(
   database: ContinuationRuntimeV1Database,
-  options: Readonly<{ now?: () => string }> = {},
 ) {
-  const now = options.now ?? (() => new Date().toISOString());
   const readCommitSync = (
     tenantId: string,
     scope: string,
@@ -275,7 +265,7 @@ export function createContinuationRuntimeV1MemoryStore(
           throw new ContinuationRuntimeV1MemoryHeadConflictError(args.expected_head_revision, actualRevision);
         }
         const revision = (actualRevision ?? 0) + 1;
-        const createdAt = nextCommitTime(now(), parent?.updated_at ?? null);
+        const createdAt = database.mintAuthorityTime(parent?.updated_at ?? null);
         const commitId = continuationRuntimeV1MemoryCommitId({
           sourceOperation,
           revision,

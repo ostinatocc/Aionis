@@ -15,6 +15,7 @@ import { continuationAuthoritySubjectSha256V1 } from
 import {
   openContinuationRuntimeV1Database,
   type ContinuationRuntimeV1Database,
+  type ContinuationRuntimeV1DatabaseOptions,
 } from "../../src/store/continuation-runtime-v1-database.js";
 import { createContinuationRuntimeV1DurableJobEnqueuer } from
   "../../src/store/continuation-runtime-v1-durable-job-enqueuer.js";
@@ -30,7 +31,6 @@ import {
   createContinuationRuntimeV1OperationStore,
   type ContinuationRuntimeV1AuthorityWriteContext,
   type ContinuationRuntimeV1OperationKind,
-  type ContinuationRuntimeV1OperationStoreOptions,
 } from "../../src/store/continuation-runtime-v1-operation-store.js";
 
 const DATABASE_NOW = "2026-07-21T00:00:00.000Z";
@@ -59,11 +59,19 @@ function fixture(): Readonly<{
   };
 }
 
-function openDatabase(path: string): ContinuationRuntimeV1Database {
-  return openContinuationRuntimeV1Database(path, {
-    now: () => DATABASE_NOW,
-    databaseInstanceId: DATABASE_ID,
+function openDatabase(
+  path: string,
+  businessAuthorityNow: () => string = () => OPERATION_NOW,
+  options: Omit<ContinuationRuntimeV1DatabaseOptions, "authorityNow"> = {},
+): ContinuationRuntimeV1Database {
+  let bootstrapping = true;
+  const database = openContinuationRuntimeV1Database(path, {
+    ...options,
+    authorityNow: () => bootstrapping ? DATABASE_NOW : businessAuthorityNow(),
+    databaseInstanceId: options.databaseInstanceId ?? DATABASE_ID,
   });
+  bootstrapping = false;
+  return database;
 }
 
 async function putTestSnapshot(
@@ -71,9 +79,7 @@ async function putTestSnapshot(
   context: ContinuationRuntimeV1AuthorityWriteContext,
   operationId: string,
 ): Promise<void> {
-  await createContinuationRuntimeV1ObservationStore(database, {
-    now: () => OPERATION_NOW,
-  }).put(context, {
+  await createContinuationRuntimeV1ObservationStore(database).put(context, {
     host_task_envelope: {
       host_task_id: `task-${operationId}`,
       episode_id: `episode-${operationId}`,
@@ -96,12 +102,9 @@ async function putTestSnapshot(
 
 function createFormalOperationStore(
   database: ContinuationRuntimeV1Database,
-  options: ContinuationRuntimeV1OperationStoreOptions = {},
 ) {
-  const raw = createContinuationRuntimeV1OperationStore(database, options);
-  const jobs = createContinuationRuntimeV1DurableJobEnqueuer(database, {
-    now: () => OPERATION_NOW,
-  });
+  const raw = createContinuationRuntimeV1OperationStore(database);
+  const jobs = createContinuationRuntimeV1DurableJobEnqueuer(database);
   return Object.freeze({
     read: raw.read,
     execute: async (args: any) => raw.execute({
@@ -154,15 +157,13 @@ test("first execution persists one canonical receipt and equal canonical input r
   const current = fixture();
   let database: ContinuationRuntimeV1Database | null = null;
   try {
-    database = openDatabase(current.path);
     let nowCalls = 0;
-    let producerCalls = 0;
-    const store = createFormalOperationStore(database, {
-      now: () => {
-        nowCalls += 1;
-        return OPERATION_NOW;
-      },
+    database = openDatabase(current.path, () => {
+      nowCalls += 1;
+      return OPERATION_NOW;
     });
+    let producerCalls = 0;
+    const store = createFormalOperationStore(database);
     const firstRequest = { z: ["state", 2], a: { ready: true } } as const;
     let firstContext: ContinuationRuntimeV1AuthorityWriteContext | null = null;
     const first = await store.execute({
@@ -205,7 +206,7 @@ test("first execution persists one canonical receipt and equal canonical input r
     assert.equal(Object.isFrozen(first.receipt.result), true);
     assert.equal(first.receipt.result.schema_version, "record_observations_result_v1");
     assert.equal(producerCalls, 1);
-    assert.equal(nowCalls, 1);
+    assert.equal(nowCalls, 2);
     assert.equal(operationCount(database), 1);
     assert.ok(firstContext !== null);
     assert.throws(
@@ -294,7 +295,7 @@ test("first execution persists one canonical receipt and equal canonical input r
     assert.equal(replay.receipt_sha256, first.receipt_sha256);
     assert.deepEqual(replay.receipt, first.receipt);
     assert.equal(producerCalls, 1);
-    assert.equal(nowCalls, 1);
+    assert.equal(nowCalls, 2);
     assert.equal(operationCount(database), 1);
   } finally {
     await database?.close();
@@ -307,12 +308,8 @@ test("exact result census rolls back omitted mutations, rejects overreporting, a
   let database: ContinuationRuntimeV1Database | null = null;
   try {
     database = openDatabase(current.path);
-    const raw = createContinuationRuntimeV1OperationStore(database, {
-      now: () => OPERATION_NOW,
-    });
-    const jobs = createContinuationRuntimeV1DurableJobEnqueuer(database, {
-      now: () => OPERATION_NOW,
-    });
+    const raw = createContinuationRuntimeV1OperationStore(database);
+    const jobs = createContinuationRuntimeV1DurableJobEnqueuer(database);
     const emptySet = {
       count: 0,
       set_sha256: canonicalContinuationSha256([]),
@@ -404,7 +401,7 @@ test("exact result census rolls back omitted mutations, rejects overreporting, a
     }), /operation_result_declaration_mismatch/u);
     assert.equal(operationCount(database), 0);
 
-    const formal = createFormalOperationStore(database, { now: () => OPERATION_NOW });
+    const formal = createFormalOperationStore(database);
     const created = await formal.execute({
       tenantId: "tenant-census",
       scope: "scope-census",
@@ -451,7 +448,7 @@ test("stored canonical requests are immutable and tampering fails closed before 
   let database: ContinuationRuntimeV1Database | null = null;
   try {
     database = openDatabase(current.path);
-    const store = createFormalOperationStore(database, { now: () => OPERATION_NOW });
+    const store = createFormalOperationStore(database);
     for (const operationId of ["request-digest", "request-encoding"] as const) {
       await store.execute({
         tenantId: "tenant-request-evidence",
@@ -518,13 +515,10 @@ test("authority write contexts reject forgery, copying, wrong databases, transac
   const outsideTransaction = new AsyncResource("aionis-operation-context-outside");
   try {
     database = openDatabase(current.path);
-    otherDatabase = openContinuationRuntimeV1Database(other.path, {
-      now: () => DATABASE_NOW,
+    otherDatabase = openDatabase(other.path, () => OPERATION_NOW, {
       databaseInstanceId: "b".repeat(64),
     });
-    const store = createFormalOperationStore(database, {
-      now: () => OPERATION_NOW,
-    });
+    const store = createFormalOperationStore(database);
     let issued: ContinuationRuntimeV1AuthorityWriteContext | null = null;
     await store.execute({
       tenantId: "tenant-context",
@@ -583,9 +577,7 @@ test("the tightest producer-discovered completion deadline is enforced before re
   let database: ContinuationRuntimeV1Database | null = null;
   try {
     database = openDatabase(current.path);
-    const store = createContinuationRuntimeV1OperationStore(database, {
-      now: () => OPERATION_NOW,
-    });
+    const store = createContinuationRuntimeV1OperationStore(database);
     let issued: ContinuationRuntimeV1AuthorityWriteContext | null = null;
     await assert.rejects(store.execute({
       tenantId: "tenant-deadline",
@@ -678,9 +670,7 @@ test("same identity with a different canonical request fails with an explicit co
   let database: ContinuationRuntimeV1Database | null = null;
   try {
     database = openDatabase(current.path);
-    const store = createFormalOperationStore(database, {
-      now: () => OPERATION_NOW,
-    });
+    const store = createFormalOperationStore(database);
     await store.execute({
       tenantId: "tenant-conflict",
       scope: "scope-conflict",
@@ -749,9 +739,7 @@ test("a corrupt stored receipt fails closed before a different request can be ca
       OPERATION_NOW,
     );
     let producerCalled = false;
-    const store = createFormalOperationStore(database, {
-      now: () => OPERATION_NOW,
-    });
+    const store = createFormalOperationStore(database);
     await assert.rejects(
       store.read({
         tenantId: "tenant-corrupt",
@@ -797,9 +785,7 @@ test("a producer failure rolls back both producer writes and the operation recei
   let database: ContinuationRuntimeV1Database | null = null;
   try {
     database = openDatabase(current.path);
-    const store = createFormalOperationStore(database, {
-      now: () => OPERATION_NOW,
-    });
+    const store = createFormalOperationStore(database);
     let rolledBackContext: ContinuationRuntimeV1AuthorityWriteContext | null = null;
     await assert.rejects(
       store.execute({
@@ -887,9 +873,7 @@ test("concurrent equal calls serialize and invoke exactly one producer", async (
   let database: ContinuationRuntimeV1Database | null = null;
   try {
     database = openDatabase(current.path);
-    const store = createFormalOperationStore(database, {
-      now: () => OPERATION_NOW,
-    });
+    const store = createFormalOperationStore(database);
     let producerCalls = 0;
     let announceStarted!: () => void;
     const started = new Promise<void>((resolve) => {
@@ -955,9 +939,7 @@ test("two opener connections fail busy without double-producing, then equal retr
       releaseCommit = resolve;
     });
     let holdFirstCommit = true;
-    firstDatabase = openContinuationRuntimeV1Database(current.path, {
-      now: () => DATABASE_NOW,
-      databaseInstanceId: DATABASE_ID,
+    firstDatabase = openDatabase(current.path, () => OPERATION_NOW, {
       faultInjector: async (phase) => {
         if (phase === "before_commit" && holdFirstCommit) {
           holdFirstCommit = false;
@@ -966,14 +948,10 @@ test("two opener connections fail busy without double-producing, then equal retr
         }
       },
     });
-    secondDatabase = openContinuationRuntimeV1Database(current.path);
+    secondDatabase = openDatabase(current.path);
     secondDatabase.db.exec("PRAGMA busy_timeout = 0");
-    const firstStore = createFormalOperationStore(firstDatabase, {
-      now: () => OPERATION_NOW,
-    });
-    const secondStore = createFormalOperationStore(secondDatabase, {
-      now: () => OPERATION_NOW,
-    });
+    const firstStore = createFormalOperationStore(firstDatabase);
+    const secondStore = createFormalOperationStore(secondDatabase);
     let firstProducerCalls = 0;
     let secondProducerCalls = 0;
     const common = {
@@ -1041,9 +1019,7 @@ test("two opener connections preserve the winner and conflict a different retry"
       releaseCommit = resolve;
     });
     let holdFirstCommit = true;
-    firstDatabase = openContinuationRuntimeV1Database(current.path, {
-      now: () => DATABASE_NOW,
-      databaseInstanceId: DATABASE_ID,
+    firstDatabase = openDatabase(current.path, () => OPERATION_NOW, {
       faultInjector: async (phase) => {
         if (phase === "before_commit" && holdFirstCommit) {
           holdFirstCommit = false;
@@ -1052,14 +1028,10 @@ test("two opener connections preserve the winner and conflict a different retry"
         }
       },
     });
-    secondDatabase = openContinuationRuntimeV1Database(current.path);
+    secondDatabase = openDatabase(current.path);
     secondDatabase.db.exec("PRAGMA busy_timeout = 0");
-    const firstStore = createFormalOperationStore(firstDatabase, {
-      now: () => OPERATION_NOW,
-    });
-    const secondStore = createFormalOperationStore(secondDatabase, {
-      now: () => OPERATION_NOW,
-    });
+    const firstStore = createFormalOperationStore(firstDatabase);
+    const secondStore = createFormalOperationStore(secondDatabase);
     let firstProducerCalls = 0;
     let secondProducerCalls = 0;
     const identity = {
@@ -1112,9 +1084,7 @@ test("a canonical receipt survives close and exact reopen replay", async () => {
   let database: ContinuationRuntimeV1Database | null = null;
   try {
     database = openDatabase(current.path);
-    const firstStore = createFormalOperationStore(database, {
-      now: () => OPERATION_NOW,
-    });
+    const firstStore = createFormalOperationStore(database);
     const created = await firstStore.execute({
       tenantId: "tenant-reopen",
       scope: "scope-reopen",
@@ -1126,13 +1096,14 @@ test("a canonical receipt survives close and exact reopen replay", async () => {
       produce: () => ({ completed: true, emitted: ["effect"] }),
     });
     await database.close();
-    database = openContinuationRuntimeV1Database(current.path);
-    let replayProducerCalled = false;
-    const reopenedStore = createFormalOperationStore(database, {
-      now: () => {
-        throw new Error("replay_must_not_read_clock");
-      },
+    let failClockReads = false;
+    database = openDatabase(current.path, () => {
+      if (failClockReads) throw new Error("replay_must_not_read_clock");
+      return OPERATION_NOW;
     });
+    failClockReads = true;
+    let replayProducerCalled = false;
+    const reopenedStore = createFormalOperationStore(database);
     const reopenedRecord = await reopenedStore.read({
       tenantId: "tenant-reopen",
       scope: "scope-reopen",
@@ -1179,9 +1150,7 @@ test("operation actors are required, role-mapped, digest-bound, and replay-stabl
   let database: ContinuationRuntimeV1Database | null = null;
   try {
     database = openDatabase(current.path);
-    const store = createFormalOperationStore(database, {
-      now: () => OPERATION_NOW,
-    });
+    const store = createFormalOperationStore(database);
     let producerCalls = 0;
     const base = {
       tenantId: "tenant-actor",
@@ -1229,11 +1198,10 @@ test("closed kinds and canonical text, time, JSON, and transaction ownership fai
   const current = fixture();
   let database: ContinuationRuntimeV1Database | null = null;
   try {
-    database = openDatabase(current.path);
+    let authorityClock = "2026-07-21T00:01:00Z";
+    database = openDatabase(current.path, () => authorityClock);
     let producerCalls = 0;
-    const store = createFormalOperationStore(database, {
-      now: () => "2026-07-21T00:01:00Z",
-    });
+    const store = createFormalOperationStore(database);
     await assert.rejects(
       store.execute({
         tenantId: "tenant-validation",
@@ -1342,17 +1310,14 @@ test("closed kinds and canonical text, time, JSON, and transaction ownership fai
           return { accepted: true };
         },
       }),
-      /canonical UTC millisecond timestamp/u,
+      /continuation_runtime_v1_authority_clock_invalid/u,
     );
     assert.equal(producerCalls, 1, "only invalid time reaches the producer");
     assert.equal(operationCount(database), 0);
 
-    const boundedStore = createContinuationRuntimeV1OperationStore(database, {
-      now: () => OPERATION_NOW,
-    });
-    const boundedObservations = createContinuationRuntimeV1ObservationStore(database, {
-      now: () => OPERATION_NOW,
-    });
+    authorityClock = OPERATION_NOW;
+    const boundedStore = createContinuationRuntimeV1OperationStore(database);
+    const boundedObservations = createContinuationRuntimeV1ObservationStore(database);
     await assert.rejects(
       boundedStore.execute({
         tenantId: "tenant-validation",

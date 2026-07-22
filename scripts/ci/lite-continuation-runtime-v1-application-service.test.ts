@@ -423,6 +423,8 @@ function harness(options: Readonly<{ policiesAvailable?: boolean }> = {}): Harne
   let executeCount = 0;
   const database = {
     databaseInstanceId: SHA_A,
+    authorityNow: () => NOW,
+    mintAuthorityTime: () => NOW,
     read: async <T>(read: () => T | Promise<T>) => read(),
     db: {
       prepare: (sql: string) => ({
@@ -511,7 +513,6 @@ function harness(options: Readonly<{ policiesAvailable?: boolean }> = {}): Harne
         query_sha256: query.query_sha256,
       }),
     },
-    now: () => NOW,
   } as unknown as ContinuationRuntimeV1ApplicationServiceDependencies;
   return { dependencies, executions };
 }

@@ -854,9 +854,7 @@ export function createContinuationRuntimeV1AuthorityArtifactProvisioner(
       preflightArtifactSync(binding.tenantId, artifact);
       const seed = Buffer.from(assignmentSeed);
       const installed = insertArtifactSync(binding, artifact, seed);
-      const durableJobs = createContinuationRuntimeV1DurableJobEnqueuer(database, {
-        now: () => artifact.created_at,
-      });
+      const durableJobs = createContinuationRuntimeV1DurableJobEnqueuer(database);
       await durableJobs.enqueue(context, {
         task_family: cohort.task_family,
         authority_subject_sha256: cohort.authority_subject_sha256,

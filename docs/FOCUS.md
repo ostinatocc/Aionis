@@ -103,6 +103,13 @@ serving decisions.
   policy pair has been installed through the offline provisioner.
 - SQLite is the sole authority. Vector and ANN artifacts are rebuildable
   candidates and cannot grant serving authority.
+- Every Runtime-minted factual timestamp and lease decision uses one
+  database-bound monotonic authority time. It combines a validated raw source
+  with process-observed, committed, and SQLite-persisted factual floors.
+  Timestamp minting is transaction-only: commit advances the durable floor and
+  rollback does not. Future availability, retry, expiry, and signed protocol
+  deadlines are not clock-floor writes. Operational timers only wake polling or
+  request cancellation; they cannot create a second authority timeline.
 - One local database permits one write transaction at a time. V1 makes no HA or
   distributed-writer claim.
 - The dedicated data directory is `0700`; SQLite and its WAL/SHM/journal files

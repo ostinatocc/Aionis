@@ -37,7 +37,6 @@ import {
   assertWritableAuthorityBindingsV1,
   buildAuthorityHeadV1,
   insertAuthorityBranchV1,
-  nextAuthorityTimeV1,
   updateAuthorityHeadV1,
   type ValidatedAuthorityBindingCauseV1,
 } from "./continuation-runtime-v1-authority-write-projection.js";
@@ -57,7 +56,6 @@ export type AuthorityWorkflowDependenciesV1 = Readonly<{
   database: ContinuationRuntimeV1Database;
   artifactStore: ContinuationRuntimeV1AuthorityArtifactReader;
   policyAuthority: ContinuationRuntimeV1PolicyAuthority;
-  now: () => string;
   claimOperatorContext: (context: ContinuationRuntimeV1AuthorityWriteContext) => void;
   readHead: (
     tenantId: string,
@@ -427,8 +425,7 @@ export function createContinuationRuntimeV1AuthorityWorkflows(
         expectedHeadRevision: args.expected_head_revision,
         expectedHeadSha256: args.expected_head_sha256,
       });
-      const at = nextAuthorityTimeV1(
-        dependencies.now(),
+      const at = dependencies.database.mintAuthorityTime(
         loaded.candidate.manifest.created_at,
       );
       return persistCandidateTransition(
@@ -457,8 +454,7 @@ export function createContinuationRuntimeV1AuthorityWorkflows(
         expectedHeadRevision: args.expected_head_revision,
         expectedHeadSha256: args.expected_head_sha256,
       });
-      const at = nextAuthorityTimeV1(
-        dependencies.now(),
+      const at = dependencies.database.mintAuthorityTime(
         loaded.candidate.manifest.created_at,
       );
       return persistCandidateTransition(
@@ -495,8 +491,7 @@ export function createContinuationRuntimeV1AuthorityWorkflows(
       if (loaded.candidate.manifest.state !== "active_candidate") {
         fail("merge_candidate_not_active");
       }
-      const candidateAt = nextAuthorityTimeV1(
-        dependencies.now(),
+      const candidateAt = dependencies.database.mintAuthorityTime(
         loaded.candidate.manifest.created_at,
       );
       await assertContinuationRuntimeV1CohortHeadMutationAllowed(
@@ -522,8 +517,7 @@ export function createContinuationRuntimeV1AuthorityWorkflows(
         loaded.current,
         candidateManifest,
       );
-      const authorityAt = nextAuthorityTimeV1(
-        dependencies.now(),
+      const authorityAt = dependencies.database.mintAuthorityTime(
         loaded.current.target.manifest.created_at > candidateAt
           ? loaded.current.target.manifest.created_at
           : candidateAt,
@@ -637,7 +631,7 @@ export function createContinuationRuntimeV1AuthorityWorkflows(
           branch_revision: target.manifest.branch_revision,
           manifest_sha256: target.manifest.manifest_sha256,
         })) fail("revert_target_invalid");
-      const at = nextAuthorityTimeV1(dependencies.now(), current.head.updated_at);
+      const at = dependencies.database.mintAuthorityTime(current.head.updated_at);
       await assertContinuationRuntimeV1CohortHeadMutationAllowed(
         dependencies.database,
         dependencies.artifactStore,

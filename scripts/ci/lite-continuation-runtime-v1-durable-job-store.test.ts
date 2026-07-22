@@ -45,11 +45,20 @@ function authoritySubject(scope = "scope"): string {
   });
 }
 
+function persistedAuthorityClockFloor(
+  database: ContinuationRuntimeV1Database,
+): string {
+  const row = database.db.prepare(
+    "SELECT authority_clock_floor_at FROM runtime_meta WHERE singleton = 1",
+  ).get() as { authority_clock_floor_at: unknown };
+  assert.equal(typeof row.authority_clock_floor_at, "string");
+  return row.authority_clock_floor_at;
+}
+
 function formalOperationStore(
   database: ContinuationRuntimeV1Database,
-  clock: () => string,
 ) {
-  const raw = createContinuationRuntimeV1OperationStore(database, { now: clock });
+  const raw = createContinuationRuntimeV1OperationStore(database);
   return Object.freeze({
     read: raw.read,
     execute: async (args: any) => raw.execute({
@@ -57,9 +66,7 @@ function formalOperationStore(
       produce: async (context) => {
         await args.produce(context);
         if (args.operationKind === "record_observations") {
-          await createContinuationRuntimeV1ObservationStore(database, {
-            now: clock,
-          }).put(context, {
+          await createContinuationRuntimeV1ObservationStore(database).put(context, {
             host_task_envelope: {
               host_task_id: `task-${args.operationId}`,
               episode_id: `episode-${args.operationId}`,
@@ -96,15 +103,16 @@ function formalOperationStore(
 function fixture(initialClock = BASE) {
   const root = mkdtempSync(join(tmpdir(), "aionis-v1-jobs-"));
   const path = join(root, "authority", "runtime.sqlite");
-  let clock = initialClock;
+  let clock = "2026-07-21T09:00:00.000Z";
   const database = openContinuationRuntimeV1Database(path, {
     databaseInstanceId: "c".repeat(64),
-    now: () => "2026-07-21T09:00:00.000Z",
+    authorityNow: () => clock,
   });
+  clock = initialClock;
   const createStores = (db: ContinuationRuntimeV1Database = database) => ({
-    operations: formalOperationStore(db, () => clock),
-    jobs: createContinuationRuntimeV1DurableJobWorkerStore(db, { now: () => clock }),
-    enqueuer: createContinuationRuntimeV1DurableJobEnqueuer(db, { now: () => clock }),
+    operations: formalOperationStore(db),
+    jobs: createContinuationRuntimeV1DurableJobWorkerStore(db),
+    enqueuer: createContinuationRuntimeV1DurableJobEnqueuer(db),
   });
   return {
     root,
@@ -138,15 +146,10 @@ async function enqueueOwned(args: {
   database: ContinuationRuntimeV1Database;
   operationId: string;
   enqueue: EnqueueContinuationRuntimeV1DurableJobArgs;
-  clock: () => string;
 }): Promise<ContinuationRuntimeV1DurableJob> {
-  const operations = formalOperationStore(args.database, args.clock);
-  const jobs = createContinuationRuntimeV1DurableJobWorkerStore(args.database, {
-    now: args.clock,
-  });
-  const enqueuer = createContinuationRuntimeV1DurableJobEnqueuer(args.database, {
-    now: args.clock,
-  });
+  const operations = formalOperationStore(args.database);
+  const jobs = createContinuationRuntimeV1DurableJobWorkerStore(args.database);
+  const enqueuer = createContinuationRuntimeV1DurableJobEnqueuer(args.database);
   let jobId: string | undefined;
   const operation = await operations.execute({
     tenantId: "tenant",
@@ -174,7 +177,6 @@ async function workerOperation<
 >(args: {
   database: ContinuationRuntimeV1Database;
   operationId: string;
-  clock: () => string;
   jobId: string;
   token: string;
   produce: (
@@ -183,13 +185,9 @@ async function workerOperation<
     enqueuer: ReturnType<typeof createContinuationRuntimeV1DurableJobEnqueuer>,
   ) => Promise<TResult>;
 }) {
-  const operations = formalOperationStore(args.database, args.clock);
-  const jobs = createContinuationRuntimeV1DurableJobWorkerStore(args.database, {
-    now: args.clock,
-  });
-  const enqueuer = createContinuationRuntimeV1DurableJobEnqueuer(args.database, {
-    now: args.clock,
-  });
+  const operations = formalOperationStore(args.database);
+  const jobs = createContinuationRuntimeV1DurableJobWorkerStore(args.database);
+  const enqueuer = createContinuationRuntimeV1DurableJobEnqueuer(args.database);
   return await operations.execute({
     tenantId: "tenant",
     scope: "scope",
@@ -205,15 +203,9 @@ async function workerOperation<
 test("narrow enqueue capability persists jobs without worker transition methods", async () => {
   const f = fixture();
   try {
-    const operations = formalOperationStore(f.database, () => f.getClock());
-    const enqueuer = createContinuationRuntimeV1DurableJobEnqueuer(
-      f.database,
-      { now: () => f.getClock() },
-    );
-    const workerStore = createContinuationRuntimeV1DurableJobWorkerStore(
-      f.database,
-      { now: () => f.getClock() },
-    );
+    const operations = formalOperationStore(f.database);
+    const enqueuer = createContinuationRuntimeV1DurableJobEnqueuer(f.database);
+    const workerStore = createContinuationRuntimeV1DurableJobWorkerStore(f.database);
     assert.deepEqual(Object.keys(enqueuer), ["enqueue"]);
     assert.deepEqual(Object.keys(workerStore), ["leaseNext", "complete", "fail", "read"]);
     assert.equal("enqueue" in workerStore, false);
@@ -265,7 +257,6 @@ test("enqueue is operation-owned, deterministic, canonical, detached, and defini
       database: f.database,
       operationId: "enqueue-1",
       enqueue: enqueueArgs("same", { payload }),
-      clock: () => f.getClock(),
     });
     assert.match(first.job_id, /^job_[0-9a-f]{64}$/u);
     assert.equal(first.payload_sha256, sha256Hex(canonicalContinuationJson(payload)));
@@ -295,7 +286,6 @@ test("enqueue is operation-owned, deterministic, canonical, detached, and defini
         available_at: "2026-07-22T10:00:00.000Z",
         payload: { a: { value: "original" }, z: 2 },
       }),
-      clock: () => f.getClock(),
     }), ContinuationRuntimeV1DurableJobEnqueueDefinitionConflictError);
     assert.equal(await createContinuationRuntimeV1OperationStore(f.database).read({
       tenantId: "tenant", scope: "scope", operationKind: "record_observations",
@@ -305,7 +295,6 @@ test("enqueue is operation-owned, deterministic, canonical, detached, and defini
       database: f.database,
       operationId: "enqueue-conflict",
       enqueue: enqueueArgs("same", { payload: { different: true } }),
-      clock: () => f.getClock(),
     }), ContinuationRuntimeV1DurableJobEnqueuePayloadConflictError);
     assert.equal(await createContinuationRuntimeV1OperationStore(f.database).read({
       tenantId: "tenant", scope: "scope", operationKind: "record_observations",
@@ -322,7 +311,6 @@ test("enqueue is operation-owned, deterministic, canonical, detached, and defini
       database: f.database,
       operationId: "enqueue-large",
       enqueue: enqueueArgs("large", { payload: { value: "x".repeat(262_144) } }),
-      clock: () => f.getClock(),
     }), /payload_too_large/u);
   } finally {
     await f.database.close();
@@ -383,7 +371,6 @@ test("leaseNext owns a short transaction and follows ready-first, priority, stab
         database: f.database,
         operationId: `order-${index}`,
         enqueue: definition,
-        clock: () => f.getClock(),
       }));
     }
     const jobs = f.createStores().jobs;
@@ -412,7 +399,6 @@ test("leaseNext owns a short transaction and follows ready-first, priority, stab
       database: f.database,
       operationId: "concurrent-only",
       enqueue: enqueueArgs("concurrent-only"),
-      clock: () => f.getClock(),
     });
     const concurrent = await Promise.all([
       jobs.leaseNext({
@@ -459,7 +445,6 @@ test("expired leases are recovered before dequeue, stale tokens fail, and exhaus
       database: f.database,
       operationId: "expiry-enqueue",
       enqueue: enqueueArgs("expiry", { max_attempts: 2 }),
-      clock: () => f.getClock(),
     });
     const jobs = f.createStores().jobs;
     const first = await jobs.leaseNext({
@@ -480,7 +465,6 @@ test("expired leases are recovered before dequeue, stale tokens fail, and exhaus
     await assert.rejects(workerOperation({
       database: f.database,
       operationId: "stale-completion",
-      clock: () => f.getClock(),
       jobId: job.job_id,
       token: first!.lease_token!,
       produce: async (context, store) => {
@@ -514,7 +498,6 @@ test("worker completion context gates retry/dead/success transitions and exact l
       database: f.database,
       operationId: "failure-enqueue",
       enqueue: enqueueArgs("failure", { max_attempts: 2 }),
-      clock: () => f.getClock(),
     });
     const jobs = f.createStores().jobs;
     const first = await jobs.leaseNext({
@@ -525,7 +508,6 @@ test("worker completion context gates retry/dead/success transitions and exact l
     await assert.rejects(workerOperation({
       database: f.database,
       operationId: "wrong-token",
-      clock: () => f.getClock(),
       jobId: job.job_id,
       token: "0".repeat(64),
       produce: async (context, store) => {
@@ -539,7 +521,6 @@ test("worker completion context gates retry/dead/success transitions and exact l
     const retry = await workerOperation({
       database: f.database,
       operationId: "retry",
-      clock: () => f.getClock(),
       jobId: job.job_id,
       token: first!.lease_token!,
       produce: async (context, store) => {
@@ -570,7 +551,6 @@ test("worker completion context gates retry/dead/success transitions and exact l
     const completed = await workerOperation({
       database: f.database,
       operationId: "success",
-      clock: () => f.getClock(),
       jobId: job.job_id,
       token: second!.lease_token!,
       produce: async (context, store, enqueuer) => {
@@ -603,7 +583,6 @@ test("worker completion context gates retry/dead/success transitions and exact l
       database: f.database,
       operationId: "max-one-enqueue",
       enqueue: enqueueArgs("max-one", { max_attempts: 1 }),
-      clock: () => f.getClock(),
     });
     const maxLease = await jobs.leaseNext({
       tenant_id: "tenant", job_kind: "embedding",
@@ -613,7 +592,6 @@ test("worker completion context gates retry/dead/success transitions and exact l
     const forcedDead = await workerOperation({
       database: f.database,
       operationId: "max-one-fail",
-      clock: () => f.getClock(),
       jobId: maxOne.job_id,
       token: maxLease!.lease_token!,
       produce: async (context, store) => {
@@ -641,6 +619,106 @@ test("worker completion context gates retry/dead/success transitions and exact l
   }
 });
 
+test("success, retry, and dead roll back atomically when the receipt reaches exact lease expiry", async () => {
+  for (const transition of ["success", "retry", "dead"] as const) {
+    const f = fixture();
+    try {
+      const job = await enqueueOwned({
+        database: f.database,
+        operationId: `receipt-boundary-${transition}-enqueue`,
+        enqueue: enqueueArgs(`receipt-boundary-${transition}`),
+      });
+      const jobs = f.createStores().jobs;
+      const lease = await jobs.leaseNext({
+        tenant_id: "tenant",
+        job_kind: "embedding",
+        lease_owner: `worker-${transition}`,
+        lease_duration_ms: 60_000,
+      });
+      assert.equal(lease?.job_id, job.job_id);
+      assert.ok(lease?.lease_token);
+      assert.ok(lease.lease_expires_at);
+      const leasedSnapshot = await jobs.read({
+        tenant_id: "tenant",
+        scope: "scope",
+        job_id: job.job_id,
+      });
+      assert.ok(leasedSnapshot);
+      const beforeExpiry = new Date(
+        Date.parse(lease.lease_expires_at) - 1,
+      ).toISOString();
+      const operationId = `receipt-boundary-${transition}`;
+      let mutationState: "queued" | "succeeded" | "dead" | null = null;
+      let sideJobId: string | null = null;
+      f.setClock(beforeExpiry);
+
+      await assert.rejects(workerOperation({
+        database: f.database,
+        operationId,
+        jobId: job.job_id,
+        token: lease.lease_token,
+        produce: async (context, store, enqueuer) => {
+          if (transition === "success") {
+            const sideJob = await enqueuer.enqueue(context, enqueueArgs(
+              "receipt-boundary-success-side",
+              {
+                job_kind: "ann",
+                payload: { source_job_id: job.job_id },
+                available_at: beforeExpiry,
+              },
+            ));
+            sideJobId = sideJob.job_id;
+          }
+          const result = transition === "success"
+            ? await store.complete(context, {
+              job_id: job.job_id,
+              lease_token: lease.lease_token,
+            })
+            : await store.fail(context, {
+              job_id: job.job_id,
+              lease_token: lease.lease_token,
+              disposition: transition,
+              retry_at: transition === "retry" ? beforeExpiry : null,
+              error: { code: `boundary_${transition}` },
+            });
+          mutationState = result.state;
+          f.setClock(lease.lease_expires_at);
+          return { state: result.state };
+        },
+      }), /operation_completion_deadline_exceeded/u);
+
+      assert.equal(
+        mutationState,
+        transition === "success" ? "succeeded" : transition === "retry" ? "queued" : "dead",
+      );
+      assert.deepEqual(await jobs.read({
+        tenant_id: "tenant",
+        scope: "scope",
+        job_id: job.job_id,
+      }), leasedSnapshot);
+      if (transition === "success") {
+        assert.ok(sideJobId);
+        assert.equal(await jobs.read({
+          tenant_id: "tenant",
+          scope: "scope",
+          job_id: sideJobId,
+        }), null);
+      } else {
+        assert.equal(sideJobId, null);
+      }
+      assert.equal(await createContinuationRuntimeV1OperationStore(f.database).read({
+        tenantId: "tenant",
+        scope: "scope",
+        operationKind: "worker_completion",
+        operationId,
+      }), null);
+    } finally {
+      await f.database.close();
+      f.cleanup();
+    }
+  }
+});
+
 test("completion rollback is total and the same active lease survives reopen", async () => {
   const f = fixture();
   let database: ContinuationRuntimeV1Database | null = f.database;
@@ -649,9 +727,8 @@ test("completion rollback is total and the same active lease survives reopen", a
       database,
       operationId: "rollback-enqueue",
       enqueue: enqueueArgs("rollback"),
-      clock: () => f.getClock(),
     });
-    let jobs = createContinuationRuntimeV1DurableJobWorkerStore(database, { now: () => f.getClock() });
+    let jobs = createContinuationRuntimeV1DurableJobWorkerStore(database);
     const lease = await jobs.leaseNext({
       tenant_id: "tenant", job_kind: "embedding",
       lease_owner: "worker", lease_duration_ms: 60_000,
@@ -659,7 +736,6 @@ test("completion rollback is total and the same active lease survives reopen", a
     await assert.rejects(workerOperation({
       database,
       operationId: "rollback-complete",
-      clock: () => f.getClock(),
       jobId: job.job_id,
       token: lease!.lease_token!,
       produce: async (context, store, enqueuer) => {
@@ -679,15 +755,16 @@ test("completion rollback is total and the same active lease survives reopen", a
     }), null);
 
     await database.close();
-    database = openContinuationRuntimeV1Database(f.path);
-    jobs = createContinuationRuntimeV1DurableJobWorkerStore(database, { now: () => f.getClock() });
+    database = openContinuationRuntimeV1Database(f.path, {
+      authorityNow: () => f.getClock(),
+    });
+    jobs = createContinuationRuntimeV1DurableJobWorkerStore(database);
     const reopened = await jobs.read({ tenant_id: "tenant", scope: "scope", job_id: job.job_id });
     assert.equal(reopened?.state, "leased");
     assert.equal(reopened?.lease_token, lease?.lease_token);
     await workerOperation({
       database,
       operationId: "reopen-complete",
-      clock: () => f.getClock(),
       jobId: job.job_id,
       token: lease!.lease_token!,
       produce: async (context, store, enqueuer) => {
@@ -717,17 +794,14 @@ test("two opener lease race never issues the same job twice", async () => {
       database: f.database,
       operationId: "two-opener-enqueue",
       enqueue: enqueueArgs("two-opener"),
-      clock: () => f.getClock(),
     });
-    second = openContinuationRuntimeV1Database(f.path);
+    second = openContinuationRuntimeV1Database(f.path, {
+      authorityNow: () => f.getClock(),
+    });
     f.database.db.exec("PRAGMA busy_timeout = 0");
     second.db.exec("PRAGMA busy_timeout = 0");
-    const firstStore = createContinuationRuntimeV1DurableJobWorkerStore(f.database, {
-      now: () => f.getClock(),
-    });
-    const secondStore = createContinuationRuntimeV1DurableJobWorkerStore(second, {
-      now: () => f.getClock(),
-    });
+    const firstStore = createContinuationRuntimeV1DurableJobWorkerStore(f.database);
+    const secondStore = createContinuationRuntimeV1DurableJobWorkerStore(second);
     const settled = await Promise.allSettled([
       firstStore.leaseNext({
         tenant_id: "tenant", job_kind: "embedding",
@@ -762,6 +836,75 @@ test("two opener lease race never issues the same job twice", async () => {
   }
 });
 
+test("a stale second opener refreshes the committed floor before expiry recovery with no candidate", async () => {
+  const f = fixture();
+  let second: ContinuationRuntimeV1Database | null = null;
+  try {
+    const job = await enqueueOwned({
+      database: f.database,
+      operationId: "stale-opener-expiry-enqueue",
+      enqueue: enqueueArgs("stale-opener-expiry", { max_attempts: 1 }),
+    });
+    const firstStore = createContinuationRuntimeV1DurableJobWorkerStore(f.database);
+    const lease = await firstStore.leaseNext({
+      tenant_id: "tenant",
+      job_kind: "embedding",
+      lease_owner: "first-opener",
+      lease_duration_ms: 1_000,
+    });
+    assert.equal(lease?.job_id, job.job_id);
+    assert.ok(lease.lease_expires_at);
+    const staleFloorT1 = persistedAuthorityClockFloor(f.database);
+    assert.ok(staleFloorT1 < lease.lease_expires_at);
+
+    second = openContinuationRuntimeV1Database(f.path, {
+      authorityNow: () => staleFloorT1,
+    });
+    const secondStore = createContinuationRuntimeV1DurableJobWorkerStore(second);
+    assert.equal(second.authorityNow(), staleFloorT1);
+
+    const committedFloorT3 = lease.lease_expires_at;
+    const floorLowerBound = new Date(
+      Date.parse(committedFloorT3) - 1,
+    ).toISOString();
+    await f.database.withTx(async () => {
+      assert.equal(
+        f.database.mintAuthorityTime(floorLowerBound),
+        committedFloorT3,
+      );
+    });
+    assert.equal(persistedAuthorityClockFloor(f.database), committedFloorT3);
+    assert.equal(persistedAuthorityClockFloor(second), committedFloorT3);
+    assert.equal(
+      second.authorityNow(),
+      staleFloorT1,
+      "outside a transaction the second opener intentionally retains T1",
+    );
+
+    assert.equal(await secondStore.leaseNext({
+      tenant_id: "tenant",
+      job_kind: "embedding",
+      lease_owner: "second-opener",
+      lease_duration_ms: 1_000,
+    }), null);
+    const recovered = await secondStore.read({
+      tenant_id: "tenant",
+      scope: "scope",
+      job_id: job.job_id,
+    });
+    assert.equal(recovered?.state, "dead");
+    assert.equal(recovered?.terminal_reason, "lease_expired_attempts_exhausted");
+    assert.equal(recovered?.completed_at, committedFloorT3);
+    assert.equal(recovered?.updated_at, committedFloorT3);
+    assert.equal(recovered?.last_error?.observed_at, committedFloorT3);
+    assert.equal(second.authorityNow(), committedFloorT3);
+  } finally {
+    await second?.close();
+    await f.database.close();
+    f.cleanup();
+  }
+});
+
 test("wrong database/kind contexts and exact expiry fail without changing the lease", async () => {
   const first = fixture();
   const second = fixture();
@@ -770,7 +913,6 @@ test("wrong database/kind contexts and exact expiry fail without changing the le
       database: first.database,
       operationId: "context-enqueue",
       enqueue: enqueueArgs("context"),
-      clock: () => first.getClock(),
     });
     const jobs = first.createStores().jobs;
     const lease = await jobs.leaseNext({
@@ -804,7 +946,6 @@ test("wrong database/kind contexts and exact expiry fail without changing the le
     await assert.rejects(workerOperation({
       database: first.database,
       operationId: "expired-complete",
-      clock: () => first.getClock(),
       jobId: job.job_id,
       token: lease!.lease_token!,
       produce: async (context, store) => {
@@ -891,7 +1032,6 @@ test("reads fail closed on payload corruption and DDL rejects token or terminal 
       database: f.database,
       operationId: "guarded-source",
       enqueue: enqueueArgs("guarded"),
-      clock: () => f.getClock(),
     });
     assert.throws(() => f.database.db.prepare(`UPDATE durable_jobs SET
       state = 'leased', attempt_count = 1, lease_owner = 'worker',

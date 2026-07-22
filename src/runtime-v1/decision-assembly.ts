@@ -398,10 +398,8 @@ export function assertContinuationRuntimeV1DecisionAssemblyService(
 
 export function createContinuationRuntimeV1DecisionAssemblyService(
   dependencies: AssemblyDependencies,
-  options: Readonly<{ now?: () => string }> = {},
 ): ContinuationRuntimeV1DecisionAssemblyService {
   assertDependencies(dependencies);
-  const now = options.now ?? (() => new Date().toISOString());
   let service!: ContinuationRuntimeV1DecisionAssemblyService;
   service = Object.freeze({
     async assemble(context, value) {
@@ -414,7 +412,7 @@ export function createContinuationRuntimeV1DecisionAssemblyService(
         || binding.actorKind !== "trusted_host") fail("operation_context_forbidden");
       if (ASSEMBLY_CONTEXTS.has(context as object)) fail("operation_context_already_used");
       ASSEMBLY_CONTEXTS.add(context as object);
-      const compiledAt = now();
+      const compiledAt = dependencies.database.mintAuthorityTime(null);
       assertCanonicalUtcMillis(compiledAt, "decision assembly compiled_at");
 
       const persistedSnapshot = await dependencies.observationStore.read({

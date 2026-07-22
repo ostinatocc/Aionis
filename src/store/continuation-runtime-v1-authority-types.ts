@@ -148,10 +148,6 @@ export type ContinuationRuntimeV1AuthorityStore = Readonly<{
   readHead(args: ReadAuthorityHeadV1Args): Promise<AuthorityHeadV1 | null>;
 }>;
 
-export type ContinuationRuntimeV1AuthorityStoreOptions = Readonly<{
-  now?: () => string;
-}>;
-
 export class ContinuationRuntimeV1AuthorityHeadConflictError extends Error {
   constructor(
     readonly expectedRevision: number,

@@ -14,6 +14,7 @@ import type { ContinuationRuntimeV1Database } from
   "./continuation-runtime-v1-database.js";
 import {
   assertContinuationRuntimeV1AuthorityWriteContext,
+  constrainContinuationRuntimeV1OperationCompletion,
   continuationRuntimeV1OperationLineage,
   type ContinuationRuntimeV1AuthorityWriteContext,
   type ContinuationRuntimeV1OperationLineageV1,
@@ -92,10 +93,6 @@ export type ReadContinuationRuntimeV1DurableJobArgs = Readonly<{
   tenant_id: string;
   scope: string;
   job_id: string;
-}>;
-
-export type ContinuationRuntimeV1DurableJobWorkerStoreOptions = Readonly<{
-  now?: () => string;
 }>;
 
 export type ContinuationRuntimeV1DurableJobWorkerStore = Readonly<{
@@ -343,19 +340,6 @@ function deriveJobId(
   }))}`;
 }
 
-function nextTimestamp(clock: string, previous: string): string {
-  timestamp(clock, "clock");
-  timestamp(previous, "previous_updated_at");
-  if (clock > previous) return clock;
-  const nextMillis = Date.parse(previous) + 1;
-  if (!Number.isSafeInteger(nextMillis)) {
-    throw new Error("continuation_runtime_v1_durable_job_timestamp_overflow");
-  }
-  const next = new Date(nextMillis).toISOString();
-  timestamp(next, "next_updated_at");
-  return next;
-}
-
 function addMilliseconds(value: string, duration: number): string {
   timestamp(value, "lease_acquired_at");
   const milliseconds = Date.parse(value) + duration;
@@ -365,6 +349,17 @@ function addMilliseconds(value: string, duration: number): string {
   const result = new Date(milliseconds).toISOString();
   timestamp(result, "lease_expires_at");
   return result;
+}
+
+function leaseCompletionDeadline(leaseExpiresAt: string): string {
+  timestamp(leaseExpiresAt, "lease_expires_at");
+  const deadlineMilliseconds = Date.parse(leaseExpiresAt) - 1;
+  if (!Number.isSafeInteger(deadlineMilliseconds)) {
+    throw new Error("continuation_runtime_v1_durable_job_lease_deadline_invalid");
+  }
+  const deadline = new Date(deadlineMilliseconds).toISOString();
+  timestamp(deadline, "lease_completion_deadline");
+  return deadline;
 }
 
 function sameToken(left: string, right: string): boolean {
@@ -737,10 +732,7 @@ function recoveryError(
 
 export function createContinuationRuntimeV1DurableJobWorkerStore(
   database: ContinuationRuntimeV1Database,
-  options: ContinuationRuntimeV1DurableJobWorkerStoreOptions = {},
 ): ContinuationRuntimeV1DurableJobWorkerStore {
-  const now = options.now ?? (() => new Date().toISOString());
-
   const rowById = (tenantId: string, scope: string, jobId: string): JobRow | null =>
     (database.db.prepare(
       `SELECT ${SELECT_COLUMNS} FROM durable_jobs
@@ -762,7 +754,7 @@ export function createContinuationRuntimeV1DurableJobWorkerStore(
     if (job.state !== "leased" || job.lease_expires_at! > clock) {
       throw new Error("continuation_runtime_v1_durable_job_recovery_candidate_invalid");
     }
-    const transitionAt = nextTimestamp(clock, job.updated_at);
+    const transitionAt = database.mintAuthorityTime(job.updated_at);
     const exhausted = job.attempt_count >= job.max_attempts;
     const errorJson = recoveryError(
       exhausted ? "lease_expired_attempts_exhausted" : "lease_expired",
@@ -823,10 +815,10 @@ export function createContinuationRuntimeV1DurableJobWorkerStore(
       if (database.transaction.inTransaction()) {
         throw new Error("continuation_runtime_v1_durable_job_lease_must_own_transaction");
       }
-      const clock = now();
-      timestamp(clock, "lease_clock");
       const token = randomBytes(32).toString("hex");
       return await database.withTx(async () => {
+        const clock = database.authorityNow();
+        timestamp(clock, "lease_clock");
         const tokenCollision = database.db.prepare(
           "SELECT 1 AS present FROM durable_jobs WHERE lease_token = ? LIMIT 1",
         ).get(token);
@@ -850,7 +842,7 @@ export function createContinuationRuntimeV1DurableJobWorkerStore(
         ).get(args.tenant_id, args.job_kind, clock) as JobRow | undefined;
         if (!candidateRow) return null;
         const candidate = decodeRow(candidateRow);
-        const acquiredAt = nextTimestamp(clock, candidate.updated_at);
+        const acquiredAt = database.mintAuthorityTime(candidate.updated_at);
         const expiresAt = addMilliseconds(acquiredAt, args.lease_duration_ms);
         const changed = database.db.prepare(`UPDATE durable_jobs SET
           state = 'leased', attempt_count = attempt_count + 1,
@@ -913,15 +905,20 @@ export function createContinuationRuntimeV1DurableJobWorkerStore(
       if (!sameToken(job.lease_token!, args.lease_token)) {
         throw new Error("continuation_runtime_v1_durable_job_lease_token_mismatch");
       }
-      const clock = now();
+      const clock = database.authorityNow();
       timestamp(clock, "complete_clock");
       if (job.lease_expires_at! <= clock) {
         throw new Error("continuation_runtime_v1_durable_job_lease_expired");
       }
-      const completedAt = nextTimestamp(clock, job.updated_at);
+      const completedAt = database.mintAuthorityTime(job.updated_at);
       if (completedAt >= job.lease_expires_at!) {
         throw new Error("continuation_runtime_v1_durable_job_lease_expired");
       }
+      constrainContinuationRuntimeV1OperationCompletion(
+        context,
+        database,
+        leaseCompletionDeadline(job.lease_expires_at!),
+      );
       const changed = database.db.prepare(`UPDATE durable_jobs SET
         state = 'succeeded', lease_owner = NULL, lease_token = NULL,
         lease_acquired_at = NULL, lease_expires_at = NULL, completed_at = ?,
@@ -996,15 +993,20 @@ export function createContinuationRuntimeV1DurableJobWorkerStore(
       if (!sameToken(job.lease_token!, args.lease_token)) {
         throw new Error("continuation_runtime_v1_durable_job_lease_token_mismatch");
       }
-      const clock = now();
+      const clock = database.authorityNow();
       timestamp(clock, "fail_clock");
       if (job.lease_expires_at! <= clock) {
         throw new Error("continuation_runtime_v1_durable_job_lease_expired");
       }
-      const workerTransitionAt = nextTimestamp(clock, job.updated_at);
+      const workerTransitionAt = database.mintAuthorityTime(job.updated_at);
       if (workerTransitionAt >= job.lease_expires_at!) {
         throw new Error("continuation_runtime_v1_durable_job_lease_expired");
       }
+      constrainContinuationRuntimeV1OperationCompletion(
+        context,
+        database,
+        leaseCompletionDeadline(job.lease_expires_at!),
+      );
       const dead = args.disposition === "dead" || job.attempt_count >= job.max_attempts;
       const transitionAt = workerTransitionAt;
       const availableAt = dead

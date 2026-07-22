@@ -48,6 +48,7 @@ import { createContinuationRuntimeV1PolicyAuthority } from
 
 const KEYS=generateKeyPairSync("ed25519"); const TENANT="tenant-1"; const SCOPE="scope-1";
 const HOST="1".repeat(64); const OPERATOR="2".repeat(64); const NOW="2026-07-22T10:00:00.000Z";
+const SNAPSHOT_NOW="2026-07-22T09:30:00.000Z";
 const SUBJECT=continuationAuthoritySubjectSha256V1({tenant_id:TENANT,scope:SCOPE,task_family:"repair"});
 const POLICY:ContinuationCompilerPolicyV1={schema_version:"continuation_compiler_policy_v1",tenant_id:TENANT,
   authority_subject_sha256:SUBJECT,candidate_limit:128,continuity_candidate_limit:64,
@@ -59,40 +60,42 @@ const POLICY:ContinuationCompilerPolicyV1={schema_version:"continuation_compiler
 let sequence=0;
 
 function fixture(){sequence+=1;const root=mkdtempSync(join(tmpdir(),"aionis-v1-episode-"));
-  const path=join(root,"runtime","runtime.sqlite");const database=openContinuationRuntimeV1Database(path,
-    {databaseInstanceId:sequence.toString(16).padStart(64,"0"),now:()=>"2026-07-22T08:00:00.000Z"});
-  const operations=createContinuationRuntimeV1OperationStore(database,{now:()=>NOW});
+  const path=join(root,"runtime","runtime.sqlite");const clock={value:"2026-07-22T08:00:00.000Z"};
+  const database=openContinuationRuntimeV1Database(path,
+    {databaseInstanceId:sequence.toString(16).padStart(64,"0"),authorityNow:()=>clock.value});
+  clock.value=NOW;
+  const operations=createContinuationRuntimeV1OperationStore(database);
   const artifactProvisioner=createContinuationRuntimeV1AuthorityArtifactProvisioner(
     database,KEYS.publicKey,
   );
   const artifacts=createContinuationRuntimeV1AuthorityArtifactReader(database,KEYS.publicKey);
   const policies=createContinuationRuntimeV1PolicyAuthority(database,artifacts);
   const effects=createContinuationRuntimeV1EffectCertificateReader(database,artifacts,policies);
-  const authority=createContinuationRuntimeV1AuthorityStore(database,artifacts,policies,effects,{now:()=>NOW});
-  const observations=createContinuationRuntimeV1ObservationStore(database,
-    {now:()=>"2026-07-22T09:30:00.000Z"});
-  const memory=createContinuationRuntimeV1MemoryStore(database,
-    {now:()=>"2026-07-22T09:30:00.000Z"});
+  const authority=createContinuationRuntimeV1AuthorityStore(database,artifacts,policies,effects);
+  const observations=createContinuationRuntimeV1ObservationStore(database);
+  const memory=createContinuationRuntimeV1MemoryStore(database);
   const cohorts=createContinuationRuntimeV1ExperimentCohortAuthority(
     database,artifacts,policies,
   );
   const assembly=createContinuationRuntimeV1DecisionAssemblyService({database,
     observationStore:observations,memoryStore:memory,artifactStore:artifacts,
     policyAuthority:policies,effectCertificateReader:effects,authorityStore:authority,
-    experimentCohortAuthority:cohorts},{now:()=>NOW});
+    experimentCohortAuthority:cohorts});
   return{root,path,database,operations,artifactProvisioner,artifacts,authority,effects,observations,memory,
-    assembly,episode:createContinuationRuntimeV1EpisodeStore(database,{now:()=>NOW})};}
+    assembly,episode:createContinuationRuntimeV1EpisodeStore(database),clock};}
 type F=ReturnType<typeof fixture>;
 async function op<T>(f:F,kind:"record_observations"|"create_continuation"|"record_outcome"|"authority_decision",
   id:string,produce:(context:ContinuationRuntimeV1AuthorityWriteContext)=>Promise<T>):Promise<T>{let value:T|null=null;
   await f.operations.execute({tenantId:TENANT,scope:SCOPE,operationKind:kind,operationId:id,
     actorKind:kind==="authority_decision"?"operator":"trusted_host",
     actorPrincipalSha256:kind==="authority_decision"?OPERATOR:HOST,request:{id},produce:async(context)=>{
-      value=await produce(context);return deriveContinuationRuntimeV1OperationResultV1(
-        f.database,
-        assertContinuationRuntimeV1AuthorityWriteContext(context,f.database),
-        "before_receipt_insert",
-      );}});return value!;}
+      try {
+        value=await produce(context);return deriveContinuationRuntimeV1OperationResultV1(
+          f.database,
+          assertContinuationRuntimeV1AuthorityWriteContext(context,f.database),
+          "before_receipt_insert",
+        );
+      } finally { f.clock.value=NOW; }}});return value!;}
 async function seed(f:F){
     const compiler=buildSignedAuthorityArtifactV1({tenant_id:TENANT,artifact_id:"compiler_policy",artifact_revision:1,
       artifact_kind:"compiler_policy",artifact_schema:"continuation_compiler_policy_v1",
@@ -113,6 +116,7 @@ async function seed(f:F){
       schema_version:"authority_policy_provisioning_bundle_v1",tenant_id:TENANT,
       authority_subject_sha256:SUBJECT,compiler_policy:compiler,evidence_policy:evidence}));
   return op(f,"record_observations","genesis",async(context)=>{
+    f.clock.value=SNAPSHOT_NOW;
     const snapshot=await f.observations.put(context,{host_task_envelope:{host_task_id:"task-genesis",
       episode_id:"episode-genesis",run_id:"run-genesis",consumer_agent_id:"agent",consumer_team_id:null,
       task_family:"repair",task_signature:"sig",workflow_signature:null,workspace_signature:"workspace",
@@ -121,16 +125,19 @@ async function seed(f:F){
       collector_observations:[],signed_observations:[]});
     const memory=await f.memory.appendMemoryRevision(context,{expected_head_revision:null,
       items:[],relations:[],capsules:[]});
+    f.clock.value=NOW;
     const genesis=await f.authority.ensureGenesis(context);
     return{snapshot,memory,genesis};
   });}
 async function recordSnapshot(f:F,decision:string,run="run-1",episode="episode-1"){
-  return op(f,"record_observations",`snapshot-${decision}`,(context)=>f.observations.put(context,{
+  return op(f,"record_observations",`snapshot-${decision}`,(context)=>{
+    f.clock.value=SNAPSHOT_NOW;
+    return f.observations.put(context,{
     host_task_envelope:{host_task_id:`task-${decision}`,episode_id:episode,run_id:run,
       consumer_agent_id:"agent",consumer_team_id:null,task_family:"repair",task_signature:"sig",
       workflow_signature:null,workspace_signature:"workspace",source_task_sha256:"3".repeat(64),
       source_event_sha256:"4".repeat(64),issued_at:"2026-07-22T09:00:00.000Z",
-      expires_at:"2026-07-22T11:00:00.000Z"},collector_observations:[],signed_observations:[]}));}
+      expires_at:"2026-07-22T11:00:00.000Z"},collector_observations:[],signed_observations:[]});});}
 async function expose(f:F,decision="decision-1",run="run-1",episode="episode-1"){
   const persisted=await recordSnapshot(f,decision,run,episode);
   return op(f,"create_continuation",decision,async(context)=>{

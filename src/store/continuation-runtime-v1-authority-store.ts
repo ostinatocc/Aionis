@@ -48,7 +48,6 @@ import {
   type AuthorityBranchRevisionRecordV1,
   type AuthorityHeadV1,
   type ContinuationRuntimeV1AuthorityStore,
-  type ContinuationRuntimeV1AuthorityStoreOptions,
   type CreateIsolatedCandidateDraftV1Args,
   type EnsureAuthorityGenesisV1Result,
   type ReadAuthorityBranchRevisionV1Args,
@@ -75,7 +74,6 @@ import {
   buildAuthorityHeadV1,
   insertAuthorityBranchV1,
   insertAuthorityHeadV1,
-  nextAuthorityTimeV1,
 } from "./continuation-runtime-v1-authority-write-projection.js";
 import { rotateContinuationRuntimeV1Policies } from
   "./continuation-runtime-v1-policy-rotation-store.js";
@@ -90,7 +88,7 @@ export { ContinuationRuntimeV1AuthorityHeadConflictError } from
 export type {
   AppendAuthorityDecisionV1Result,
   AuthorityBranchRevisionRecordV1, AuthorityHeadV1,
-  ContinuationRuntimeV1AuthorityStore, ContinuationRuntimeV1AuthorityStoreOptions,
+  ContinuationRuntimeV1AuthorityStore,
   EnsureAuthorityGenesisV1Result,
   ReadAuthorityBranchRevisionV1Args, ReadAuthorityHeadV1Args,
   ReadLatestAuthorityBranchRevisionV1Args,
@@ -780,7 +778,6 @@ export function createContinuationRuntimeV1AuthorityStore(
   artifactStore: ContinuationRuntimeV1AuthorityArtifactReader,
   policyAuthority: ContinuationRuntimeV1PolicyAuthority,
   effectCertificateReader: ContinuationRuntimeV1EffectCertificateReader,
-  options: ContinuationRuntimeV1AuthorityStoreOptions = {},
 ): ContinuationRuntimeV1AuthorityStore {
   assertContinuationRuntimeV1PolicyAuthority(policyAuthority, database, artifactStore);
   assertContinuationRuntimeV1EffectCertificateReader(
@@ -789,12 +786,10 @@ export function createContinuationRuntimeV1AuthorityStore(
     artifactStore,
     policyAuthority,
   );
-  const now = options.now ?? (() => new Date().toISOString());
   const workflows = createContinuationRuntimeV1AuthorityWorkflows({
     database,
     artifactStore,
     policyAuthority,
-    now,
     claimOperatorContext(context) {
       if (AUTHORITY_OPERATOR_MUTATION_CONTEXTS.has(context)) {
         fail("operator_operation_context_already_used");
@@ -857,7 +852,7 @@ export function createContinuationRuntimeV1AuthorityStore(
       }
       AUTHORITY_AUTHORITATIVE_MUTATION_CONTEXTS.add(context);
       const mutation = deriveTrustedObservationAuthorityMutationV1(database, binding);
-      const at = nextAuthorityTimeV1(now(), null);
+      const at = database.mintAuthorityTime(null);
       const subject = mutation.authoritySubjectSha256;
       const branchId = deterministicGenesisBranchId(binding.tenantId, subject);
       const lineage = continuationRuntimeV1OperationLineage(binding);
@@ -992,7 +987,7 @@ export function createContinuationRuntimeV1AuthorityStore(
         learningMemoryIds,
         LEARNING_AUTHORITY_CAPSULE_KINDS_V1,
       );
-      const at = nextAuthorityTimeV1(now(), current.head.updated_at);
+      const at = database.mintAuthorityTime(current.head.updated_at);
       const manifest = buildAuthorityBranchManifestV1({
         tenant_id: binding.tenantId,
         authority_subject_sha256: mutation.authoritySubjectSha256,
@@ -1066,7 +1061,6 @@ export function createContinuationRuntimeV1AuthorityStore(
         policyAuthority,
         binding,
         args,
-        now,
         readHead: (tenantId, subject, pending = null) => readHeadInternal(
           database,
           artifactStore,

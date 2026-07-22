@@ -4,7 +4,6 @@ import type {
   AuthoritativeBranchRevisionRefV1,
 } from "../continuation/authority-branch.js";
 import {
-  assertCanonicalUtcMillis,
   canonicalContinuationClone,
   canonicalContinuationJson,
   canonicalContinuationSha256,
@@ -270,14 +269,6 @@ export function insertAuthorityBranchV1(
       manifest.created_at,
     );
   }
-}
-
-export function nextAuthorityTimeV1(candidate: string, lowerBound: string | null): string {
-  assertCanonicalUtcMillis(candidate, "authority store clock");
-  if (lowerBound === null || candidate > lowerBound) return candidate;
-  const next = new Date(Date.parse(lowerBound) + 1).toISOString();
-  assertCanonicalUtcMillis(next, "authority logical clock");
-  return next;
 }
 
 export function buildAuthorityHeadV1(

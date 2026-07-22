@@ -2,6 +2,10 @@ import {
   assertCanonicalUtcMillis,
   assertUnicodeScalarString,
 } from "../continuation/contract.js";
+import {
+  assertContinuationRuntimeV1AuthorityClock,
+  type ContinuationRuntimeV1AuthorityClock,
+} from "../store/continuation-runtime-v1-database.js";
 import { continuationRuntimeV1EmbeddingBaseUrl } from "./config-support.js";
 import type { ContinuationRuntimeV1EmbeddingWorkerConfig } from
   "./worker-config.js";
@@ -184,8 +188,15 @@ function parseInput(value: ContinuationRuntimeV1EmbeddingBatchInput) {
   };
 }
 
-function abortAuthority(signal: AbortSignal, deadlineAt: string) {
-  const now = Date.now();
+function authorityNowMilliseconds(authorityNow: () => string): number {
+  try {
+    const value = authorityNow(); assertCanonicalUtcMillis(value, "embedding authority clock");
+    return Date.parse(value);
+  } catch { fail("configuration_invalid"); }
+}
+
+function abortAuthority(signal: AbortSignal, deadlineAt: string, authorityNow: () => string) {
+  const now = authorityNowMilliseconds(authorityNow);
   const deadline = Date.parse(deadlineAt);
   if (!Number.isFinite(deadline) || deadline <= now) fail("lease_deadline_exceeded");
   if (deadline - now > MAX_LEASE_HORIZON_MS) fail("input_invalid");
@@ -209,6 +220,11 @@ function abortAuthority(signal: AbortSignal, deadlineAt: string) {
   return {
     signal: controller.signal,
     abortedCode: () => code,
+    assertWithinDeadline: () => {
+      if (authorityNowMilliseconds(authorityNow) >= deadline) {
+        fail("lease_deadline_exceeded");
+      }
+    },
     cleanup: () => {
       clearTimeout(timer);
       signal.removeEventListener("abort", externalAbort);
@@ -308,7 +324,11 @@ function parseResponse(
 
 export function createContinuationRuntimeV1EmbeddingProvider(
   workerConfig: ContinuationRuntimeV1EmbeddingWorkerConfig,
+  authorityNow: ContinuationRuntimeV1AuthorityClock,
 ): ContinuationRuntimeV1EmbeddingProvider {
+  try { assertContinuationRuntimeV1AuthorityClock(authorityNow); } catch {
+    fail("configuration_invalid");
+  }
   let config: ReturnType<typeof parseConfig>;
   try {
     config = parseConfig(workerConfig);
@@ -331,7 +351,7 @@ export function createContinuationRuntimeV1EmbeddingProvider(
         > CONTINUATION_RUNTIME_V1_EMBEDDING_MAX_VECTOR_COMPONENTS) {
         fail("input_invalid");
       }
-      const authority = abortAuthority(input.signal, input.leaseDeadlineAt);
+      const authority = abortAuthority(input.signal, input.leaseDeadlineAt, authorityNow);
       const maximumResponseBytes = Math.min(
         ABSOLUTE_RESPONSE_BODY_LIMIT_BYTES,
         RESPONSE_ENVELOPE_BYTES
@@ -365,6 +385,7 @@ export function createContinuationRuntimeV1EmbeddingProvider(
           config.dimensions,
           input.texts.length,
         );
+        authority.assertWithinDeadline();
         return Object.freeze({
           schema_version: "embedding_batch_result_v1" as const,
           model: config.model,

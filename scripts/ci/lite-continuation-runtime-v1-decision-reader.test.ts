@@ -70,6 +70,7 @@ const HOST = "1".repeat(64);
 const OTHER_HOST = "2".repeat(64);
 const OPERATOR = "3".repeat(64);
 const NOW = "2026-07-22T10:00:00.000Z";
+const SNAPSHOT_NOW = "2026-07-22T09:30:00.000Z";
 const SUBJECT = continuationAuthoritySubjectSha256V1({
   tenant_id: TENANT,
   scope: SCOPE,
@@ -98,13 +99,12 @@ const POLICY: ContinuationCompilerPolicyV1 = {
 
 function fixture() {
   const root = mkdtempSync(join(tmpdir(), "aionis-v1-decision-reader-"));
+  const clock = { value: NOW };
   const database = openContinuationRuntimeV1Database(
     join(root, "runtime", "runtime.sqlite"),
-    { databaseInstanceId: "d".repeat(64), now: () => NOW },
+    { databaseInstanceId: "d".repeat(64), authorityNow: () => clock.value },
   );
-  const operations = createContinuationRuntimeV1OperationStore(database, {
-    now: () => NOW,
-  });
+  const operations = createContinuationRuntimeV1OperationStore(database);
   const artifactProvisioner = createContinuationRuntimeV1AuthorityArtifactProvisioner(
     database,
     KEYS.publicKey,
@@ -124,14 +124,9 @@ function fixture() {
     artifacts,
     policies,
     effects,
-    { now: () => NOW },
   );
-  const observations = createContinuationRuntimeV1ObservationStore(database, {
-    now: () => "2026-07-22T09:30:00.000Z",
-  });
-  const memory = createContinuationRuntimeV1MemoryStore(database, {
-    now: () => "2026-07-22T09:30:00.000Z",
-  });
+  const observations = createContinuationRuntimeV1ObservationStore(database);
+  const memory = createContinuationRuntimeV1MemoryStore(database);
   const memoryHistory = createContinuationRuntimeV1MemoryHistoryStore(database);
   const cohorts = createContinuationRuntimeV1ExperimentCohortAuthority(
     database,
@@ -147,8 +142,8 @@ function fixture() {
     effectCertificateReader: effects,
     authorityStore: authority,
     experimentCohortAuthority: cohorts,
-  }, { now: () => NOW });
-  const episode = createContinuationRuntimeV1EpisodeStore(database, { now: () => NOW });
+  });
+  const episode = createContinuationRuntimeV1EpisodeStore(database);
   const reader = createContinuationRuntimeV1DecisionReader({
     database,
     artifactStore: artifacts,
@@ -171,6 +166,7 @@ function fixture() {
     assembly,
     episode,
     reader,
+    clock,
   };
 }
 
@@ -192,15 +188,19 @@ async function operation<T>(
     actorPrincipalSha256: kind === "authority_decision" ? OPERATOR : HOST,
     request: { operation_id: id },
     produce: async (context) => {
-      result = await produce(context);
-      return deriveContinuationRuntimeV1OperationResultV1(
-        current.database,
-        assertContinuationRuntimeV1AuthorityWriteContext(
-          context,
+      try {
+        result = await produce(context);
+        return deriveContinuationRuntimeV1OperationResultV1(
           current.database,
-        ),
-        "before_receipt_insert",
-      );
+          assertContinuationRuntimeV1AuthorityWriteContext(
+            context,
+            current.database,
+          ),
+          "before_receipt_insert",
+        );
+      } finally {
+        current.clock.value = NOW;
+      }
     },
   });
   return result!;
@@ -257,6 +257,7 @@ async function seed(current: Fixture, capsuleCount = 1) {
       evidence_policy: evidence,
     }));
   return operation(current, "record_observations", "seed-memory", async (context) => {
+    current.clock.value = SNAPSHOT_NOW;
     const snapshot = await current.observations.put(context, {
       host_task_envelope: {
         host_task_id: "task-reader",
@@ -326,6 +327,7 @@ async function seed(current: Fixture, capsuleCount = 1) {
         },
       })),
     });
+    current.clock.value = NOW;
     await current.authority.ensureGenesis(context);
     return { snapshot, memory };
   });
@@ -341,6 +343,7 @@ async function extendCurrentStateHistory(
         "record_observations",
         `history-depth-${revision.toString().padStart(4, "0")}`,
         async (context) => {
+          current.clock.value = SNAPSHOT_NOW;
           await current.observations.put(context, {
             host_task_envelope: {
               host_task_id: `task-history-${revision}`,

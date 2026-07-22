@@ -105,7 +105,6 @@ export type ContinuationRuntimeV1ApplicationServiceDependencies = Readonly<{
   episodeStore: ContinuationRuntimeV1EpisodeStore;
   decisionAssembly: ContinuationRuntimeV1DecisionAssemblyService;
   decisionReader: ContinuationRuntimeV1DecisionReader;
-  now?: () => string;
 }>;
 
 type ExposureProjection = Readonly<{
@@ -392,7 +391,7 @@ async function applyLifecycleDecision(
       priority: 0,
       max_attempts: 3,
       payload,
-      available_at: dependencies.now?.() ?? new Date().toISOString(),
+      available_at: dependencies.database.authorityNow(),
     });
   }
 }
@@ -542,7 +541,7 @@ function validateDependencies(
   }
   assertSha256(dependencies.trustRootSha256, "application trust root");
   const requiredMethods: Readonly<Record<string, readonly string[]>> = {
-    database: ["read"],
+    database: ["authorityNow", "mintAuthorityTime", "read"],
     operationStore: ["execute", "read"],
     durableJobStore: ["enqueue"],
     observationStore: ["put", "read"],
@@ -581,7 +580,7 @@ export function createContinuationRuntimeV1ApplicationService(
   dependencies: ContinuationRuntimeV1ApplicationServiceDependencies,
 ): ContinuationRuntimeV1Application {
   validateDependencies(dependencies);
-  const now = dependencies.now ?? (() => new Date().toISOString());
+  const now = dependencies.database.authorityNow;
 
   return Object.freeze({
     readiness: () => readiness(dependencies, now()),

@@ -23,7 +23,6 @@ import {
   assertWritableAuthorityBindingsV1,
   buildAuthorityHeadV1,
   insertAuthorityBranchV1,
-  nextAuthorityTimeV1,
   updateAuthorityHeadV1,
 } from "./continuation-runtime-v1-authority-write-projection.js";
 import type { ContinuationRuntimeV1Database } from
@@ -49,7 +48,6 @@ export type RotateContinuationRuntimeV1PoliciesDependencies = Readonly<{
   policyAuthority: ContinuationRuntimeV1PolicyAuthority;
   binding: ContinuationRuntimeV1AuthorityWriteBinding;
   args: RotateAuthorityPoliciesV1Args;
-  now: () => string;
   readHead(
     tenantId: string,
     subject: Sha256,
@@ -109,7 +107,7 @@ export async function rotateContinuationRuntimeV1Policies(
   dependencies: RotateContinuationRuntimeV1PoliciesDependencies,
 ): Promise<AppendAuthorityDecisionV1Result> {
   const {
-    database, artifactStore, policyAuthority, binding, args, now, readHead,
+    database, artifactStore, policyAuthority, binding, args, readHead,
   } = dependencies;
   const parsed = exactRecord(args, [
     "expected_head_revision", "expected_head_sha256",
@@ -146,7 +144,7 @@ export async function rotateContinuationRuntimeV1Policies(
   if (current.head.source_operation.scope !== binding.scope) {
     fail("policy_rotation_scope_mismatch");
   }
-  const at = nextAuthorityTimeV1(now(), current.head.updated_at);
+  const at = database.mintAuthorityTime(current.head.updated_at);
   await assertContinuationRuntimeV1CohortHeadMutationAllowed(
     database,
     artifactStore,

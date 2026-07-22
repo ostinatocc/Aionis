@@ -49,10 +49,6 @@ export type ContinuationRuntimeV1DurableJobEnqueueReceipt = Readonly<{
   job_id: string;
   payload_sha256: string;
 }>;
-export type ContinuationRuntimeV1DurableJobEnqueuerOptions = Readonly<{
-  now?: () => string;
-}>;
-
 export class ContinuationRuntimeV1DurableJobEnqueuePayloadConflictError
   extends Error {
   constructor(
@@ -246,10 +242,7 @@ const IMMUTABLE_COLUMNS = `tenant_id, scope, task_family,
  */
 export function createContinuationRuntimeV1DurableJobEnqueuer(
   database: ContinuationRuntimeV1Database,
-  options: ContinuationRuntimeV1DurableJobEnqueuerOptions = {},
 ) {
-  const now = options.now ?? (() => new Date().toISOString());
-
   const byId = (tenantId: string, scope: string, jobId: string) =>
     database.db.prepare(`SELECT ${IMMUTABLE_COLUMNS} FROM durable_jobs
       WHERE tenant_id = ? AND scope = ? AND job_id = ?`).get(
@@ -341,7 +334,7 @@ export function createContinuationRuntimeV1DurableJobEnqueuer(
         validateStoredRow(collision);
         fail("identity_collision");
       }
-      const createdAt = now();
+      const createdAt = database.mintAuthorityTime(null);
       timestamp(createdAt, "created_at");
       const availableAt = args.available_at < createdAt
         ? createdAt

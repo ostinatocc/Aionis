@@ -101,9 +101,7 @@ function issueAuthorityWriteContext(args: {
 }): ContinuationRuntimeV1AuthorityWriteContext {
   const currentIdentity = args.database.transaction.currentTransactionIdentity();
   if (currentIdentity === null || currentIdentity !== args.binding.transactionIdentity) {
-    throw new Error(
-      "continuation_runtime_v1_authority_write_context_transaction_required",
-    );
+    fail("authority_write_context_transaction_required");
   }
   const context = Object.freeze({}) as ContinuationRuntimeV1AuthorityWriteContext;
   AUTHORITY_WRITE_CONTEXTS.set(context, {
@@ -133,34 +131,24 @@ export function assertContinuationRuntimeV1AuthorityWriteContext(
   database: ContinuationRuntimeV1Database,
 ): ContinuationRuntimeV1AuthorityWriteBinding {
   if (context === null || typeof context !== "object") {
-    throw new Error(
-      "continuation_runtime_v1_authority_write_context_unrecognized",
-    );
+    fail("authority_write_context_unrecognized");
   }
   const record = AUTHORITY_WRITE_CONTEXTS.get(context);
   if (!record) {
-    throw new Error(
-      "continuation_runtime_v1_authority_write_context_unrecognized",
-    );
+    fail("authority_write_context_unrecognized");
   }
   if (!record.active) {
     throw new Error("continuation_runtime_v1_authority_write_context_expired");
   }
   if (record.database !== database) {
-    throw new Error(
-      "continuation_runtime_v1_authority_write_context_database_mismatch",
-    );
+    fail("authority_write_context_database_mismatch");
   }
   const currentIdentity = database.transaction.currentTransactionIdentity();
   if (currentIdentity === null) {
-    throw new Error(
-      "continuation_runtime_v1_authority_write_context_transaction_required",
-    );
+    fail("authority_write_context_transaction_required");
   }
   if (currentIdentity !== record.binding.transactionIdentity) {
-    throw new Error(
-      "continuation_runtime_v1_authority_write_context_transaction_mismatch",
-    );
+    fail("authority_write_context_transaction_mismatch");
   }
   return record.binding;
 }
@@ -184,9 +172,7 @@ export function constrainContinuationRuntimeV1OperationCompletion(
   assertContinuationRuntimeV1AuthorityWriteContext(context, database);
   const record = AUTHORITY_WRITE_CONTEXTS.get(context as object);
   if (!record) {
-    throw new Error(
-      "continuation_runtime_v1_authority_write_context_unrecognized",
-    );
+    fail("authority_write_context_unrecognized");
   }
   if (record.completionDeadline === null
     || deadline < record.completionDeadline) {
@@ -263,10 +249,6 @@ export type ContinuationRuntimeV1OperationStore = Readonly<{
   ): Promise<ContinuationRuntimeV1OperationRecord | null>;
 }>;
 
-export type ContinuationRuntimeV1OperationStoreOptions = Readonly<{
-  now?: () => string;
-}>;
-
 type OperationRow = {
   actor_kind: unknown;
   actor_principal_sha256: unknown;
@@ -295,6 +277,10 @@ const RECEIPT_KEYS = Object.freeze([
   "tenant_id",
 ] as const);
 
+function fail(reason: string): never {
+  throw new Error(`continuation_runtime_v1_${reason}`);
+}
+
 function assertCanonicalText(
   value: unknown,
   field: string,
@@ -308,9 +294,7 @@ function assertCanonicalText(
     || value !== value.trim()
     || /[\u0000-\u001f\u007f]/u.test(value)
     || Buffer.byteLength(value, "utf8") > maxBytes) {
-    throw new Error(
-      `continuation_runtime_v1_operation_${field}_must_be_canonical_utf8_text`,
-    );
+    fail(`operation_${field}_must_be_canonical_utf8_text`);
   }
 }
 
@@ -394,17 +378,13 @@ function operationIdentity(args: {
 
 function assertReadOperationIdentityShape(value: unknown): void {
   if (!value || typeof value !== "object" || Array.isArray(value)) {
-    throw new Error(
-      "continuation_runtime_v1_operation_read_identity_shape_invalid",
-    );
+    fail("operation_read_identity_shape_invalid");
   }
   const expected = ["operationId", "operationKind", "scope", "tenantId"];
   const actual = Object.keys(value).sort();
   if (actual.length !== expected.length
     || actual.some((key, index) => key !== expected[index])) {
-    throw new Error(
-      "continuation_runtime_v1_operation_read_identity_shape_invalid",
-    );
+    fail("operation_read_identity_shape_invalid");
   }
 }
 
@@ -434,22 +414,16 @@ function parsePersistedRequest(args: {
   const { row } = args;
   if (typeof row.request_sha256 !== "string"
     || !/^[0-9a-f]{64}$/u.test(row.request_sha256)) {
-    throw new Error(
-      "continuation_runtime_v1_operation_request_corrupt:request_sha256",
-    );
+    fail("operation_request_corrupt:request_sha256");
   }
   if (typeof row.request_json !== "string") {
-    throw new Error(
-      "continuation_runtime_v1_operation_request_corrupt:request_json_type",
-    );
+    fail("operation_request_corrupt:request_json_type");
   }
   let parsed: unknown;
   try {
     parsed = JSON.parse(row.request_json) as unknown;
   } catch {
-    throw new Error(
-      "continuation_runtime_v1_operation_request_corrupt:request_json_parse",
-    );
+    fail("operation_request_corrupt:request_json_parse");
   }
   let canonical: string;
   try {
@@ -465,14 +439,10 @@ function parsePersistedRequest(args: {
     );
   }
   if (canonical !== row.request_json) {
-    throw new Error(
-      "continuation_runtime_v1_operation_request_corrupt:request_json_encoding",
-    );
+    fail("operation_request_corrupt:request_json_encoding");
   }
   if (sha256Hex(canonical) !== row.request_sha256) {
-    throw new Error(
-      "continuation_runtime_v1_operation_request_corrupt:request_digest",
-    );
+    fail("operation_request_corrupt:request_digest");
   }
   return Object.freeze({
     requestSha256: row.request_sha256,
@@ -513,36 +483,26 @@ function parsePersistedReceipt(args: {
   }
   assertSha256(row.receipt_sha256, "receipt_sha256");
   if (typeof row.receipt_json !== "string") {
-    throw new Error(
-      "continuation_runtime_v1_operation_receipt_corrupt:receipt_json_type",
-    );
+    fail("operation_receipt_corrupt:receipt_json_type");
   }
   if (typeof row.completed_at !== "string") {
-    throw new Error(
-      "continuation_runtime_v1_operation_receipt_corrupt:completed_at_type",
-    );
+    fail("operation_receipt_corrupt:completed_at_type");
   }
 
   let parsed: unknown;
   try {
     parsed = JSON.parse(row.receipt_json) as unknown;
   } catch {
-    throw new Error(
-      "continuation_runtime_v1_operation_receipt_corrupt:receipt_json_parse",
-    );
+    fail("operation_receipt_corrupt:receipt_json_parse");
   }
   if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
-    throw new Error(
-      "continuation_runtime_v1_operation_receipt_corrupt:receipt_envelope_type",
-    );
+    fail("operation_receipt_corrupt:receipt_envelope_type");
   }
   const record = parsed as Record<string, unknown>;
   const keys = Object.keys(record);
   if (keys.length !== RECEIPT_KEYS.length
     || RECEIPT_KEYS.some((key) => !Object.hasOwn(record, key))) {
-    throw new Error(
-      "continuation_runtime_v1_operation_receipt_corrupt:receipt_envelope_shape",
-    );
+    fail("operation_receipt_corrupt:receipt_envelope_shape");
   }
 
   let canonical: string;
@@ -555,14 +515,10 @@ function parsePersistedReceipt(args: {
     );
   }
   if (canonical !== row.receipt_json) {
-    throw new Error(
-      "continuation_runtime_v1_operation_receipt_corrupt:receipt_json_encoding",
-    );
+    fail("operation_receipt_corrupt:receipt_json_encoding");
   }
   if (sha256Hex(canonical) !== row.receipt_sha256) {
-    throw new Error(
-      "continuation_runtime_v1_operation_receipt_corrupt:receipt_digest",
-    );
+    fail("operation_receipt_corrupt:receipt_digest");
   }
   try {
     assertCanonicalUtcMillis(row.completed_at, "completed_at");
@@ -582,9 +538,7 @@ function parsePersistedReceipt(args: {
     || record.request_sha256 !== persistedRequest.requestSha256
     || record.request_sha256 !== row.request_sha256
     || record.completed_at !== row.completed_at) {
-    throw new Error(
-      "continuation_runtime_v1_operation_receipt_corrupt:receipt_identity",
-    );
+    fail("operation_receipt_corrupt:receipt_identity");
   }
 
   const derivedResult = deriveContinuationRuntimeV1OperationResultV1(
@@ -659,9 +613,7 @@ export class ContinuationRuntimeV1OperationActorConflictError extends Error {
 
 export function createContinuationRuntimeV1OperationStore(
   database: ContinuationRuntimeV1Database,
-  options: ContinuationRuntimeV1OperationStoreOptions = {},
 ): ContinuationRuntimeV1OperationStore {
-  const now = options.now ?? (() => new Date().toISOString());
   return {
     async execute(
       args: ExecuteContinuationRuntimeV1OperationArgs,
@@ -670,9 +622,7 @@ export function createContinuationRuntimeV1OperationStore(
         throw new Error("continuation_runtime_v1_operation_producer_required");
       }
       if (database.transaction.inTransaction()) {
-        throw new Error(
-          "continuation_runtime_v1_operation_must_own_outer_transaction",
-        );
+        fail("operation_must_own_outer_transaction");
       }
       const identity = operationIdentity(args);
       const actor = {
@@ -735,9 +685,7 @@ export function createContinuationRuntimeV1OperationStore(
 
           const transactionIdentity = database.transaction.currentTransactionIdentity();
           if (transactionIdentity === null) {
-            throw new Error(
-              "continuation_runtime_v1_authority_write_context_transaction_required",
-            );
+            fail("authority_write_context_transaction_required");
           }
           issuedContext = issueAuthorityWriteContext({
             database,
@@ -770,19 +718,15 @@ export function createContinuationRuntimeV1OperationStore(
             declaredResult,
             result,
           );
-          const completedAt = now();
+          const completedAt = database.mintAuthorityTime(null);
           assertCanonicalUtcMillis(completedAt, "operation.completed_at");
           const contextRecord = AUTHORITY_WRITE_CONTEXTS.get(issuedContext);
           if (!contextRecord || !contextRecord.active) {
-            throw new Error(
-              "continuation_runtime_v1_authority_write_context_expired",
-            );
+            fail("authority_write_context_expired");
           }
           if (contextRecord.completionDeadline !== null
             && completedAt > contextRecord.completionDeadline) {
-            throw new Error(
-              "continuation_runtime_v1_operation_completion_deadline_exceeded",
-            );
+            fail("operation_completion_deadline_exceeded");
           }
           const envelope = {
             schema_version: "continuation_runtime_operation_receipt_v1",

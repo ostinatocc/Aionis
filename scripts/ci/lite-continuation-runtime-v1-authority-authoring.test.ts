@@ -458,6 +458,7 @@ function fullBranchRef(manifest: AuthorityBranchManifestV1) {
 type AuthorityChainFixture = Readonly<{
   root: string;
   dataPath: string;
+  clock: { value: string };
   database: ContinuationRuntimeV1Database;
   operations: ReturnType<typeof createContinuationRuntimeV1OperationStore>;
   authority: ReturnType<typeof createContinuationRuntimeV1AuthorityStore>;
@@ -470,9 +471,10 @@ type AuthorityChainFixture = Readonly<{
 
 function authorityChainFixture(root: string): AuthorityChainFixture {
   const dataPath = join(root, "authority", "runtime.sqlite");
+  const clock = { value: "2026-07-21T02:00:00.000Z" };
   const database = openContinuationRuntimeV1Database(dataPath, {
     databaseInstanceId: "9".repeat(64),
-    now: () => "2026-07-21T02:00:00.000Z",
+    authorityNow: () => clock.value,
   });
   const artifactProvisioner =
     createContinuationRuntimeV1AuthorityArtifactProvisioner(
@@ -483,9 +485,7 @@ function authorityChainFixture(root: string): AuthorityChainFixture {
     database,
     ROOT_KEYS.publicKey,
   );
-  const operations = createContinuationRuntimeV1OperationStore(database, {
-    now: () => "2026-07-21T02:00:00.000Z",
-  });
+  const operations = createContinuationRuntimeV1OperationStore(database);
   const policies = createContinuationRuntimeV1PolicyAuthority(database, artifacts);
   const effects = createContinuationRuntimeV1EffectCertificateReader(
     database,
@@ -495,6 +495,7 @@ function authorityChainFixture(root: string): AuthorityChainFixture {
   return {
     root,
     dataPath,
+    clock,
     database,
     operations,
     authority: createContinuationRuntimeV1AuthorityStore(
@@ -502,14 +503,9 @@ function authorityChainFixture(root: string): AuthorityChainFixture {
       artifacts,
       policies,
       effects,
-      { now: () => "2026-07-21T02:00:00.000Z" },
     ),
-    observations: createContinuationRuntimeV1ObservationStore(database, {
-      now: () => "2026-07-21T02:00:00.000Z",
-    }),
-    memory: createContinuationRuntimeV1MemoryStore(database, {
-      now: () => "2026-07-21T02:00:00.000Z",
-    }),
+    observations: createContinuationRuntimeV1ObservationStore(database),
+    memory: createContinuationRuntimeV1MemoryStore(database),
     provisioning: createContinuationRuntimeV1OfflineProvisioningService(
       database,
       artifactProvisioner,
@@ -797,11 +793,12 @@ async function assertPolicyCommandInstalls(
   assert.equal(command.kind, "policy_bundle_install");
   const [compilerArtifact, evidenceArtifact] = policyArtifacts(command);
   const root = mkdtempSync(join(tmpdir(), "aionis-authority-install-"));
+  const clock = { value: compilerArtifact.created_at };
   const database = openContinuationRuntimeV1Database(
     join(root, "authority", "runtime.sqlite"),
     {
       databaseInstanceId: "f".repeat(64),
-      now: () => compilerArtifact.created_at,
+      authorityNow: () => clock.value,
     },
   );
   try {
@@ -817,9 +814,7 @@ async function assertPolicyCommandInstalls(
     const service = createContinuationRuntimeV1OfflineProvisioningService(
       database,
       artifactProvisioner,
-      createContinuationRuntimeV1OperationStore(database, {
-        now: () => compilerArtifact.created_at,
-      }),
+      createContinuationRuntimeV1OperationStore(database),
     );
     const installed = await service.provision(
       command as OfflinePolicyBundleInstallCommandV1,

@@ -140,7 +140,10 @@ export async function composeContinuationRuntimeV1Worker(
       const processor = createContinuationRuntimeV1EmbeddingWorkerProcessor({
         memoryStore,
         durableJobStore,
-        provider: createContinuationRuntimeV1EmbeddingProvider(config.embedding),
+        provider: createContinuationRuntimeV1EmbeddingProvider(
+          config.embedding,
+          database.authorityNow,
+        ),
         vectorArtifactStore: createContinuationRuntimeV1VectorArtifactStore({
           rootPath: vectorRoot,
         }),

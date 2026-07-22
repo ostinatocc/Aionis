@@ -49,11 +49,7 @@ export type ContinuationRuntimeV1WorkerSuccessOutput<
   R extends ContinuationRuntimeV1WorkerRole,
 > = Extract<WorkerSuccessCompletionV1["output"], Readonly<{ kind: R }>>;
 
-/**
- * Safe processor projection of an authenticated lease. The raw lease token is
- * deliberately retained by the orchestration layer and is never exposed to a
- * provider, ANN adapter, effect verifier, or retention implementation.
- */
+/** Safe processor projection; the orchestration layer retains the raw lease token. */
 export type ContinuationRuntimeV1WorkerAttemptJob<
   R extends ContinuationRuntimeV1WorkerRole = ContinuationRuntimeV1WorkerRole,
 > = Readonly<{
@@ -80,14 +76,7 @@ export type ContinuationRuntimeV1WorkerAuthorityCommitInput<
   output: ContinuationRuntimeV1WorkerSuccessOutput<R>;
 }>;
 
-/**
- * The only role-specific authority mutation port in the generic runner.
- *
- * Implementations close over their role store and use the opaque operation
- * context passed here. Provider/model/index/verifier computation belongs in
- * `process`, outside SQLite. The runner owns the durable-job transition and
- * the operation receipt; processors must not perform either one.
- */
+/** Role-specific mutation port; the generic runner owns transition and receipt. */
 export type ContinuationRuntimeV1WorkerAuthorityCommitPort<
   R extends ContinuationRuntimeV1WorkerRole,
 > = (
@@ -128,11 +117,7 @@ type ProcessorFailureRecord = Readonly<{
 
 const PROCESSOR_FAILURES = new WeakMap<object, ProcessorFailureRecord>();
 
-/**
- * A processor may deliberately classify a failure without exposing an Error
- * message, stack, provider response, request body, credential, or payload.
- * Unknown thrown values are mapped to one fixed generic code.
- */
+/** Stable processor failure classification without persisting thrown details. */
 export class ContinuationRuntimeV1WorkerProcessorError extends Error {
   constructor(value: Readonly<{
     code: string;
@@ -527,6 +512,8 @@ function validateInput<R extends ContinuationRuntimeV1WorkerRole>(
   if (!database || typeof database !== "object"
     || typeof database.path !== "string"
     || !SHA256.test(database.databaseInstanceId)
+    || typeof database.authorityNow !== "function"
+    || typeof database.mintAuthorityTime !== "function"
     || typeof database.read !== "function"
     || typeof database.withTx !== "function") {
     fail("database_invalid");
@@ -551,9 +538,7 @@ function validateInput<R extends ContinuationRuntimeV1WorkerRole>(
   return value;
 }
 
-/**
- * Creates one tenant- and role-confined durable worker orchestration service.
- */
+/** Creates one tenant- and role-confined durable worker orchestration service. */
 export function createContinuationRuntimeV1WorkerService<
   R extends ContinuationRuntimeV1WorkerRole,
 >(
@@ -567,6 +552,8 @@ export function createContinuationRuntimeV1WorkerService<
   });
   const jobs = createContinuationRuntimeV1DurableJobWorkerStore(input.database);
   const operations = createContinuationRuntimeV1OperationStore(input.database);
+  const authorityNowMilliseconds = (): number =>
+    Date.parse(input.database.authorityNow());
   const leaseOwner = `worker_${role}_${principal.actor_principal_sha256}`;
   const activeAttempts = new Map<
     string,
@@ -750,7 +737,7 @@ export function createContinuationRuntimeV1WorkerService<
         disposition: "retry",
       } };
     }
-    if (Date.now() >= processorDeadline) {
+    if (authorityNowMilliseconds() >= processorDeadline) {
       return { prepared: null, failure: {
         code: "processor_lease_deadline",
         disposition: "retry",
@@ -777,7 +764,7 @@ export function createContinuationRuntimeV1WorkerService<
       deadlineReached = true;
       controller.abort();
       rejectCancellation(PROCESSOR_DEADLINE);
-    }, Math.max(0, processorDeadline - Date.now()));
+    }, Math.max(0, processorDeadline - authorityNowMilliseconds()));
 
     try {
       const candidate = await Promise.race([
@@ -789,7 +776,7 @@ export function createContinuationRuntimeV1WorkerService<
         })),
         cancellation,
       ]);
-      if (deadlineReached || Date.now() >= processorDeadline) {
+      if (deadlineReached || authorityNowMilliseconds() >= processorDeadline) {
         controller.abort();
         return { prepared: null, failure: {
           code: "processor_lease_deadline",

@@ -140,7 +140,7 @@ function principalForEffectVerifier(): string {
     .digest("hex");
 }
 
-function inMemoryDatabase(): ContinuationRuntimeV1Database {
+function inMemoryDatabase(authorityNow: () => string): ContinuationRuntimeV1Database {
   const db = createSqliteDatabase(":memory:");
   db.exec(loadContinuationRuntimeV1Ddl());
   const transaction = createSqliteTransactionRunner({
@@ -148,10 +148,38 @@ function inMemoryDatabase(): ContinuationRuntimeV1Database {
     commit: () => db.exec("COMMIT"),
     rollback: () => db.exec("ROLLBACK"),
   });
+  let committedFloor = authorityNow();
+  const pendingFloors = new Map<symbol, string>();
+  const effectiveNow = () => {
+    const pending = transaction.currentTransactionIdentity();
+    const floor = pending === null ? committedFloor
+      : pendingFloors.get(pending) ?? committedFloor;
+    const source = authorityNow();
+    return source > floor ? source : floor;
+  };
   let closed = false;
   return {
     path: ":memory:",
     databaseInstanceId: "d".repeat(64),
+    authorityNow: effectiveNow,
+    mintAuthorityTime(after) {
+      const owner = transaction.currentTransactionIdentity();
+      if (owner === null) throw new Error("test mint requires transaction");
+      let value = effectiveNow();
+      if (after !== null && value <= after) {
+        value = new Date(Date.parse(after) + 1).toISOString();
+      }
+      if (!pendingFloors.has(owner)) {
+        void transaction.afterCommit(async () => {
+          const floor = pendingFloors.get(owner);
+          if (floor && floor > committedFloor) committedFloor = floor;
+          pendingFloors.delete(owner);
+        });
+        transaction.afterRollback(() => { pendingFloors.delete(owner); });
+      }
+      pendingFloors.set(owner, value);
+      return value;
+    },
     db,
     transaction,
     withTx: (fn) => transaction.run(fn),
@@ -167,10 +195,8 @@ function inMemoryDatabase(): ContinuationRuntimeV1Database {
 
 function fixture() {
   const clock = { value: at(8) };
-  const database = inMemoryDatabase();
-  const operations = createContinuationRuntimeV1OperationStore(database, {
-    now: () => clock.value,
-  });
+  const database = inMemoryDatabase(() => clock.value);
+  const operations = createContinuationRuntimeV1OperationStore(database);
   const artifactProvisioner = createContinuationRuntimeV1AuthorityArtifactProvisioner(
     database,
     ROOT_KEYS.publicKey,
@@ -195,25 +221,16 @@ function fixture() {
     artifacts,
     policies,
     effectReader,
-    { now: () => clock.value },
   );
-  const observations = createContinuationRuntimeV1ObservationStore(database, {
-    now: () => clock.value,
-  });
-  const memory = createContinuationRuntimeV1MemoryStore(database, {
-    now: () => clock.value,
-  });
+  const observations = createContinuationRuntimeV1ObservationStore(database);
+  const memory = createContinuationRuntimeV1MemoryStore(database);
   const cohorts = createContinuationRuntimeV1ExperimentCohortAuthority(
     database,
     artifacts,
     policies,
   );
-  const episode = createContinuationRuntimeV1EpisodeStore(database, {
-    now: () => clock.value,
-  });
-  const jobs = createContinuationRuntimeV1DurableJobWorkerStore(database, {
-    now: () => clock.value,
-  });
+  const episode = createContinuationRuntimeV1EpisodeStore(database);
+  const jobs = createContinuationRuntimeV1DurableJobWorkerStore(database);
   const assembly = createContinuationRuntimeV1DecisionAssemblyService({
     database,
     observationStore: observations,
@@ -223,7 +240,7 @@ function fixture() {
     effectCertificateReader: effectReader,
     authorityStore: authority,
     experimentCohortAuthority: cohorts,
-  }, { now: () => clock.value });
+  });
   return {
     clock,
     database,
@@ -699,6 +716,7 @@ async function appendAssignedEvidence(current: Fixture, minimumExposures = 10) {
       missing_outcome_count: 0,
     },
   };
+  const settleCutoffCases: Array<() => Promise<void>> = [];
   let cutoffCases = 0;
   for (let index = 0; index < 50; index += 1) {
     const thresholdMet = counts.control >= minimumExposures
@@ -796,44 +814,56 @@ async function appendAssignedEvidence(current: Fixture, minimumExposures = 10) {
         },
       }),
     );
-    let terminal: EpisodeEventRefV1 & {
+    const recordTerminal = (terminal: EpisodeEventRefV1 & {
       event_kind: "contract_exposed" | "outcome_observed";
+    }): void => {
+      members.push({
+        scope: SCOPE,
+        episode_id: episodeId,
+        decision_id: decisionId,
+        terminal_event: terminal,
+      });
     };
-    if (cutoffCase === "late") {
-      current.clock.value = "2026-07-22T11:00:00.001Z";
-      await assert.rejects(appendOutcome(), /settlement_cutoff|completion_deadline/u);
-      assert.equal((await current.episode.readDecision(
-        TENANT,
-        SCOPE,
-        decisionId,
-      )).length, 1);
-      terminal = {
-        event_sequence: exposure.event_sequence,
-        event_id: exposure.event_id,
-        event_kind: "contract_exposed",
-        event_sha256: exposure.event_sha256,
-      };
-      observations[arm].missing_outcome_count += 1;
-    } else {
-      current.clock.value = cutoffCase === "exact"
-        ? "2026-07-22T11:00:00.000Z"
-        : plus(assignedAt, 300);
+    const settleOutcome = async (): Promise<void> => {
       const outcome = await appendOutcome();
       const outcomeRef = outcome.event_refs.at(-1)!;
       assert.equal(outcomeRef.event_kind, "outcome_observed");
-      terminal = outcomeRef as EpisodeEventRefV1 & {
+      recordTerminal(outcomeRef as EpisodeEventRefV1 & {
         event_kind: "outcome_observed";
-      };
+      });
       if (arm === "candidate") observations.candidate.succeeded_count += 1;
       else observations.control.failed_count += 1;
+    };
+    if (cutoffCase === null) {
+      current.clock.value = plus(assignedAt, 300);
+      await settleOutcome();
+    } else {
+      settleCutoffCases.push(async () => {
+        if (cutoffCase === "exact") {
+          current.clock.value = "2026-07-22T11:00:00.000Z";
+          await settleOutcome();
+          return;
+        }
+        current.clock.value = "2026-07-22T11:00:00.001Z";
+        await assert.rejects(appendOutcome(), /settlement_cutoff|completion_deadline/u);
+        assert.equal((await current.episode.readDecision(
+          TENANT,
+          SCOPE,
+          decisionId,
+        )).length, 1);
+        recordTerminal({
+          event_sequence: exposure.event_sequence,
+          event_id: exposure.event_id,
+          event_kind: "contract_exposed",
+          event_sha256: exposure.event_sha256,
+        });
+        observations[arm].missing_outcome_count += 1;
+      });
     }
-    members.push({
-      scope: SCOPE,
-      episode_id: episodeId,
-      decision_id: decisionId,
-      terminal_event: terminal,
-    });
     if (cutoffCase !== null) cutoffCases += 1;
+  }
+  for (const settleCutoffCase of settleCutoffCases) {
+    await settleCutoffCase();
   }
   assert.ok(counts.control >= minimumExposures
     && counts.candidate >= minimumExposures);
@@ -1268,7 +1298,7 @@ test("cohort installation completion is atomically fenced before window open", a
     const latePair = await seedLearningPair(late);
     await assert.rejects(
       installCohort(late, latePair, at(9)),
-      /completion_deadline|must be installed before its window/u,
+      /completion_deadline|exact cohort settlement job|must be installed before its window/u,
     );
     assert.equal(late.database.db.prepare(`SELECT COUNT(*) AS count
       FROM authority_artifacts WHERE artifact_kind = 'experiment_cohort'`).get()?.count, 0);
@@ -1295,6 +1325,17 @@ test("cohort installation completion is atomically fenced before window open", a
     });
     assert.equal(receipt?.receipt.completed_at, "2026-07-22T08:59:59.999Z");
     assert.equal(installed.cohort.assignment_window_opened_at, at(9));
+    const settlementJob = exact.database.db.prepare(`SELECT created_at
+      FROM durable_jobs WHERE job_kind = 'effect'`).get() as {
+      created_at: string;
+    };
+    assert.equal(
+      settlementJob.created_at,
+      "2026-07-22T08:59:59.999Z",
+      "the settlement job uses the DB installation authority clock",
+    );
+    assert.ok(settlementJob.created_at >= installed.artifact.created_at);
+    assert.ok(settlementJob.created_at < installed.cohort.assignment_window_opened_at);
   } finally {
     await late.database.close();
     await exact.database.close();

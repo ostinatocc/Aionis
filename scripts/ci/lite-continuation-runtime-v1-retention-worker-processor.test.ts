@@ -80,11 +80,14 @@ const SCOPE = "scope-retention";
 const HOST = "1".repeat(64) as Sha256;
 const OPERATOR = "2".repeat(64) as Sha256;
 const AUTHORITY_HEAD = "3".repeat(64) as Sha256;
-const NOW = "2026-07-22T10:00:00.000Z";
+// Intentionally historical: worker correctness must follow the database-owned
+// authority clock, never the host wall clock running this test.
+const NOW = "2000-01-02T10:00:00.000Z";
 
 type Fixture = Readonly<{
   root: string;
   path: string;
+  clock: { value: string };
   database: ContinuationRuntimeV1Database;
   operations: ReturnType<typeof createContinuationRuntimeV1OperationStore>;
   jobs: ReturnType<typeof createContinuationRuntimeV1DurableJobWorkerStore>;
@@ -97,29 +100,21 @@ type Fixture = Readonly<{
 function fixture(name: string): Fixture {
   const root = mkdtempSync(join(tmpdir(), `aionis-v1-retention-${name}-`));
   const path = join(root, "authority", "runtime.sqlite");
+  const clock = { value: NOW };
   const database = openContinuationRuntimeV1Database(path, {
     databaseInstanceId: "8".repeat(64),
-    now: () => NOW,
+    authorityNow: () => clock.value,
   });
   return {
     root,
     path,
+    clock,
     database,
-    operations: createContinuationRuntimeV1OperationStore(database, {
-      now: () => NOW,
-    }),
-    jobs: createContinuationRuntimeV1DurableJobWorkerStore(database, {
-      now: () => NOW,
-    }),
-    enqueuer: createContinuationRuntimeV1DurableJobEnqueuer(database, {
-      now: () => NOW,
-    }),
-    memory: createContinuationRuntimeV1MemoryStore(database, {
-      now: () => NOW,
-    }),
-    observations: createContinuationRuntimeV1ObservationStore(database, {
-      now: () => NOW,
-    }),
+    operations: createContinuationRuntimeV1OperationStore(database),
+    jobs: createContinuationRuntimeV1DurableJobWorkerStore(database),
+    enqueuer: createContinuationRuntimeV1DurableJobEnqueuer(database),
+    memory: createContinuationRuntimeV1MemoryStore(database),
+    observations: createContinuationRuntimeV1ObservationStore(database),
     async cleanup() {
       await database.close();
       rmSync(root, { recursive: true, force: true });
@@ -170,7 +165,7 @@ function capsuleDraft(
     verifier_refs: [],
     conflicts_with: [],
     supersedes: [],
-    expires_at: "2026-07-23T10:00:00.000Z",
+    expires_at: "2000-01-03T10:00:00.000Z",
   });
 }
 
@@ -208,8 +203,8 @@ async function seedMemory(
           workspace_signature: "retention-workspace",
           source_task_sha256: "4".repeat(64),
           source_event_sha256: "5".repeat(64),
-          issued_at: "2026-07-22T09:00:00.000Z",
-          expires_at: "2026-07-22T12:00:00.000Z",
+          issued_at: "2000-01-02T09:00:00.000Z",
+          expires_at: "2000-01-02T12:00:00.000Z",
         },
         collector_observations: [],
         signed_observations: [],
@@ -309,7 +304,6 @@ function application(current: Fixture) {
     },
     decisionAssembly: { assemble: unused },
     decisionReader: { read: unused },
-    now: () => NOW,
   } as unknown as ContinuationRuntimeV1ApplicationServiceDependencies);
 }
 
@@ -730,7 +724,11 @@ const AUTHORITY_TABLES = Object.freeze([
 function authoritySnapshot(database: ContinuationRuntimeV1Database): string {
   return canonicalContinuationJson(AUTHORITY_TABLES.map((table) => ({
     table,
-    rows: database.db.prepare(`SELECT * FROM ${table} ORDER BY rowid`).all(),
+    rows: database.db.prepare(table === "runtime_meta"
+      ? `SELECT singleton, database_instance_id, schema_id, schema_version,
+                schema_manifest_sha256, created_at
+           FROM runtime_meta ORDER BY rowid`
+      : `SELECT * FROM ${table} ORDER BY rowid`).all(),
   })));
 }
 

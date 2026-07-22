@@ -41,11 +41,12 @@ type Fixture = Readonly<{
   cleanup(): Promise<void>;
 }>;
 
-function fixture(): Fixture {
+function fixture(authorityNow?: () => string): Fixture {
   const root = mkdtempSync(join(tmpdir(), "aionis-v1-worker-service-"));
   const path = join(root, "authority", "runtime.sqlite");
   const database = openContinuationRuntimeV1Database(path, {
     databaseInstanceId: "c".repeat(64),
+    ...(authorityNow ? { authorityNow } : {}),
   });
   return {
     root,
@@ -122,7 +123,9 @@ async function enqueueRetentionJob(args: Readonly<{
         priority: 0,
         max_attempts: args.maxAttempts ?? 3,
         payload: args.payload ?? { retention_action: args.dedupeKey },
-        available_at: new Date(Date.now() - 1_000).toISOString(),
+        available_at: new Date(
+          Date.parse(args.database.authorityNow()) - 1_000,
+        ).toISOString(),
       });
       createdJobId = receipt.job_id;
       const binding = assertContinuationRuntimeV1AuthorityWriteContext(
@@ -262,6 +265,130 @@ test("processor computation is outside SQLite, authority commit is inside, and r
       `SELECT count(*) AS count FROM operations
         WHERE operation_kind = 'worker_completion'`,
     ).get() as { count: number }).count), 1);
+  } finally {
+    await current.cleanup();
+  }
+});
+
+test("one database authority clock governs leases, processor deadlines, and completion receipts", async () => {
+  let clock = "2000-01-01T00:00:00.000Z";
+  const current = fixture(() => clock);
+  try {
+    await enqueueRetentionJob({
+      database: current.database,
+      tenantId: "tenant-clock",
+      scope: "scope-clock",
+      operationId: "schedule-clock",
+      dedupeKey: "clock",
+    });
+    const config = workerConfig(current.path, "tenant-clock", "retention");
+    let processCount = 0;
+    let commitCount = 0;
+    const service = createContinuationRuntimeV1WorkerService({
+      database: current.database,
+      config,
+      processor: retentionSuccessProcessor({
+        process() { processCount += 1; },
+        commit() { commitCount += 1; },
+      }, current.database),
+    });
+    const store = createContinuationRuntimeV1DurableJobWorkerStore(current.database);
+    const lease = await store.leaseNext({
+      tenant_id: "tenant-clock",
+      job_kind: "retention",
+      lease_owner: `worker_retention_${service.workerPrincipal().actor_principal_sha256}`,
+      lease_duration_ms: config.jobs.leaseMs,
+    });
+    assert.ok(lease);
+    // The host clock is decades later. Success proves every authority check
+    // uses the database clock rather than ambient Date.now().
+    assert.ok(Date.now() > Date.parse(lease.lease_expires_at!));
+    const completed = await service.processLeasedJob(lease);
+    assert.equal(completed.transition_state, "succeeded");
+    assert.equal(processCount, 1);
+    assert.equal(commitCount, 1);
+    assert.equal((await store.read({
+      tenant_id: lease.tenant_id,
+      scope: lease.scope,
+      job_id: lease.job_id,
+    }))?.state, "succeeded");
+
+    clock = "2000-01-01T00:00:10.000Z";
+    assert.equal(current.database.authorityNow(), clock);
+  } finally {
+    await current.cleanup();
+  }
+});
+
+test("database clock deadline and exact expiry remain fail-closed without running the processor", async () => {
+  let clock = "2001-01-01T00:00:00.000Z";
+  const current = fixture(() => clock);
+  try {
+    await enqueueRetentionJob({
+      database: current.database,
+      tenantId: "tenant-clock-boundary",
+      scope: "scope-deadline",
+      operationId: "schedule-clock-deadline",
+      dedupeKey: "clock-deadline",
+    });
+    const config = workerConfig(
+      current.path,
+      "tenant-clock-boundary",
+      "retention",
+    );
+    let processorCalls = 0;
+    const service = createContinuationRuntimeV1WorkerService({
+      database: current.database,
+      config,
+      processor: Object.freeze({
+        worker_role: "retention" as const,
+        async process() {
+          processorCalls += 1;
+          return {
+            output: { kind: "retention" as const, result: {} },
+            async commitAuthority() {},
+          };
+        },
+      }),
+    });
+    const store = createContinuationRuntimeV1DurableJobWorkerStore(current.database);
+    const owner = `worker_retention_${service.workerPrincipal().actor_principal_sha256}`;
+    const lease = await store.leaseNext({
+      tenant_id: "tenant-clock-boundary",
+      job_kind: "retention",
+      lease_owner: owner,
+      lease_duration_ms: config.jobs.leaseMs,
+    });
+    assert.ok(lease?.lease_expires_at);
+    const firstToken = lease.lease_token;
+    clock = lease.lease_expires_at;
+
+    await assert.rejects(
+      service.processLeasedJob(lease),
+      /durable_job_lease_expired/u,
+    );
+    assert.equal(processorCalls, 0);
+    assert.equal(Number((current.database.db.prepare(
+      "SELECT COUNT(*) AS count FROM operations WHERE operation_kind = 'worker_completion'",
+    ).get() as { count: number }).count), 0);
+    const stillLeased = await store.read({
+      tenant_id: lease.tenant_id,
+      scope: lease.scope,
+      job_id: lease.job_id,
+    });
+    assert.equal(stillLeased?.state, "leased");
+    assert.equal(stillLeased?.lease_token, firstToken);
+
+    const recovered = await store.leaseNext({
+      tenant_id: lease.tenant_id,
+      job_kind: "retention",
+      lease_owner: owner,
+      lease_duration_ms: config.jobs.leaseMs,
+    });
+    assert.ok(recovered);
+    assert.equal(recovered.job_id, lease.job_id);
+    assert.equal(recovered.attempt_count, lease.attempt_count + 1);
+    assert.notEqual(recovered.lease_token, firstToken);
   } finally {
     await current.cleanup();
   }

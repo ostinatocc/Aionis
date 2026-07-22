@@ -44,15 +44,24 @@ const SUBJECT = "a".repeat(64);
 const DATABASE_ID = "b".repeat(64);
 let operationSequence = 0;
 
-function fixture(): Readonly<{ root: string; path: string }> {
+type TestClock = { value: string };
+
+function fixture(): Readonly<{ root: string; path: string; clock: TestClock }> {
   const root = mkdtempSync(join(tmpdir(), "aionis-authority-artifact-store-"));
-  return { root, path: join(root, "authority", "runtime.sqlite") };
+  return {
+    root,
+    path: join(root, "authority", "runtime.sqlite"),
+    clock: { value: "2026-07-21T00:30:00.000Z" },
+  };
 }
 
-function openDatabase(path: string): ContinuationRuntimeV1Database {
+function openDatabase(
+  path: string,
+  clock: TestClock,
+): ContinuationRuntimeV1Database {
   return openContinuationRuntimeV1Database(path, {
     databaseInstanceId: DATABASE_ID,
-    now: () => "2026-07-21T00:00:00.000Z",
+    authorityNow: () => clock.value,
   });
 }
 
@@ -160,9 +169,7 @@ async function persist(
     : operationKind === "worker_completion" ? "worker" : "trusted_host";
   let persisted: InstalledAuthorityArtifactV1 | null = null;
   const companion = evidenceCompanion(artifact, operationSequence);
-  await createContinuationRuntimeV1OperationStore(database, {
-    now: () => "2026-07-21T00:30:00.000Z",
-  }).execute({
+  await createContinuationRuntimeV1OperationStore(database).execute({
     tenantId: options.tenantId ?? artifact.tenant_id,
     scope: "scope-is-not-artifact-authority",
     operationKind,
@@ -197,7 +204,7 @@ test("signed policy bundles persist as 64-byte BLOBs, reject duplicate installs,
   const current = fixture();
   let database: ContinuationRuntimeV1Database | null = null;
   try {
-    database = openDatabase(current.path);
+    database = openDatabase(current.path, current.clock);
     let reader = createContinuationRuntimeV1AuthorityArtifactReader(
       database,
       ROOT_KEYS.publicKey,
@@ -249,7 +256,9 @@ test("signed policy bundles persist as 64-byte BLOBs, reject duplicate installs,
 
     await database.close();
     database = null;
-    const reopened = openContinuationRuntimeV1Database(current.path);
+    const reopened = openContinuationRuntimeV1Database(current.path, {
+      authorityNow: () => current.clock.value,
+    });
     database = reopened;
     reader = createContinuationRuntimeV1AuthorityArtifactReader(reopened, ROOT_KEYS.publicKey);
     const read = await reader.read({
@@ -267,7 +276,7 @@ test("signed policy bundles persist as 64-byte BLOBs, reject duplicate installs,
 
 test("identity conflicts are explicit while renewals preserve exact subject binding", async () => {
   const current = fixture();
-  const database = openDatabase(current.path);
+  const database = openDatabase(current.path, current.clock);
   try {
     const originalInput = input();
     const original = buildSignedAuthorityArtifactV1(originalInput, ROOT_KEYS.privateKey);
@@ -314,10 +323,10 @@ test("identity conflicts are explicit while renewals preserve exact subject bind
 test("opaque authority context is tenant-, database-, transaction-, kind-, and single-use bound", async () => {
   const current = fixture();
   const other = fixture();
-  const database = openDatabase(current.path);
+  const database = openDatabase(current.path, current.clock);
   const otherDatabase = openContinuationRuntimeV1Database(other.path, {
     databaseInstanceId: "c".repeat(64),
-    now: () => "2026-07-21T00:00:00.000Z",
+    authorityNow: () => other.clock.value,
   });
   try {
     const store = createContinuationRuntimeV1AuthorityArtifactProvisioner(
@@ -347,9 +356,7 @@ test("opaque authority context is tenant-, database-, transaction-, kind-, and s
     );
 
     let expired: ContinuationRuntimeV1AuthorityWriteContext | null = null;
-    await assert.rejects(createContinuationRuntimeV1OperationStore(database, {
-      now: () => "2026-07-21T00:30:00.000Z",
-    }).execute({
+    await assert.rejects(createContinuationRuntimeV1OperationStore(database).execute({
       tenantId: "tenant-a", scope: "scope", operationKind: "authority_decision",
       operationId: "capture-expired-artifact-context", request: { capture: true },
       actorKind: "operator", actorPrincipalSha256: "e".repeat(64),
@@ -396,7 +403,7 @@ test("opaque authority context is tenant-, database-, transaction-, kind-, and s
 
 test("every read re-verifies the pinned trust root, canonical row, digest, and signature", async () => {
   const current = fixture();
-  const database = openDatabase(current.path);
+  const database = openDatabase(current.path, current.clock);
   try {
     const artifact = signed();
     const installed = await persist(database, artifact);
@@ -451,7 +458,7 @@ test("every read re-verifies the pinned trust root, canonical row, digest, and s
 
 test("public arguments are exact canonical data and invisible policy controls are rejected", async () => {
   const current = fixture();
-  const database = openDatabase(current.path);
+  const database = openDatabase(current.path, current.clock);
   try {
     const reader = createContinuationRuntimeV1AuthorityArtifactReader(
       database,

@@ -848,7 +848,7 @@ The authority database has exactly 17 tables:
 
 | Table | Authority |
 |---|---|
-| `runtime_meta` | singleton database identity, schema ID, and schema-manifest digest |
+| `runtime_meta` | singleton database identity, schema ID, schema-manifest digest, and committed factual authority-time floor |
 | `operations` | exact replay receipt keyed by tenant, scope, kind, and operation ID |
 | `durable_jobs` | one leased queue for embedding, ANN, effect, and retention work |
 | `memory_commits` | monotone per-scope revision, parent, and complete mutation digest |
@@ -902,10 +902,32 @@ proved:
 5. v0.3.x, older/newer generations, partial schemas, extra tables, and changed
    indexes or triggers are rejected without modifying the database, WAL, or SHM.
 
-All stores share one write connection and transaction runner. Store
-constructors cannot perform DDL. Compile/exposure is committed before a
-contract is returned; use/outcome is atomic; cohort installation and its one
-settlement-time effect job are atomic; branch merge
+All stores share one write connection, transaction runner, and database-bound
+monotonic authority time. Its source must return a validated canonical UTC
+millisecond timestamp. Runtime clamps that source against the opener's observed
+and committed floors; an active write transaction also observes the factual
+floor in `runtime_meta`, so a stale opener cannot mint below another opener's
+committed mutation. A store, application service, worker service, or provider
+cannot replace this database capability.
+
+Only an active `BEGIN IMMEDIATE` transaction may mint an authority timestamp.
+A mint uses the effective authority time and, when a causal lower bound is
+explicitly supplied, advances strictly beyond that bound. The factual floor is
+updated in the same transaction: commit makes it visible to later openers and
+restart, while rollback advances neither the durable floor nor the committed
+process floor. Receipt minting therefore cannot precede an earlier
+Runtime-minted mutation in the same operation. This floor is not a logical
+sequence generator: future `available_at`, `retry_at`, lease expiry, signed
+validity windows, outcome deadlines, and settlement cutoffs do not advance it
+merely because they lie in the future. Externally signed timestamps remain
+issuer-authored values that Runtime validates and binds; Runtime does not claim
+to have minted them.
+
+Operational timers only wake polling or request cancellation. They never mint
+or advance authority time, expire a lease, or override the transaction's
+database-time check. Store constructors cannot perform DDL. Compile/exposure is
+committed before a contract is returned; use/outcome is atomic; cohort
+installation and its one settlement-time effect job are atomic; branch merge
 performs certificate verification, new revisions, CAS head, and operation
 receipt in one transaction. Workers lease in a short transaction, compute
 outside SQLite, then commit by lease-token CAS. ANN and notifications run only

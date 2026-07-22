@@ -1,7 +1,5 @@
 import { randomBytes } from "node:crypto";
-import {
-  assertContinuationRuntimeV1Host,
-} from "../continuation/host-contract.js";
+import { assertContinuationRuntimeV1Host } from "../continuation/host-contract.js";
 import {
   chmodSync,
   closeSync,
@@ -35,19 +33,22 @@ import {
   type PrivateRuntimeSqliteFileIdentity,
   type SqliteDatabase,
 } from "./sqlite.js";
-import {
-  createSqliteTransactionRunner,
-  type SqliteTransactionPhase,
-  type SqliteTransactionRunner,
-} from "./sqlite-transaction-runner.js";
+import { createSqliteTransactionRunner, type SqliteTransactionPhase,
+  type SqliteTransactionRunner } from "./sqlite-transaction-runner.js";
 
 const PRIVATE_DIRECTORY_MODE = 0o700;
 const PRIVATE_SQLITE_MODE = 0o600;
 const SQLITE_ARTIFACT_SUFFIXES = ["", "-wal", "-shm", "-journal"] as const;
 
+declare const AUTHORITY_CLOCK_BRAND: unique symbol;
+export type ContinuationRuntimeV1AuthorityClock = (() => string) & { readonly [AUTHORITY_CLOCK_BRAND]: true };
+const AUTHORITY_CLOCKS = new WeakSet<object>();
+
 export type ContinuationRuntimeV1Database = Readonly<{
   path: string;
   databaseInstanceId: string;
+  authorityNow: ContinuationRuntimeV1AuthorityClock;
+  mintAuthorityTime(after: string | null): string;
   db: SqliteDatabase;
   transaction: SqliteTransactionRunner;
   withTx<T>(fn: () => Promise<T>): Promise<T>;
@@ -56,28 +57,26 @@ export type ContinuationRuntimeV1Database = Readonly<{
 }>;
 
 export type ContinuationRuntimeV1DatabaseOptions = Readonly<{
-  now?: () => string;
+  authorityNow?: () => string;
   databaseInstanceId?: string;
   faultInjector?: (phase: SqliteTransactionPhase) => void | Promise<void>;
   bootstrapFaultInjector?: (phase: ContinuationRuntimeV1BootstrapPhase) => void;
 }>;
 
-export type ContinuationRuntimeV1BootstrapPhase =
-  | "after_claim"
-  | "after_begin"
-  | "after_schema"
-  | "after_meta"
-  | "before_commit"
-  | "after_commit"
-  | "after_wal";
+export function assertContinuationRuntimeV1AuthorityClock(
+  value: unknown,
+): asserts value is ContinuationRuntimeV1AuthorityClock {
+  if (typeof value !== "function" || !AUTHORITY_CLOCKS.has(value))
+    throw new Error("continuation_runtime_v1_authority_clock_capability_invalid");
+}
+
+export type ContinuationRuntimeV1BootstrapPhase = "after_claim" | "after_begin"
+  | "after_schema" | "after_meta" | "before_commit" | "after_commit" | "after_wal";
 
 type RuntimeMetaRow = {
-  singleton: number;
-  database_instance_id: string;
-  schema_id: string;
-  schema_version: number;
-  schema_manifest_sha256: string;
-  created_at: string;
+  singleton: number; database_instance_id: string; schema_id: string;
+  schema_version: number; schema_manifest_sha256: string;
+  created_at: string; authority_clock_floor_at: string;
 };
 
 function sameFileIdentity(
@@ -129,10 +128,7 @@ function assertBootstrapSidecarsMissing(path: string): void {
   }
 }
 
-/**
- * Claims the main pathname with O_EXCL. Unlike the legacy helper, an existing
- * empty file is never interpreted as a database that Runtime may initialize.
- */
+/** Claims a missing main pathname with O_EXCL; an existing empty file is never bootstrap input. */
 function claimBootstrapPath(path: string): PrivateRuntimeSqliteFileIdentity {
   mkdirSync(dirname(path), { recursive: true, mode: PRIVATE_DIRECTORY_MODE });
   hardenPrivateRuntimeSqliteDirectoryOffline(path);
@@ -198,7 +194,7 @@ function assertRuntimeMeta(
 ): RuntimeMetaRow {
   const rows = db.prepare(
     `SELECT singleton, database_instance_id, schema_id, schema_version,
-            schema_manifest_sha256, created_at
+            schema_manifest_sha256, created_at, authority_clock_floor_at
        FROM runtime_meta`,
   ).all() as RuntimeMetaRow[];
   if (rows.length !== 1) {
@@ -213,7 +209,22 @@ function assertRuntimeMeta(
     throw new Error("continuation_runtime_v1_runtime_meta_invalid");
   }
   assertCanonicalTimestamp(row.created_at, "runtime_meta_created_at");
+  assertCanonicalTimestamp(row.authority_clock_floor_at, "authority_clock_floor_at");
+  if (row.authority_clock_floor_at < row.created_at) {
+    throw new Error("continuation_runtime_v1_authority_clock_floor_invalid");
+  }
   return row;
+}
+
+function authorityClockFloor(db: SqliteDatabase): string {
+  const value = (db.prepare(
+    "SELECT authority_clock_floor_at FROM runtime_meta WHERE singleton = 1",
+  ).get() as { authority_clock_floor_at?: unknown } | undefined)?.authority_clock_floor_at;
+  if (typeof value !== "string") {
+    throw new Error("continuation_runtime_v1_authority_clock_floor_invalid");
+  }
+  assertCanonicalTimestamp(value, "authority_clock_floor_at");
+  return value;
 }
 
 function copyPreflightArtifact(source: string, destination: string): void {
@@ -222,8 +233,7 @@ function copyPreflightArtifact(source: string, destination: string): void {
   if (!copied.isFile() || copied.isSymbolicLink() || copied.nlink !== 1) {
     throw new Error("continuation_runtime_v1_preflight_copy_invalid");
   }
-  // The temporary directory is private, but matching the authority-file mode
-  // prevents a later refactor from weakening the preflight copy's contract.
+  // Match authority-file mode even inside the private temporary directory.
   chmodSync(destination, PRIVATE_SQLITE_MODE);
   const hardened = lstatSync(destination);
   if (!hardened.isFile() || hardened.isSymbolicLink() || hardened.nlink !== 1
@@ -270,9 +280,7 @@ function preflightExistingDatabase(
     }
   }
 
-  // Keep the complete recovery snapshot in the authority database's capacity
-  // domain. A bounded global /tmp must never make a valid large database
-  // impossible to restart.
+  // Keep recovery beside the authority database; bounded global /tmp cannot block restart.
   const directory = createPrivatePreflightDirectory(path);
   const copyPath = join(directory, "runtime.sqlite");
   try {
@@ -310,12 +318,13 @@ function insertRuntimeMeta(
   db.prepare(
     `INSERT INTO runtime_meta(
        singleton, database_instance_id, schema_id, schema_version,
-       schema_manifest_sha256, created_at
-     ) VALUES (1, ?, 'continuation_runtime_v1', ?, ?, ?)`,
+       schema_manifest_sha256, created_at, authority_clock_floor_at
+     ) VALUES (1, ?, 'continuation_runtime_v1', ?, ?, ?, ?)`,
   ).run(
     databaseInstanceId,
     CONTINUATION_RUNTIME_V1_USER_VERSION,
     manifest.schema_sha256,
+    createdAt,
     createdAt,
   );
 }
@@ -324,6 +333,7 @@ function bootstrapDatabase(
   path: string,
   manifest: ContinuationRuntimeV1SchemaManifest,
   options: ContinuationRuntimeV1DatabaseOptions,
+  createdAt: string,
 ): { db: SqliteDatabase; meta: RuntimeMetaRow } {
   const claimedIdentity = claimBootstrapPath(path);
   assertBootstrapSidecarsMissing(path);
@@ -343,7 +353,6 @@ function bootstrapDatabase(
     database.exec(loadContinuationRuntimeV1Ddl());
     assertContinuationRuntimeV1Schema(database, manifest);
     options.bootstrapFaultInjector?.("after_schema");
-    const createdAt = options.now?.() ?? new Date().toISOString();
     insertRuntimeMeta(
       database,
       manifest,
@@ -373,8 +382,7 @@ function bootstrapDatabase(
       try { database.exec("ROLLBACK"); } catch { /* preserve bootstrap failure */ }
     }
     database?.close();
-    // The O_EXCL claim is intentionally retained. Retrying an interrupted or
-    // failed bootstrap as if the path were new could conceal a partial setup.
+    // Retain the O_EXCL claim so a partial bootstrap can never masquerade as new.
     throw error;
   }
 }
@@ -427,12 +435,25 @@ export function openContinuationRuntimeV1Database(
   options: ContinuationRuntimeV1DatabaseOptions = {},
 ): ContinuationRuntimeV1Database {
   assertContinuationRuntimeV1Host();
+  if (options.authorityNow !== undefined && typeof options.authorityNow !== "function") {
+    throw new Error("continuation_runtime_v1_authority_clock_invalid");
+  }
+  const sourceNow = options.authorityNow ?? (() => new Date().toISOString());
+  const readSourceNow = (): string => {
+    let value: unknown;
+    try { value = sourceNow(); } catch {
+      throw new Error("continuation_runtime_v1_authority_clock_invalid");
+    }
+    if (typeof value !== "string") throw new Error("continuation_runtime_v1_authority_clock_invalid");
+    assertCanonicalTimestamp(value, "authority_clock");
+    return value;
+  };
+  const openedAt = readSourceNow();
   const absolutePath = assertPlainDedicatedPath(path);
-  // Parse and authenticate the checked-in manifest before claiming a missing
-  // pathname. Packaging errors therefore cannot strand a new authority file.
+  // Authenticate the manifest before a packaging error could strand a new authority file.
   const manifest = loadContinuationRuntimeV1SchemaManifest();
   const opened = isMissingPath(absolutePath)
-    ? bootstrapDatabase(absolutePath, manifest, options)
+    ? bootstrapDatabase(absolutePath, manifest, options, openedAt)
     : openExistingDatabase(absolutePath, manifest);
   const transaction = createSqliteTransactionRunner({
     begin: () => opened.db.exec("BEGIN IMMEDIATE"),
@@ -440,13 +461,45 @@ export function openContinuationRuntimeV1Database(
     rollback: () => opened.db.exec("ROLLBACK"),
     onPhase: options.faultInjector,
   });
+  let localFloor = opened.meta.authority_clock_floor_at;
+  const authorityNow = Object.freeze(((): string => {
+    const source = readSourceNow();
+    if (source > localFloor) localFloor = source;
+    if (!transaction.inTransaction()) return localFloor;
+    const persisted = authorityClockFloor(opened.db);
+    return persisted > localFloor ? persisted : localFloor;
+  })) as ContinuationRuntimeV1AuthorityClock;
+  AUTHORITY_CLOCKS.add(authorityNow);
+  const mintAuthorityTime = (after: string | null): string => {
+    if (!transaction.inTransaction())
+      throw new Error("continuation_runtime_v1_authority_time_mint_requires_transaction");
+    if (after !== null) assertCanonicalTimestamp(after, "authority_time_lower_bound");
+    let value = authorityNow();
+    if (after !== null && value <= after) {
+      value = new Date(Date.parse(after) + 1).toISOString();
+      assertCanonicalTimestamp(value, "authority_time");
+    }
+    opened.db.prepare(
+      "UPDATE runtime_meta SET authority_clock_floor_at = ? WHERE singleton = 1",
+    ).run(value);
+    void transaction.afterCommit(async () => {
+      if (value > localFloor) localFloor = value;
+    });
+    return value;
+  };
   let closePromise: Promise<void> | null = null;
-  return {
+  return Object.freeze({
     path: absolutePath,
     databaseInstanceId: opened.meta.database_instance_id,
+    authorityNow,
+    mintAuthorityTime,
     db: opened.db,
     transaction,
-    withTx: (fn) => transaction.run(fn),
+    withTx: (fn) => transaction.run(async () => {
+      const persisted = authorityClockFloor(opened.db);
+      if (persisted > localFloor) localFloor = persisted;
+      return await fn();
+    }),
     read: (fn) => transaction.read(fn),
     close() {
       if (transaction.inTransaction()) {
@@ -466,5 +519,5 @@ export function openContinuationRuntimeV1Database(
       })();
       return closePromise;
     },
-  };
+  });
 }

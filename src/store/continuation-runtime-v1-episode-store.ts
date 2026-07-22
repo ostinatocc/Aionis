@@ -78,8 +78,6 @@ export type ContinuationRuntimeV1EpisodeStore = Readonly<{
   readDecision(tenantId: string, scope: string, decisionId: string): Promise<readonly EpisodeEventV1[]>;
   readRun(tenantId: string, scope: string, runId: string): Promise<readonly EpisodeEventV1[]>;
 }>;
-export type ContinuationRuntimeV1EpisodeStoreOptions = Readonly<{ now?: () => string }>;
-
 type Row = Readonly<Record<string, unknown>>;
 const MUTATION_CONTEXTS = new WeakSet<object>();
 
@@ -323,9 +321,9 @@ function result(episode: string, decision: string, events: readonly EpisodeEvent
     episode_id: episode, decision_id: decision, event_refs: events.map(episodeEventRefV1) });
 }
 
-export function createContinuationRuntimeV1EpisodeStore(database: ContinuationRuntimeV1Database,
-  options: ContinuationRuntimeV1EpisodeStoreOptions = {}): ContinuationRuntimeV1EpisodeStore {
-  const now = options.now ?? (() => new Date().toISOString());
+export function createContinuationRuntimeV1EpisodeStore(
+  database: ContinuationRuntimeV1Database,
+): ContinuationRuntimeV1EpisodeStore {
   async function mutate<T>(context: ContinuationRuntimeV1AuthorityWriteContext,
     kind: "create_continuation" | "record_outcome", fn: (lineage: ContinuationRuntimeV1OperationLineageV1) => T): Promise<T> {
     const binding = assertContinuationRuntimeV1AuthorityWriteContext(context, database);
@@ -352,7 +350,7 @@ export function createContinuationRuntimeV1EpisodeStore(database: ContinuationRu
           capsule_sha256: selection.capsule.capsule_sha256, surface: selection.surface, use_state: null })));
       assertExposureAuthority(database,contract,facts);
       const previous = head(database,lineage.tenant_id,lineage.scope,contract.identity.episode_id);
-      const sequence = (previous?.event_sequence ?? 0) + 1; const created = time(now(), "created_at");
+      const sequence = (previous?.event_sequence ?? 0) + 1; const created = time(database.mintAuthorityTime(null), "created_at");
       const event = buildEpisodeEventV1({ tenant_id: lineage.tenant_id, scope: lineage.scope,
         episode_id: contract.identity.episode_id, event_sequence: sequence,
         event_id: eventId(lineage,contract.identity.episode_id,sequence,"contract_exposed"),
@@ -410,7 +408,7 @@ export function createContinuationRuntimeV1EpisodeStore(database: ContinuationRu
           || fact.capsule_revision!==prior.capsule_revision || fact.capsule_sha256!==prior.capsule_sha256
           || fact.surface!==prior.surface;})) fail("use_receipt_surface_mismatch");
       const current=head(database,lineage.tenant_id,lineage.scope,exposure.episode_id);
-      const created=time(now(),"created_at"); if (Date.parse(created)<Date.parse(outcome.observed_at)) fail("receipt_from_future");
+      const created=time(database.mintAuthorityTime(null),"created_at"); if (Date.parse(created)<Date.parse(outcome.observed_at)) fail("receipt_from_future");
       if (settlementWindow && created > settlementWindow.settlement_cutoff_at) {
         fail("settlement_cutoff_exceeded");
       }
