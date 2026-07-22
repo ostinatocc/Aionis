@@ -15,8 +15,49 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  dependency-lock:
+    name: Dependency lock integrity
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Require complete registry integrity
+        run: |
+          node --input-type=module -e '
+            import fs from "node:fs";
+            const lock = JSON.parse(fs.readFileSync("package-lock.json", "utf8"));
+            if (lock.lockfileVersion !== 3 || !lock.packages
+              || typeof lock.packages !== "object") {
+              throw new Error("package-lock v3 closure required");
+            }
+            const packages = Object.entries(lock.packages).filter(
+              ([path, entry]) => path.startsWith("node_modules/") && !entry.link,
+            );
+            if (packages.length === 0) throw new Error("empty dependency closure");
+            for (const [path, entry] of packages) {
+              if (typeof entry.version !== "string"
+                || typeof entry.resolved !== "string"
+                || typeof entry.integrity !== "string"
+                || !/^sha512-[A-Za-z0-9+/]+={0,2}$/u.test(entry.integrity)) {
+                throw new Error(`incomplete dependency authority: ${path}`);
+              }
+              const resolved = new URL(entry.resolved);
+              if (resolved.protocol !== "https:"
+                || resolved.hostname !== "registry.npmjs.org"
+                || resolved.username !== "" || resolved.password !== "") {
+                throw new Error(`untrusted dependency source: ${path}`);
+              }
+            }
+            console.log(`verified ${packages.length} dependency integrity records`);
+          '
+
   verify:
     name: Node ${{ matrix.node }}
+    needs: dependency-lock
     runs-on: ubuntu-latest
     timeout-minutes: 20
     strategy:
@@ -61,6 +102,7 @@ jobs:
 
   verify-macos:
     name: macOS Node ${{ matrix.node }}
+    needs: dependency-lock
     runs-on: macos-latest
     timeout-minutes: 20
     strategy:
@@ -639,16 +681,18 @@ jobs:
   required:
     name: Required CI gates
     if: always()
-    needs: [verify, verify-macos, artifact]
+    needs: [dependency-lock, verify, verify-macos, artifact]
     runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:
       - name: Require every Continuation Runtime V1 gate
         env:
           ARTIFACT_RESULT: ${{ needs.artifact.result }}
+          DEPENDENCY_LOCK_RESULT: ${{ needs['dependency-lock'].result }}
           VERIFY_MACOS_RESULT: ${{ needs['verify-macos'].result }}
           VERIFY_RESULT: ${{ needs.verify.result }}
         run: |
+          test "$DEPENDENCY_LOCK_RESULT" = success
           test "$VERIFY_RESULT" = success
           test "$VERIFY_MACOS_RESULT" = success
           test "$ARTIFACT_RESULT" = success
