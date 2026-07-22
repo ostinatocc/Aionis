@@ -635,3 +635,20 @@ jobs:
 
       - name: Verify real container authority and restart chain
         run: node scripts/ci/continuation-runtime-v1-container-smoke.mjs
+
+  required:
+    name: Required CI gates
+    if: always()
+    needs: [verify, verify-macos, artifact]
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Require every Continuation Runtime V1 gate
+        env:
+          ARTIFACT_RESULT: ${{ needs.artifact.result }}
+          VERIFY_MACOS_RESULT: ${{ needs['verify-macos'].result }}
+          VERIFY_RESULT: ${{ needs.verify.result }}
+        run: |
+          test "$VERIFY_RESULT" = success
+          test "$VERIFY_MACOS_RESULT" = success
+          test "$ARTIFACT_RESULT" = success
