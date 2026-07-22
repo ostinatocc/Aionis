@@ -1,6 +1,0 @@
-{
-  "name": "@aionis/learning-authority",
-  "private": true,
-  "type": "module",
-  "description": "External evidence ingestion and protected deployment authority for Aionis Runtime."
-}

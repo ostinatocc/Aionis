@@ -1,88 +1,163 @@
 # Focus Boundary
 
-Aionis Runtime Focused is scoped to the local evidence-gated cognitive memory and execution learning Runtime. This document is a convergence boundary, not a broad architecture proposal.
+Aionis Runtime Focused is the clean-break Continuation Runtime V1. Its job is
+to compile the smallest verified execution state an Agent needs next, record
+exactly how that state was used, learn only from bound outcomes, forget state
+that has lost authority, and make every serving change explainable from durable
+evidence.
 
-The product promise is narrow: an agent that uses Aionis should recover prior execution context, learn from real outcomes, forget harmful or stale memory, expose authority and evidence, and let history shape future behavior without turning single-task fixes into source code.
+The canonical contract is
+[AIONIS_CONTINUATION_RUNTIME_V1.md](architecture/AIONIS_CONTINUATION_RUNTIME_V1.md),
+adopted by
+[ADR-0003](adr/0003-adopt-verified-branching-continuation-runtime.md). Earlier
+v0.3.x product, route, guide, Lite, MCP, and database shapes are historical
+material only. They are not compatibility targets.
 
-The formal product contract is [AIONIS_PRODUCT_CONTRACT.md](AIONIS_PRODUCT_CONTRACT.md). Capability routing and delete-review decisions are tracked in [AIONIS_CAPABILITY_DECISION_MATRIX.md](AIONIS_CAPABILITY_DECISION_MATRIX.md). Stable product outputs are defined in [AIONIS_PRODUCT_OUTPUT_CONTRACT.md](AIONIS_PRODUCT_OUTPUT_CONTRACT.md). Cross-thread, cross-Agent, and cross-LLM continuity are proof surfaces for the larger product, not the total product positioning.
+## Product promise
 
-## In Scope
+An Agent using Aionis should:
 
-1. execution continuity
-2. evidence-scoped ordinary memory recall
-3. task start and resume packets
-4. handoff and recovery anchors
-5. replay-derived workflow learning
-6. learning-controlled promotion, suppression, and counter-evidence
-7. semantic forgetting and archive rehydration
-8. local Lite store-port decoupling
-9. compact guide packets that show how prior history changed memory selection, workflow reuse, risk, and forgetting
+1. resume from verified current state instead of rediscovering it;
+2. receive a deterministic continuation contract, not an unbounded memory dump;
+3. expose which capsule revisions influenced each decision and action;
+4. turn verified outcomes into isolated learning evidence;
+5. prevent weak, stale, conflicting, or harmful evidence from gaining direct
+   authority;
+6. remove rebuildable state only after an explicit lifecycle decision; and
+7. reconstruct why present history changed future behavior.
 
-## Out of Scope
+## Four kernel capabilities
 
-1. external host framework products
-2. hosted docs site
-3. inspector/playground/product UI
-4. Aionis Doc
-5. broad automation product surface
-6. generic sandbox product surface
-7. cloud multi-tenant control plane
-8. SDK/package release wrappers
-9. examples and sample surfaces
-10. removed real-agent runners tied to external frameworks
-11. release/dogfood flows tied to external frameworks
-12. benchmark-specific tracks
+The focused Runtime has exactly four primary capabilities:
 
-## Decision Rule
+1. **Continuity** — typed observations, immutable capsules, world snapshots,
+   bounded candidate retrieval, and deterministic continuation compilation.
+2. **Learning** — append-only exposure/use/outcome episodes, isolated candidate
+   branches, exact treatment membership, and signed effect evidence.
+3. **Forgetting** — lifecycle authority, suppression/quarantine/expiry, archive
+   references, and retention of rebuildable sidecars only.
+4. **Learning control** — root-signed policies, deterministic cohort assignment,
+   effect-gated merge, CAS heads, rejection, and forward revert.
 
-Keep code when it directly strengthens continuity, learning, forgetting, or learning control.
+The product-level effect is history-shaped future behavior: a later
+continuation contract, verification obligation, suppression decision, or
+authority branch must differ only when durable evidence justifies that
+difference.
 
-Delete or extract code when it primarily exists for an external framework, sample flow, product UI, broad platform surface, or obsolete extension surface.
+## In scope
 
-Learning-control development follows [LEARNING_CONTROL_PRINCIPLES.md](LEARNING_CONTROL_PRINCIPLES.md). Do not treat every real-task failure as a reason to add a permanent hard rule. Classify the failure, scope the lesson, add escape conditions, and verify against prior and holdout tasks before broadening Runtime guidance.
+- the five-route V1 HTTP product surface and separately packaged exact
+  five-method SDK;
+- strict trusted-host and operator authentication;
+- offline root-signed policy, cohort, and rotation provisioning;
+- one authoritative local SQLite database with durable idempotent operations;
+- complete decision reconstruction and bounded counterfactual reads;
+- independent `embedding`, `ann`, `effect`, and `retention` workers;
+- content-addressed rebuildable vector and ANN sidecars;
+- graceful process shutdown and private local data posture;
+- evidence that directly measures continuity, learning, forgetting, and
+  learning-control effects.
 
-Aionis source code should describe the Runtime product, not external runners. Real agent evaluation can prove or falsify behavior, but it is not itself the product. Scoped guidance and workflow candidates belong in memory/evidence state, not as a separate source-code layer.
+## Out of scope
 
-## Kernel Contract
+- external Agent frameworks, runners, or framework-specific repair rules;
+- a generic memory graph, automation platform, sandbox, or admin control plane;
+- hosted multi-tenant service, HA, multi-host writers, or network filesystems;
+- product UI, inspector, playground, hosted docs, and example applications;
+- benchmark-specific policy in the daemon;
+- provider-specific embedding policy outside the embedding worker;
+- vector-search serving until an explicit authority-safe retrieval port exists;
+- root private-key custody or artifact signing inside Runtime;
+- v0.3.x payload aliases, package compatibility, database migration, or dual
+  registration.
 
-The executable boundary lives in `src/kernel/boundary.ts`.
+## Executable boundary
 
-The focused Runtime has exactly four primary kernel capabilities:
+The daemon exposes exactly:
 
-1. continuity
-2. learning
-3. forgetting
-4. learning control
+- `POST /v1/observations`
+- `POST /v1/continuations`
+- `POST /v1/outcomes`
+- `POST /v1/authority-decisions`
+- `GET /v1/decisions/:decision_id`
+- `GET /healthz`
+- `GET /readyz`
 
-The product-level effect of these four capabilities is history-shaped future behavior: future guide packets, workflow reuse, verification posture, suppression, and forgetting decisions must be measurably different because of prior real execution evidence.
+No implicit `HEAD`, compatibility route, debug facade, browser route, or hidden
+operator route may be registered. The route inventory in
+`src/runtime-v1/http-surface.ts` is the single authority for registration and
+tests.
 
-The capability id is `learning_control`. Routes, payloads, traces, env vars, and Runtime contracts use the learning-control vocabulary directly.
+The daemon receives caller credentials and a pinned root public key. It never
+receives an embedding API key, effect private key, or root private key. A cohort
+seed reaches the daemon only by reading the exact protected authority row from
+SQLite during assignment; it is never accepted through HTTP or environment,
+never returned or logged, and its transient buffer is cleared after HMAC use.
+Each worker is a separate process and receives only its role-specific
+capability. ANN currently builds immutable segments only; it does not influence
+serving decisions.
 
-Internal implementation files must not keep obsolete extension surfaces. Canonical Runtime code uses `learning-control-*` names.
+## Authority and storage rules
 
-Learning control means authority gates, promotion admissibility, suppression overlays, and memory lifecycle control. It does not mean admin control planes, cloud control, enterprise policy consoles, or external framework management.
+- A fresh database is unready until a current, unambiguous compiler/evidence
+  policy pair has been installed through the offline provisioner.
+- SQLite is the sole authority. Vector and ANN artifacts are rebuildable
+  candidates and cannot grant serving authority.
+- Every Runtime-minted factual timestamp and lease decision uses one
+  database-bound monotonic authority time. It combines a validated raw source
+  with process-observed, committed, and SQLite-persisted factual floors.
+  Timestamp minting is transaction-only: commit advances the durable floor and
+  rollback does not. Future availability, retry, expiry, and signed protocol
+  deadlines are not clock-floor writes. Operational timers only wake polling or
+  request cancellation; they cannot create a second authority timeline.
+- One local database permits one write transaction at a time. V1 makes no HA or
+  distributed-writer claim.
+- The dedicated data directory is `0700`; SQLite and its WAL/SHM/journal files
+  are `0600`.
+- Authority changes require exact evidence, root-signed policy, and CAS. Text
+  similarity or an operator click alone cannot create positive learning credit.
+- Unknown configuration, ambiguous policy, stale binding, mismatched digest,
+  unsafe file posture, and unavailable authority fail closed.
 
-LLM classification is allowed only as a semantic candidate producer. Deterministic Runtime mechanisms still decide verifier phase, edit boundary, provider/protocol quarantine, learning-control adjudication, and workflow promotion.
+## Decision rule
 
-Guided replay follows the same rule: Runtime may emit `agent_repair_request` evidence, but it must not synthesize semantic patches through built-in LLM calls, HTTP repair hooks, or heuristic patch synthesis.
+Keep code when it directly strengthens continuity, learning, forgetting, or
+learning control while preserving the narrow daemon and authority closure.
 
-## Effect Contract
+Delete or extract code when it primarily serves an external framework,
+deployment authority, fixed experiment protocol, benchmark, UI, sample,
+compatibility layer, or offline analysis workflow.
 
-Focused Aionis must prove agent-visible improvement, not just store more memory.
+Single-task failures may produce scoped evidence or a candidate hypothesis.
+They must not become Runtime source rules without repeated cross-task evidence
+that the change generalizes and simplifies the existing system.
 
-The executable effect evaluator lives in `src/kernel/effect-evaluator.ts`. It compares a baseline run with an Aionis-backed run across the four kernel capabilities:
+## Release boundary
 
-1. continuity: fewer repeated discovery steps, recovered state facts, carried verified facts, and earlier useful evidence recovery
-2. learning: workflow reuse, stable promotion, weak-evidence rejection, counter-evidence demotion
-3. forgetting: context precision, stale-memory suppression, archive rehydration only when needed
-4. learning control: evidence-gated authority, visible blocked authority, no unverified authority application
+V1 is releaseable only from a clean exact commit for which:
 
-A run only passes when all four kernels pass and the measured Aionis score improves beyond the configured effect threshold. Safe runs with no measured improvement warn instead of passing.
+1. `npm run check` and `npm run build` pass;
+2. the schema manifest matches the shipped SQL;
+3. a fresh database is provisioned with external root-signed policies;
+4. liveness and readiness semantics are verified separately;
+5. crash/reopen, permission, idempotency, and ordered-shutdown evidence passes;
+6. the five product routes and two probes exactly match the governed inventory;
+7. the image contains compiled output, production dependencies, and required
+   license notices only, runs non-root, and contains no credential or private
+   key;
+8. the single-host, single-SQLite-writer beta limitations are stated without an
+   HA or production-scale claim;
+9. a protected real-Agent pilot on that exact commit demonstrates verifier-safe
+   behavior and a measurable advantage over baseline and observe-only controls;
+10. the frozen split delivery boundary is verified from clean artifacts: the
+    zero-runtime-dependency SDK npm package contains no Runtime/SQL/tooling, the
+    runnable non-root OCI Runtime contains no Aionis SDK, repository source,
+    repository tooling, declaration, or source-map file, and neither artifact
+    has dangling repository-only commands; and
+11. the same commit completes a 24–36 hour bounded soak without integrity,
+    recovery, shutdown, queue, or authority drift.
 
-## Real Agent Validation
-
-Fixture-only trace files and hand-written metric suites are not accepted as effectiveness proof.
-
-Real effectiveness validation requires a real LLM provider key, a real model, a real focused Runtime, isolated workspace copies, real agent tool execution, real verifier commands, and baseline-vs-Aionis comparison. Missing provider configuration fails the run instead of pretending the provider is available.
-
-The eval command is measurement-only unless the report shows verifier-safe, measurable improvement over baseline and observe-only controls. A report that merely records activity is not enough.
+Passing the internal gates alone makes a build a release candidate. It is not
+evidence that Aionis improves real Agent outcomes; the external and delivery
+gates above are required before an effectiveness or operational-readiness
+claim.

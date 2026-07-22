@@ -1,4 +1,4 @@
-name: CI
+name: Continuation Runtime V1
 
 on:
   push:
@@ -6,246 +6,139 @@ on:
       - main
   pull_request:
   workflow_dispatch:
-    inputs:
-      sdk_ref:
-        description: "Standalone @aionis/sdk ref used by ownership checks"
-        required: false
 
 permissions:
   contents: read
 
 concurrency:
-  group: ci-${{ github.workflow }}-${{ github.ref }}
+  group: continuation-runtime-v1-${{ github.ref }}
   cancel-in-progress: true
 
 jobs:
-  runtime:
-    name: Runtime checks
+  dependency-lock:
+    name: Dependency lock integrity
     runs-on: ubuntu-latest
-    timeout-minutes: 20
-    env:
-      AIONIS_SDK_REPO: ${{ github.workspace }}/external/aionis-sdk
-      AIONIS_MANIFEST_REPO: ${{ github.workspace }}/external/release-artifacts/AionisManifest
+    timeout-minutes: 5
     steps:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
-          fetch-depth: 0
           persist-credentials: false
 
-      - name: Set up Node.js
-        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
-        with:
-          node-version: "24"
-          cache: npm
-
-      - name: Install protected-close ACL verifier
-        run: |
-          sudo apt-get update
-          sudo apt-get install --yes --no-install-recommends acl
-
-      - name: Resolve standalone SDK ref
-        id: sdk-ref
-        env:
-          SDK_REF_OVERRIDE: ${{ inputs.sdk_ref }}
+      - name: Require complete registry integrity
         run: |
           node --input-type=module -e '
             import fs from "node:fs";
-            const requiredString = (value, field) => {
-              const normalized = typeof value === "string" ? value.trim() : "";
-              if (!normalized) throw new Error(`${field} must be a non-empty string`);
-              return normalized;
-            };
-            const dependencies = JSON.parse(fs.readFileSync("ci-dependencies.json", "utf8"));
-            if (dependencies.schema_version !== "aionis_ci_dependency_lock_v1") {
-              throw new Error("unsupported ci-dependencies.json schema_version");
+            const lock = JSON.parse(fs.readFileSync("package-lock.json", "utf8"));
+            if (lock.lockfileVersion !== 3 || !lock.packages
+              || typeof lock.packages !== "object") {
+              throw new Error("package-lock v3 closure required");
             }
-            const repository = requiredString(dependencies.sdk?.repository, "ci-dependencies.sdk.repository");
-            const contractCommit = requiredString(
-              dependencies.sdk?.contract_commit,
-              "ci-dependencies.sdk.contract_commit",
+            const packages = Object.entries(lock.packages).filter(
+              ([path, entry]) => path.startsWith("node_modules/") && !entry.link,
             );
-            if (!/^[a-f0-9]{40}$/i.test(contractCommit)) {
-              throw new Error("ci-dependencies.sdk.contract_commit must be a 40-character commit");
+            if (packages.length === 0) throw new Error("empty dependency closure");
+            for (const [path, entry] of packages) {
+              if (typeof entry.version !== "string"
+                || typeof entry.resolved !== "string"
+                || typeof entry.integrity !== "string"
+                || !/^sha512-[A-Za-z0-9+/]+={0,2}$/u.test(entry.integrity)) {
+                throw new Error(`incomplete dependency authority: ${path}`);
+              }
+              const resolved = new URL(entry.resolved);
+              if (resolved.protocol !== "https:"
+                || resolved.hostname !== "registry.npmjs.org"
+                || resolved.username !== "" || resolved.password !== "") {
+                throw new Error(`untrusted dependency source: ${path}`);
+              }
             }
-            fs.appendFileSync(process.env.GITHUB_OUTPUT, `repository=${repository}\n`);
-            fs.appendFileSync(
-              process.env.GITHUB_OUTPUT,
-              `contract_ref=${process.env.SDK_REF_OVERRIDE || contractCommit}\n`,
-            );
+            console.log(`verified ${packages.length} dependency integrity records`);
           '
 
-      - name: Checkout standalone SDK contracts
+  verify:
+    name: Node ${{ matrix.node }}
+    needs: dependency-lock
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      matrix:
+        node:
+          - "22.15.0"
+          - "24.0.0"
+          - "24"
+    steps:
+      - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
-          repository: ${{ steps.sdk-ref.outputs.repository }}
-          ref: ${{ steps.sdk-ref.outputs.contract_ref }}
-          path: external/aionis-sdk
           persist-credentials: false
 
-      - name: Checkout exact release artifacts and stable authority
-        run: bash scripts/ci/release-package-artifacts.sh checkout release-train.json external/release-artifacts
+      - name: Set up Node.js
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: ${{ matrix.node }}
+          cache: npm
 
-      - name: Install dependencies
-        run: npm ci
+      - name: Install exact dependencies
+        run: npm ci --ignore-scripts
 
-      - name: Typecheck
-        run: npm run -s typecheck
+      - name: Verify complexity gate implementation
+        run: npm run -s complexity:test
 
-      - name: Release artifact gate
-        run: node scripts/ci/release-artifact-gate.mjs --check --pretag --require-package-roots
-        env:
-          AIONIS_RELEASE_CLI_REPO: ${{ github.workspace }}/external/release-artifacts/aionis-cli
-          AIONIS_RELEASE_CREATE_REPO: ${{ github.workspace }}/external/release-artifacts/aionis-create
-          AIONIS_RELEASE_SDK_REPO: ${{ github.workspace }}/external/release-artifacts/aionis-sdk
-          AIONIS_RELEASE_MANIFEST_REPO: ${{ github.workspace }}/external/release-artifacts/AionisManifest
-          AIONIS_RELEASE_MCP_REPO: ${{ github.workspace }}/external/release-artifacts/aionis-mcp
-          AIONIS_RELEASE_AIFS_REPO: ${{ github.workspace }}/external/release-artifacts/aionis-aifs
-          AIONIS_RELEASE_CLAUDE_CODE_REPO: ${{ github.workspace }}/external/release-artifacts/aionis-claude-code
-          AIONIS_RELEASE_SUBSTRATE_REPO: ${{ github.workspace }}/external/release-artifacts/AionisSubstrate
-          AIONIS_RELEASE_EVALUATION_REPO: ${{ github.workspace }}/external/release-artifacts/AionisRuntime-evals
-
-      - name: Verify standalone Manifest
-        working-directory: external/release-artifacts/AionisManifest
-        run: |
-          npm ci --ignore-scripts
-          npm run -s verify
-          npm pack --dry-run --ignore-scripts
-
-      - name: Release docs version check
-        run: node --test scripts/ci/release-version-docs.test.mjs
-
-      - name: Standalone SDK contract check
-        run: npm run -s sdk:check
-
-      - name: Runtime complexity gate
+      - name: Enforce strict no-legacy complexity budget
         run: npm run -s complexity:check
 
-      - name: Static contract tests
-        run: npm run -s lite:test:static
+      - name: Verify production dependency audit
+        run: npm audit --omit=dev --audit-level=high
 
-      - name: Manifest product integration
-        run: npm run -s lite:test:core:manifest
+      - name: Verify immutable schema manifest
+        run: npm run -s schema:check
 
-      - name: Lite public smoke
-        run: npm run -s lite:smoke
+      - name: Typecheck Runtime and provisioning tool
+        run: npm run -s typecheck
 
-  runtime-core:
-    name: Core TypeScript (${{ matrix.shard }})
-    runs-on: ubuntu-latest
-    timeout-minutes: ${{ matrix.timeout_minutes }}
+      - name: Run complete V1 test suite
+        run: npm run -s test
+
+  verify-macos:
+    name: macOS Node ${{ matrix.node }}
+    needs: dependency-lock
+    runs-on: macos-latest
+    timeout-minutes: 20
     strategy:
       fail-fast: false
-      max-parallel: 5
       matrix:
-        include:
-          - shard: bucket-0
-            timeout_minutes: 40
-          - shard: bucket-1
-            timeout_minutes: 30
-          - shard: bucket-2
-            timeout_minutes: 40
-          - shard: external-evidence
-            timeout_minutes: 25
-          - shard: deployment-authority
-            timeout_minutes: 90
+        node:
+          - "22.15.0"
+          - "24"
     steps:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
 
       - name: Set up Node.js
         uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
-          node-version: "24"
+          node-version: ${{ matrix.node }}
           cache: npm
 
-      - name: Install protected-close ACL verifier
-        run: |
-          sudo apt-get update
-          sudo apt-get install --yes --no-install-recommends acl
+      - name: Install exact dependencies
+        run: npm ci --ignore-scripts
 
-      - name: Install dependencies
-        run: npm ci
+      - name: Verify complete macOS contract
+        run: npm run -s check
 
-      - name: Run core shard
-        run: npm run -s lite:test:core:${{ matrix.shard }}
-
-  runtime-recovery:
-    name: Provisioning recovery (${{ matrix.shard }})
-    runs-on: ubuntu-latest
-    timeout-minutes: ${{ matrix.timeout_minutes }}
-    strategy:
-      fail-fast: false
-      max-parallel: 4
-      matrix:
-        include:
-          - shard: bootstrap
-            timeout_minutes: 35
-          - shard: receipt
-            timeout_minutes: 25
-          - shard: durable
-            timeout_minutes: 30
-          - shard: terminal
-            timeout_minutes: 25
-    steps:
-      - name: Checkout
-        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-
-      - name: Set up Node.js
-        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
-        with:
-          node-version: "24"
-          cache: npm
-
-      - name: Install protected-close ACL verifier
-        run: |
-          sudo apt-get update
-          sudo apt-get install --yes --no-install-recommends acl
-
-      - name: Install dependencies
-        run: npm ci
-
-      - name: Run recovery shard
-        run: npm run -s lite:test:recovery:${{ matrix.shard }}
-
-  minimum-node:
-    name: Node 22.15 minimum compatibility
+  artifact:
+    name: Build artifact
+    needs: [verify, verify-macos]
     runs-on: ubuntu-latest
     timeout-minutes: 20
     steps:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-
-      - name: Set up minimum supported Node.js
-        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
-          node-version: "22.15.0"
-          cache: npm
-
-      - name: Install protected-close ACL verifier
-        run: |
-          sudo apt-get update
-          sudo apt-get install --yes --no-install-recommends acl
-
-      - name: Install dependencies
-        run: npm ci
-
-      - name: Typecheck
-        run: npm run -s typecheck
-
-      - name: Provisioning journal compatibility
-        run: node --import tsx --test scripts/ci/lite-runtime-deployment-slot-provisioning-journal-integrity.test.ts
-
-      - name: Lite public smoke
-        run: npm run -s lite:smoke
-
-  sandbox-shutdown-macos:
-    name: Sandbox shutdown (macOS)
-    runs-on: macos-latest
-    timeout-minutes: 15
-    steps:
-      - name: Checkout
-        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+          persist-credentials: false
 
       - name: Set up Node.js
         uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
@@ -253,29 +146,553 @@ jobs:
           node-version: "24"
           cache: npm
 
-      - name: Install dependencies
-        run: npm ci
+      - name: Install exact dependencies
+        run: npm ci --ignore-scripts
 
-      - name: Verify real sandbox shutdown
-        run: node --import tsx --test scripts/ci/lite-runtime-security-shutdown.test.ts
+      - name: Build clean Runtime and SDK artifacts
+        run: npm run -s build:sdk
+
+      - name: Verify built schema resources
+        run: >-
+          node --input-type=module -e
+          'const schema = await import("./dist/store/continuation-runtime-v1-schema.js");
+          const manifest = schema.loadContinuationRuntimeV1SchemaManifest();
+          if (manifest.tables.length !== 17) throw new Error("unexpected V1 table count");'
+
+      - name: Pack and verify a fresh SDK consumer
+        run: |
+          root_contract="$(node --input-type=module -e '
+            import fs from "node:fs";
+            const manifest = JSON.parse(fs.readFileSync("package.json", "utf8"));
+            if (manifest.private !== true) throw new Error("Runtime root must stay private");
+            for (const field of ["exports", "files", "main", "types", "workspaces"]) {
+              if (Object.hasOwn(manifest, field)) throw new Error(`Runtime root exposes ${field}`);
+            }
+            if (Object.hasOwn(manifest.scripts, "prepack")) {
+              throw new Error("Runtime root must not define prepack");
+            }
+            process.stdout.write("private-oci-root");
+          ')"
+          test "$root_contract" = "private-oci-root"
+          pack_dir="$(mktemp -d)"
+          pack_json="$(cd packages/sdk && npm pack --json --ignore-scripts \
+            --pack-destination "$pack_dir")"
+          tarball_name="$(node --input-type=module -e '
+            const report = JSON.parse(process.argv[1]);
+            if (!Array.isArray(report) || report.length !== 1) {
+              throw new Error("unexpected npm pack report");
+            }
+            const artifact = report[0];
+            const actual = artifact.files.map((entry) => entry.path).sort();
+            const expected = [
+              "LICENSE",
+              "NOTICE",
+              "README.md",
+              "dist/continuation/authority-branch.d.ts",
+              "dist/continuation/contract.d.ts",
+              "dist/continuation/contract.js",
+              "dist/continuation/effect-certificate.d.ts",
+              "dist/continuation/effect-evaluation.d.ts",
+              "dist/continuation/episode.d.ts",
+              "dist/continuation/experiment-cohort.d.ts",
+              "dist/continuation/outcome.d.ts",
+              "dist/continuation/rehydration-ref.d.ts",
+              "dist/continuation/task-envelope.d.ts",
+              "dist/runtime-v1/command-contract.d.ts",
+              "dist/runtime-v1/command.d.ts",
+              "dist/runtime-v1/sdk.d.ts",
+              "dist/runtime-v1/sdk.js",
+              "dist/util/crypto.js",
+              "package.json",
+            ].sort();
+            if (JSON.stringify(actual) !== JSON.stringify(expected)) {
+              throw new Error(`SDK package closure drift: ${JSON.stringify(actual)}`);
+            }
+            if (artifact.entryCount !== expected.length) {
+              throw new Error("SDK package entry count drift");
+            }
+            process.stdout.write(artifact.filename);
+          ' "$pack_json")"
+          tarball="$pack_dir/$tarball_name"
+          test -f "$tarball"
+          packed_manifest="$pack_dir/sdk-package.json"
+          tar -xOf "$tarball" package/package.json > "$packed_manifest"
+          node --input-type=module -e '
+            import fs from "node:fs";
+            const manifest = JSON.parse(fs.readFileSync(process.argv[1], "utf8"));
+            if (manifest.private !== true) throw new Error("SDK must remain private");
+            for (const field of [
+              "scripts", "bin", "man", "directories", "config",
+              "dependencies", "optionalDependencies", "peerDependencies",
+            ]) {
+              if (Object.hasOwn(manifest, field)) {
+                throw new Error(`SDK artifact exposes ${field}`);
+              }
+            }
+          ' "$packed_manifest"
+          consumer="$(mktemp -d "$GITHUB_WORKSPACE/.sdk-consumer.XXXXXX")"
+          trap 'rm -rf "$consumer" "$pack_dir"' EXIT
+          CONSUMER="$consumer" node --input-type=module <<'NODE'
+          import fs from "node:fs";
+          import path from "node:path";
+
+          const root = process.env.CONSUMER;
+          if (!root) throw new Error("consumer root missing");
+          fs.writeFileSync(path.join(root, "package.json"), JSON.stringify({
+            private: true,
+            type: "module",
+          }));
+          fs.writeFileSync(path.join(root, "consumer.mjs"), `
+          import assert from "node:assert/strict";
+          const sdk = await import("@aionis/continuation-sdk");
+          assert.deepEqual(Object.keys(sdk).sort(), [
+            "AionisRuntimeV1ClientError",
+            "createAionisRuntimeV1Client",
+          ]);
+          for (const specifier of [
+            "@aionis/continuation-sdk/sdk",
+            "@aionis/continuation-sdk/dist/runtime-v1/sdk.js",
+          ]) {
+            await assert.rejects(import(specifier),
+              (error) => error?.code === "ERR_PACKAGE_PATH_NOT_EXPORTED");
+          }
+          const client = sdk.createAionisRuntimeV1Client({
+            baseUrl: "http://127.0.0.1:3000",
+            apiKey: "fresh-consumer-token-at-least-32-bytes",
+            timeoutMs: 1000,
+            requestBodyLimitBytes: 16384,
+            responseBodyLimitBytes: 16384,
+          });
+          assert.deepEqual(Object.keys(client).sort(), [
+            "createContinuation",
+            "decideAuthority",
+            "readDecision",
+            "recordObservations",
+            "recordOutcome",
+          ]);
+          `);
+          fs.writeFileSync(path.join(root, "consumer.ts"), `
+          import {
+            createAionisRuntimeV1Client,
+            type AionisRuntimeV1Client,
+          } from "@aionis/continuation-sdk";
+          type Equal<A, B> =
+            (<T>() => T extends A ? 1 : 2) extends
+            (<T>() => T extends B ? 1 : 2) ? true : false;
+          type Assert<T extends true> = T;
+          type ExpectedMethods =
+            | "recordObservations"
+            | "createContinuation"
+            | "recordOutcome"
+            | "decideAuthority"
+            | "readDecision";
+          type ExactMethods = Assert<Equal<keyof AionisRuntimeV1Client, ExpectedMethods>>;
+          const exact: ExactMethods = true;
+          const client = createAionisRuntimeV1Client({
+            baseUrl: "http://127.0.0.1:3000",
+            apiKey: "fresh-consumer-token-at-least-32-bytes",
+            timeoutMs: 1000,
+            requestBodyLimitBytes: 16384,
+            responseBodyLimitBytes: 16384,
+          });
+          void exact;
+          void client;
+          `);
+          fs.writeFileSync(path.join(root, "tsconfig.json"), JSON.stringify({
+            compilerOptions: {
+              lib: ["ES2023", "DOM", "DOM.Iterable"],
+              module: "NodeNext",
+              moduleResolution: "NodeNext",
+              noEmit: true,
+              skipLibCheck: false,
+              strict: true,
+              target: "ES2023",
+              types: ["node"],
+            },
+            files: ["consumer.ts"],
+          }));
+          NODE
+          npm install --prefix "$consumer" --ignore-scripts --no-audit --no-fund \
+            "$tarball"
+          node "$consumer/consumer.mjs"
+          "$GITHUB_WORKSPACE/node_modules/.bin/tsc" -p "$consumer/tsconfig.json"
+
+      - name: Build hardened Runtime image
+        run: docker build --pull=false --tag aionis-continuation-runtime-v1:ci .
+
+      - name: Verify Compose profiles render independently
+        run: |
+          docker compose --env-file /dev/null config --quiet
+          docker compose --env-file /dev/null --profile provision config --quiet
+          probe_root="$(mktemp -d)"
+          probe_base="aionis-capability-${GITHUB_RUN_ID:-local}-${GITHUB_RUN_ATTEMPT:-0}"
+          existing_root="$probe_root/existing-root.pem"
+          existing_effect="$probe_root/existing-effect.pem"
+          existing_seed="$probe_root/existing-seed.bin"
+          render_root="$probe_root/render-root.pem"
+          render_effect="$probe_root/render-effect.pem"
+          render_seed="$probe_root/render-seed.bin"
+          : > "$existing_root"
+          : > "$existing_effect"
+          : > "$existing_seed"
+          probe_projects=()
+          cleanup_probe() {
+            local project
+            for project in "${probe_projects[@]}"; do
+              AIONIS_CONTAINER_IMAGE=aionis-continuation-runtime-v1:ci \
+                TRUST_ROOT_PUBLIC_KEY_FILE="$existing_root" \
+                EFFECT_SIGNER_PRIVATE_KEY_FILE="$existing_effect" \
+                COHORT_SEED_FILE="$existing_seed" \
+                docker compose --ansi never --env-file /dev/null \
+                  --project-name "$project" \
+                  --profile provision --profile embedding --profile ann \
+                  --profile effect --profile retention \
+                  down --volumes --remove-orphans >/dev/null 2>&1 || true
+            done
+            rm -rf "$probe_root"
+          }
+          trap cleanup_probe EXIT
+          compose_json="$(TRUST_ROOT_PUBLIC_KEY_FILE="$render_root" \
+            EFFECT_SIGNER_PRIVATE_KEY_FILE="$render_effect" \
+            COHORT_SEED_FILE="$render_seed" \
+            docker compose --env-file /dev/null \
+            --profile provision --profile embedding --profile ann \
+            --profile effect --profile retention config --format json)"
+          node --input-type=module -e '
+            import fs from "node:fs";
+            const config = JSON.parse(process.argv[1]);
+            const services = config.services;
+            const exact = (actual, expected, label) => {
+              const left = JSON.stringify([...actual].sort());
+              const right = JSON.stringify([...expected].sort());
+              if (left !== right) throw new Error(`${label}: ${left}`);
+            };
+            const composeSource = fs.readFileSync("docker-compose.yml", "utf8");
+            const capabilityMountSources = {
+              "x-root-public-key-mount": {
+                alias: "root-public-key-mount",
+                aliasUses: 7,
+                source: "  source: ${TRUST_ROOT_PUBLIC_KEY_FILE:-./.secrets/UNCONFIGURED_TRUST_ROOT_PUBLIC_KEY}",
+                target: "/run/aionis/trust-root-public.pem",
+              },
+              "x-effect-private-key-mount": {
+                alias: "effect-private-key-mount",
+                aliasUses: 1,
+                source: "  source: ${EFFECT_SIGNER_PRIVATE_KEY_FILE:-./.secrets/UNCONFIGURED_EFFECT_SIGNER_KEY}",
+                target: "/run/aionis/effect-signer-private.pem",
+              },
+              "x-cohort-seed-mount": {
+                alias: "cohort-seed-mount",
+                aliasUses: 1,
+                source: "  source: ${COHORT_SEED_FILE:-./.secrets/UNCONFIGURED_COHORT_SEED}",
+                target: "/run/aionis/cohort-assignment-seed.bin",
+              },
+            };
+            const blockMatches = [...composeSource.matchAll(
+              /^(x-[a-z0-9-]+):[^\n]*\n((?:(?: {2}|\t).*(?:\n|$)|\n)*)/gmu,
+            )];
+            exact(composeSource.match(/^[ \t]+create_host_path:.*$/gmu) ?? [],
+              Object.keys(capabilityMountSources).map(
+                () => "    create_host_path: false"),
+              "capability create_host_path declarations");
+            for (const [name, expected] of Object.entries(capabilityMountSources)) {
+              const matches = blockMatches.filter((match) => match[1] === name);
+              if (matches.length !== 1) {
+                throw new Error(`capability mount source count: ${name}:${matches.length}`);
+              }
+              const lines = matches[0][2].split(/\r?\n/u);
+              for (const required of [
+                "  type: bind", expected.source, `  target: ${expected.target}`,
+                "  read_only: true", "  bind:", "    create_host_path: false",
+              ]) {
+                if (lines.filter((line) => line === required).length !== 1) {
+                  throw new Error(`capability mount source drift: ${name}:${required}`);
+                }
+              }
+              const aliasUses = (composeSource.match(
+                new RegExp(`^[ \\t]+- \\*${expected.alias}[ \\t]*$`, "gmu"),
+              ) ?? []).length;
+              if (aliasUses !== expected.aliasUses) {
+                throw new Error(`capability mount alias drift: ${name}:${aliasUses}`);
+              }
+            }
+            const renderedCapabilitySources = new Map([
+              ["/run/aionis/trust-root-public.pem", process.argv[2]],
+              ["/run/aionis/effect-signer-private.pem", process.argv[3]],
+              ["/run/aionis/cohort-assignment-seed.bin", process.argv[4]],
+            ]);
+            const authority = [
+              "AIONIS_DATA_PATH", "AIONIS_TRUST_ROOT_PUBLIC_KEY_PATH",
+              "AIONIS_TRUST_ROOT_SHA256",
+            ];
+            const worker = [
+              ...authority, "AIONIS_TENANT_ID", "AIONIS_WORKER_ROLE",
+              "AIONIS_JOB_LEASE_MS", "AIONIS_JOB_POLL_MS",
+              "AIONIS_JOB_BATCH_SIZE", "AIONIS_LOG_LEVEL",
+              "AIONIS_SHUTDOWN_TIMEOUT_MS",
+            ];
+            const expectedEnvironment = {
+              daemon: [
+                ...authority, "AIONIS_TENANT_ID", "AIONIS_HOST_PRINCIPAL_ID",
+                "AIONIS_HOST_API_KEY", "AIONIS_OPERATOR_PRINCIPAL_ID",
+                "AIONIS_OPERATOR_API_KEY", "AIONIS_HTTP_HOST",
+                "AIONIS_HTTP_PORT", "AIONIS_HTTP_BODY_LIMIT_BYTES",
+                "AIONIS_LOG_LEVEL", "AIONIS_SHUTDOWN_TIMEOUT_MS",
+              ],
+              provision: authority,
+              "provision-cohort": [...authority, "AIONIS_PROVISIONING_SEED_FD"],
+              "worker-embedding": [
+                ...worker, "AIONIS_EMBEDDING_BASE_URL", "AIONIS_EMBEDDING_MODEL",
+                "AIONIS_EMBEDDING_DIMENSIONS", "AIONIS_EMBEDDING_API_KEY",
+              ],
+              "worker-ann": worker,
+              "worker-effect": [
+                ...worker, "AIONIS_EFFECT_SIGNER_PRIVATE_KEY_PATH",
+                "AIONIS_EFFECT_SIGNER_SHA256",
+              ],
+              "worker-retention": worker,
+            };
+            const expectedMounts = {
+              daemon: ["/data", "/run/aionis/trust-root-public.pem"],
+              provision: ["/data", "/run/aionis/trust-root-public.pem"],
+              "provision-cohort": [
+                "/data", "/run/aionis/cohort-assignment-seed.bin",
+                "/run/aionis/trust-root-public.pem",
+              ],
+              "worker-embedding": ["/data", "/run/aionis/trust-root-public.pem"],
+              "worker-ann": ["/data", "/run/aionis/trust-root-public.pem"],
+              "worker-effect": [
+                "/data", "/run/aionis/effect-signer-private.pem",
+                "/run/aionis/trust-root-public.pem",
+              ],
+              "worker-retention": ["/data", "/run/aionis/trust-root-public.pem"],
+            };
+            exact(Object.keys(services), Object.keys(expectedEnvironment), "services");
+            for (const name of Object.keys(expectedEnvironment)) {
+              const service = services[name];
+              exact(Object.keys(service.environment ?? {}), expectedEnvironment[name],
+                `${name} environment`);
+              exact((service.volumes ?? []).map((mount) => mount.target),
+                expectedMounts[name], `${name} mounts`);
+              if (service.read_only !== true
+                || !service.cap_drop?.includes("ALL")
+                || !service.security_opt?.includes("no-new-privileges:true")
+                || Object.hasOwn(service, "user")) {
+                throw new Error(`weak container posture: ${name}`);
+              }
+              for (const mount of service.volumes ?? []) {
+                if (mount.target === "/data") {
+                  if (mount.type !== "volume" || mount.source !== "aionis-data"
+                    || mount.read_only === true) {
+                    throw new Error(`invalid authority volume: ${name}`);
+                  }
+                } else if (mount.type !== "bind" || mount.read_only !== true
+                  || mount.source !== renderedCapabilitySources.get(mount.target)
+                  || (Object.hasOwn(mount.bind ?? {}, "create_host_path")
+                    && mount.bind.create_host_path !== false)) {
+                  throw new Error(`invalid capability mount: ${name}:${mount.target}`);
+                }
+              }
+            }
+            for (const name of [
+              "provision", "provision-cohort", "worker-ann", "worker-effect",
+              "worker-retention",
+            ]) {
+              if (services[name].network_mode !== "none") {
+                throw new Error(`networked capability: ${name}`);
+              }
+            }
+            for (const name of ["daemon", "worker-embedding"]) {
+              if (services[name].network_mode === "none") {
+                throw new Error(`network-disabled required service: ${name}`);
+              }
+            }
+            for (const name of [
+              "daemon", "worker-embedding", "worker-ann", "worker-effect",
+              "worker-retention",
+            ]) {
+              if (services[name].stop_grace_period !== "5m5s") {
+                throw new Error(`shutdown grace drift: ${name}`);
+              }
+            }
+          ' "$compose_json" "$render_root" "$render_effect" "$render_seed"
+          positive_project="$probe_base-positive"
+          probe_projects+=("$positive_project")
+          AIONIS_CONTAINER_IMAGE=aionis-continuation-runtime-v1:ci \
+            TRUST_ROOT_PUBLIC_KEY_FILE="$existing_root" \
+            EFFECT_SIGNER_PRIVATE_KEY_FILE="$existing_effect" \
+            COHORT_SEED_FILE="$existing_seed" \
+            docker compose --ansi never --env-file /dev/null \
+              --project-name "$positive_project" \
+              --profile provision --profile embedding --profile ann \
+              --profile effect --profile retention \
+              create --no-build --pull never daemon
+          test -n "$(docker compose --project-name "$positive_project" \
+            ps --all --quiet daemon)"
+          probe_missing_bind() {
+            local service="$1"
+            local label="$2"
+            local missing="$3"
+            local root_file="$4"
+            local effect_file="$5"
+            local seed_file="$6"
+            local project="$probe_base-$service-$label"
+            local log="$probe_root/$service-$label.log"
+            probe_projects+=("$project")
+            if AIONIS_CONTAINER_IMAGE=aionis-continuation-runtime-v1:ci \
+              TRUST_ROOT_PUBLIC_KEY_FILE="$root_file" \
+              EFFECT_SIGNER_PRIVATE_KEY_FILE="$effect_file" \
+              COHORT_SEED_FILE="$seed_file" \
+              docker compose --ansi never --env-file /dev/null \
+                --project-name "$project" \
+                --profile provision --profile embedding --profile ann \
+                --profile effect --profile retention \
+                create --no-build --pull never "$service" >"$log" 2>&1; then
+              cat "$log"
+              echo "missing capability bind was accepted: $service:$label" >&2
+              return 1
+            fi
+            if test -e "$missing" || test -L "$missing" \
+              || ! grep -F -- "$missing" "$log" >/dev/null; then
+              cat "$log"
+              echo "missing capability bind failed open: $service:$label" >&2
+              return 1
+            fi
+          }
+          for service in daemon provision provision-cohort worker-embedding \
+            worker-ann worker-effect worker-retention; do
+            missing="$probe_root/missing-$service-root.pem"
+            probe_missing_bind "$service" root "$missing" "$missing" \
+              "$existing_effect" "$existing_seed"
+          done
+          missing="$probe_root/missing-effect.pem"
+          probe_missing_bind worker-effect effect "$missing" "$existing_root" \
+            "$missing" "$existing_seed"
+          missing="$probe_root/missing-seed.bin"
+          probe_missing_bind provision-cohort seed "$missing" "$existing_root" \
+            "$existing_effect" "$missing"
+          cleanup_probe
+          trap - EXIT
+
+      - name: Verify image contains only the compiled Runtime
+        run: |
+          docker run --rm --entrypoint sh aionis-continuation-runtime-v1:ci -ceu '
+            test "$(id -u)" = "1000"
+            test ! -e /app/src
+            test ! -e /app/tools
+            test ! -e /app/node_modules/typescript
+            test ! -e /app/node_modules/tsx
+            test ! -e /app/node_modules/@types/node
+            test -f /app/LICENSE
+            test -f /app/NOTICE
+            test "$(stat -c %a /data)" = "700"
+          '
+          docker run --rm -i --entrypoint node \
+            aionis-continuation-runtime-v1:ci --input-type=module <<'NODE'
+          import { createHash } from "node:crypto";
+          import fs from "node:fs";
+          import path from "node:path";
+
+          const root = "/app";
+          const manifestName = "runtime-closure.manifest.json";
+          const manifest = JSON.parse(fs.readFileSync(path.join(root, manifestName), "utf8"));
+          const exactManifestKeys = [
+            "closure_encoding", "closure_sha256", "entries", "external_dependencies",
+            "file_count", "files", "hash_algorithm", "schema",
+          ];
+          if (JSON.stringify(Object.keys(manifest).sort())
+              !== JSON.stringify(exactManifestKeys)
+            || manifest.schema !== "aionis.continuation-runtime.oci-closure.v1"
+            || manifest.hash_algorithm !== "sha256"
+            || manifest.closure_encoding !== "sorted_path_nul_sha256_lf_v1") {
+            throw new Error("Runtime closure schema drift");
+          }
+          const exactEntries = [
+            "dist/runtime-v1/daemon-entry.js",
+            "dist/runtime-v1/provisioning-entry.js",
+            "dist/runtime-v1/worker-entry.js",
+          ];
+          if (JSON.stringify(manifest.entries) !== JSON.stringify(exactEntries)) {
+            throw new Error("Runtime entrypoint drift");
+          }
+          const walk = (directory, prefix = "") => fs.readdirSync(directory, {
+            withFileTypes: true,
+          }).flatMap((entry) => {
+            const relative = prefix ? `${prefix}/${entry.name}` : entry.name;
+            if (relative === "node_modules") return [];
+            const absolute = path.join(directory, entry.name);
+            if (entry.isSymbolicLink()) throw new Error(`Runtime symlink: ${relative}`);
+            if (entry.isDirectory()) return walk(absolute, relative);
+            if (!entry.isFile()) throw new Error(`Runtime special file: ${relative}`);
+            return [relative];
+          }).sort();
+          const declared = manifest.files.map((entry) => entry.path).sort();
+          const actual = walk(root);
+          const expected = [...declared, manifestName].sort();
+          if (manifest.file_count !== declared.length
+            || JSON.stringify(actual) !== JSON.stringify(expected)) {
+            throw new Error(`Runtime image path drift: ${JSON.stringify(actual)}`);
+          }
+          for (const entry of manifest.files) {
+            if (Object.keys(entry).sort().join(",") !== "path,sha256"
+              || !/^[0-9a-f]{64}$/u.test(entry.sha256)) {
+              throw new Error(`Runtime closure entry invalid: ${entry.path}`);
+            }
+            const digest = createHash("sha256")
+              .update(fs.readFileSync(path.join(root, entry.path))).digest("hex");
+            if (digest !== entry.sha256) {
+              throw new Error(`Runtime closure hash drift: ${entry.path}`);
+            }
+          }
+          const closureDigest = createHash("sha256").update(manifest.files
+            .map((entry) => `${entry.path}\0${entry.sha256}\n`).join("")).digest("hex");
+          if (closureDigest !== manifest.closure_sha256) {
+            throw new Error("Runtime closure digest drift");
+          }
+          for (const forbidden of [
+            /(?:^|\/)sdk\.js$/u,
+            /\.d\.ts(?:\.map)?$/u,
+            /\.js\.map$/u,
+            /(?:^|\/)src(?:\/|$)/u,
+            /(?:^|\/)tools(?:\/|$)/u,
+          ]) {
+            if (actual.some((entry) => forbidden.test(entry))) {
+              throw new Error(`Forbidden Runtime image path: ${forbidden}`);
+            }
+          }
+          const runtimePackage = JSON.parse(fs.readFileSync(path.join(root, "package.json"), "utf8"));
+          const exactPackageKeys = [
+            "dependencies", "engines", "license", "name", "os", "private", "type", "version",
+          ];
+          if (JSON.stringify(Object.keys(runtimePackage).sort())
+              !== JSON.stringify(exactPackageKeys)
+            || runtimePackage.private !== true
+            || Object.hasOwn(runtimePackage, "scripts")
+            || Object.hasOwn(runtimePackage, "repository")
+            || JSON.stringify(runtimePackage.dependencies)
+              !== JSON.stringify(manifest.external_dependencies)) {
+            throw new Error("Runtime package manifest is not minimal");
+          }
+          NODE
+
+      - name: Verify real container authority and restart chain
+        run: node scripts/ci/continuation-runtime-v1-container-smoke.mjs
 
   required:
     name: Required CI gates
     if: always()
-    needs: [runtime, runtime-core, runtime-recovery, minimum-node, sandbox-shutdown-macos]
+    needs: [dependency-lock, verify, verify-macos, artifact]
     runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:
-      - name: Require every Runtime gate
+      - name: Require every Continuation Runtime V1 gate
         env:
-          RUNTIME_RESULT: ${{ needs.runtime.result }}
-          CORE_RESULT: ${{ needs['runtime-core'].result }}
-          RECOVERY_RESULT: ${{ needs['runtime-recovery'].result }}
-          MINIMUM_NODE_RESULT: ${{ needs.minimum-node.result }}
-          SANDBOX_SHUTDOWN_MACOS_RESULT: ${{ needs.sandbox-shutdown-macos.result }}
+          ARTIFACT_RESULT: ${{ needs.artifact.result }}
+          DEPENDENCY_LOCK_RESULT: ${{ needs['dependency-lock'].result }}
+          VERIFY_MACOS_RESULT: ${{ needs['verify-macos'].result }}
+          VERIFY_RESULT: ${{ needs.verify.result }}
         run: |
-          test "$RUNTIME_RESULT" = success
-          test "$CORE_RESULT" = success
-          test "$RECOVERY_RESULT" = success
-          test "$MINIMUM_NODE_RESULT" = success
-          test "$SANDBOX_SHUTDOWN_MACOS_RESULT" = success
+          test "$DEPENDENCY_LOCK_RESULT" = success
+          test "$VERIFY_RESULT" = success
+          test "$VERIFY_MACOS_RESULT" = success
+          test "$ARTIFACT_RESULT" = success

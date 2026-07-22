@@ -5,8 +5,10 @@
     "rootDir": "."
   },
   "include": [
-    "tools/**/*.ts",
-    "packages/aionis-learning-authority/src/**/*.ts"
+    "tools/author-continuation-runtime-v1-authority.ts",
+    "tools/continuation-runtime-v1-authority-authoring.ts",
+    "tools/continuation-runtime-v1-authority-key.ts",
+    "tools/generate-continuation-runtime-v1-manifest.ts"
   ],
   "exclude": [
     "dist",
