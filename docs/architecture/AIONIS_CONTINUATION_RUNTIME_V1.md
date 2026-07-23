@@ -1009,7 +1009,7 @@ fields: `AIONIS_DATA_PATH`, `AIONIS_TENANT_ID`,
 `AIONIS_JOB_BATCH_SIZE`, `AIONIS_LOG_LEVEL`, and
 `AIONIS_SHUTDOWN_TIMEOUT_MS`. The remaining four are
 `AIONIS_EMBEDDING_BASE_URL`, `AIONIS_EMBEDDING_MODEL`,
-`AIONIS_EMBEDDING_DIMENSIONS`, and `AIONIS_EMBEDDING_API_KEY`. The final two
+`AIONIS_EMBEDDING_DIMENSIONS`, and `AIONIS_EMBEDDING_API_KEY_FILE`. The final two
 are `AIONIS_EFFECT_SIGNER_PRIVATE_KEY_PATH` and
 `AIONIS_EFFECT_SIGNER_SHA256`.
 
@@ -1017,8 +1017,11 @@ All four embedding fields are mandatory only for an `embedding` worker and
 forbidden for `ann`, `effect`, and `retention` workers. ANN consumes the vector
 artifact produced by the embedding job and writes a verified, content-addressed
 immutable index segment; it does not call the embedding provider and receives
-no provider key. V1 currently exposes no vector-search serving port, so segment
-generation is not evidence that ANN retrieval is active in decision assembly.
+no provider key. The embedding key is loaded from a private single-link stable
+file into a process-private mutable buffer, never from environment, and is
+destroyed only after in-flight work drains. V1 currently exposes no vector-search
+serving port, so segment generation is not evidence that ANN retrieval is active
+in decision assembly.
 The `retention` role may delete only rebuildable sidecar artifacts selected by
 an already-committed lifecycle authority decision; it cannot mutate memory,
 branch, cohort, or effect authority and cannot enqueue another worker job.

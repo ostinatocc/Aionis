@@ -451,14 +451,18 @@ export AIONIS_WORKER_ROLE=embedding
 export AIONIS_EMBEDDING_BASE_URL=https://provider.example/v1
 export AIONIS_EMBEDDING_MODEL=<model-id>
 export AIONIS_EMBEDDING_DIMENSIONS=<positive-integer>
-export AIONIS_EMBEDDING_API_KEY=<provider-token>
+export AIONIS_EMBEDDING_API_KEY_FILE=/absolute/path/to/private/provider-token
 ```
 
-The provider key exists only in this process. The ANN worker consumes verified
-vector artifacts and receives no provider credential. V1 ANN is currently
-build-only: it creates immutable segments, but decision assembly exposes no
-vector-search serving port. Do not claim ANN-backed serving from segment-build
-success.
+The provider-key file must be owned by the worker uid, single-linked, exact mode
+`0400` or `0600`, and contain 16–2048 visible-ASCII bytes without whitespace.
+The embedding worker reads it once through a stable identity fence, retains only
+a private zeroizable credential buffer, and destroys that buffer after in-flight
+work drains. The raw key never enters process or container environment. The ANN
+worker consumes verified vector artifacts and receives no provider credential.
+V1 ANN is currently build-only: it creates immutable segments, but decision
+assembly exposes no vector-search serving port. Do not claim ANN-backed serving
+from segment-build success.
 
 For `effect`, both signer fields are required and forbidden elsewhere:
 
@@ -518,20 +522,21 @@ only under `/data`, and has no built-in API key, provider credential, private
 key, or policy default.
 
 Copy [.env.example](.env.example) to `.env` and fill every value required by
-the services you intend to run. The `.env` file contains only host paths for
-the daemon bearer tokens, never the tokens themselves. Compose passes an exact
-environment subset to each process; never add `env_file: .env` to a Runtime
-service. Secret bind mounts set `create_host_path: false`, so a missing token,
-key, or seed path fails before container startup instead of being silently
-created as a host directory.
+the services you intend to run. The `.env` file contains only host paths and
+non-secret settings, never credential, private-key, or seed bytes. Compose
+passes an exact environment subset to each process; never add `env_file: .env`
+to a Runtime service. Secret bind mounts set `create_host_path: false`, so a
+missing token, key, or seed path fails before container startup instead of
+being silently created as a host directory.
 
 The image runs as `node` (`uid=1000`, `gid=1000`). Do not bind-mount the host
 keygen originals directly unless their numeric ownership already matches. Make
 deployment copies with the permissions the container can actually open. In a
 standard rootful Docker deployment, the trust-root public key may be
-`root:root 0444`; the daemon token files, effect private key, and cohort seed
-must be private files owned by `1000:1000`. Every token must contain 32–512
-visible-ASCII bytes (`0x21`–`0x7e`), use exact mode `0400` or `0600`, and have one hard
+`root:root 0444`; the daemon token files, embedding credential, effect private
+key, and cohort seed must be private files owned by `1000:1000`. Daemon bearer
+tokens contain 32–512 visible-ASCII bytes; the embedding credential contains
+16–2048. Both use bytes `0x21`–`0x7e`, exact mode `0400` or `0600`, and one hard
 link. The root private key is never copied:
 
 ```bash
@@ -544,6 +549,8 @@ sudo install -o 1000 -g 1000 -m 0400 \
 sudo install -o 1000 -g 1000 -m 0400 \
   "$AUTHORITY_DIR/operator-api-key" "$COMPOSE_SECRET_DIR/operator-api-key"
 sudo install -o 1000 -g 1000 -m 0400 \
+  "$AUTHORITY_DIR/embedding-api-key" "$COMPOSE_SECRET_DIR/embedding-api-key"
+sudo install -o 1000 -g 1000 -m 0400 \
   "$AUTHORITY_DIR/effect-private.pem" "$COMPOSE_SECRET_DIR/effect-private.pem"
 sudo install -o 1000 -g 1000 -m 0400 \
   "$AUTHORITY_DIR/cohort-assignment-seed.bin" "$COMPOSE_SECRET_DIR/cohort-seed.bin"
@@ -551,6 +558,7 @@ sudo install -o 1000 -g 1000 -m 0400 \
 export TRUST_ROOT_PUBLIC_KEY_FILE="$COMPOSE_SECRET_DIR/root-public.pem"
 export HOST_API_KEY_FILE="$COMPOSE_SECRET_DIR/host-api-key"
 export OPERATOR_API_KEY_FILE="$COMPOSE_SECRET_DIR/operator-api-key"
+export EMBEDDING_API_KEY_FILE="$COMPOSE_SECRET_DIR/embedding-api-key"
 export EFFECT_SIGNER_PRIVATE_KEY_FILE="$COMPOSE_SECRET_DIR/effect-private.pem"
 export COHORT_SEED_FILE="$COMPOSE_SECRET_DIR/cohort-seed.bin"
 ```

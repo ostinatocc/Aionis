@@ -79,6 +79,7 @@ test("offline provisioner rejects every daemon, worker, provider, signer, and ro
     ["AIONIS_OPERATOR_API_KEY", "operator-secret"],
     ["AIONIS_OPERATOR_API_KEY_FILE", "/tmp/operator-secret"],
     ["AIONIS_EMBEDDING_API_KEY", "provider-secret"],
+    ["AIONIS_EMBEDDING_API_KEY_FILE", "/tmp/provider-secret"],
     ["AIONIS_EFFECT_SIGNER_PRIVATE_KEY_PATH", "/tmp/effect.key"],
     ["AIONIS_TRUST_ROOT_PRIVATE_KEY_PATH", "/tmp/root.key"],
     ["AIONIS_WORKER_ROLE", "effect"],

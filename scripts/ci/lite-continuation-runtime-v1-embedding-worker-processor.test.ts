@@ -366,7 +366,7 @@ function workerConfig(f: Fixture): ContinuationRuntimeV1WorkerConfig {
     embedding: {
       baseUrl: "http://127.0.0.1:1/v1",
       model: MODEL,
-      apiKey: "fake-provider-key-0000000001",
+      apiKeyFilePath: join(f.root, "embedding-api-key"),
       dimensions: DIMENSIONS,
     },
     effect: null,

@@ -76,6 +76,8 @@ const OPERATOR_ID = "operator-container-smoke";
 const HOST_TOKEN = "host-container-smoke-token-abcdefghijklmnopqrstuvwxyz";
 const OPERATOR_TOKEN =
   "operator-container-smoke-token-abcdefghijklmnopqrstuvwxyz";
+const EMBEDDING_TOKEN =
+  "embedding-container-smoke-token-abcdefghijklmnopqrstuvwxyz";
 const COMMAND_TIMEOUT_MS = 120_000;
 const MAX_OUTPUT_BYTES = 4 * 1024 * 1024;
 
@@ -90,7 +92,7 @@ function fail(code, details = "") {
 
 function redact(value) {
   let output = String(value);
-  for (const secret of [HOST_TOKEN, OPERATOR_TOKEN, smokeRoot]) {
+  for (const secret of [HOST_TOKEN, OPERATOR_TOKEN, EMBEDDING_TOKEN, smokeRoot]) {
     if (secret !== "") output = output.split(secret).join("[redacted]");
   }
   return output;
@@ -361,6 +363,111 @@ function daemonContainerId() {
   return id;
 }
 
+function serviceContainerId(service) {
+  const result = compose(["ps", "--all", "--quiet", service], {
+    label: `compose_${service}_id`,
+  });
+  const id = result.stdout.trim();
+  assert.match(id, /^[0-9a-f]{12,64}$/u);
+  return id;
+}
+
+function containerJsonLogs(containerId, label, forbidden = []) {
+  const raw = run("docker", ["logs", containerId], {
+    env: cleanEnvironment(),
+    label,
+  });
+  for (const value of forbidden) {
+    assert.equal(raw.stdout.includes(value), false);
+    assert.equal(raw.stderr.includes(value), false);
+  }
+  return raw.stdout.split("\n").map((line) => line.trim()).filter(Boolean)
+    .map((line) => {
+      assert.ok(line.startsWith("{") && line.endsWith("}"), label);
+      const event = JSON.parse(line);
+      assert.equal(canonicalContinuationJson(event), line, label);
+      return event;
+    });
+}
+
+async function waitForEmbeddingWorker(containerId) {
+  const deadline = Date.now() + 30_000;
+  while (Date.now() < deadline) {
+    const events = containerJsonLogs(
+      containerId,
+      "embedding_worker_startup_logs",
+      [EMBEDDING_TOKEN, "/run/aionis/embedding-api-key"],
+    );
+    if (events.some((event) => event.event === "polling")) return;
+    const state = run("docker", [
+      "inspect", "--format", "{{.State.Status}}:{{.State.ExitCode}}", containerId,
+    ], { env: cleanEnvironment(), label: "embedding_worker_startup_state" });
+    if (state.stdout.trim() !== "running:0") {
+      fail("embedding_worker_startup_failed", state.stdout);
+    }
+    await new Promise((resolvePromise) => setTimeout(resolvePromise, 100));
+  }
+  fail("embedding_worker_startup_timeout");
+}
+
+function assertEmbeddingWorkerPosture(containerId) {
+  run("docker", [
+    "exec", containerId, "/bin/sh", "-ceu",
+    [
+      "test \"$(id -u)\" = 1000",
+      "test \"$(id -g)\" = 1000",
+      "test \"$(stat -c %u:%g:%a:%h /run/aionis/embedding-api-key)\" = 1000:1000:400:1",
+      "test ! -w /run/aionis/embedding-api-key",
+    ].join("; "),
+  ], { env: cleanEnvironment(), label: "embedding_worker_file_posture" });
+  const inspected = run("docker", [
+    "inspect", "--format", "{{json .Config.Env}}", containerId,
+  ], { env: cleanEnvironment(), label: "embedding_worker_environment" });
+  const environment = JSON.parse(inspected.stdout);
+  assert.ok(environment.includes(
+    "AIONIS_EMBEDDING_API_KEY_FILE=/run/aionis/embedding-api-key",
+  ));
+  assert.equal(environment.some((field) => (
+    field.startsWith("AIONIS_EMBEDDING_API_KEY=")
+  )), false);
+  assert.equal(inspected.stdout.includes(EMBEDDING_TOKEN), false);
+  const mounts = JSON.parse(run("docker", [
+    "inspect", "--format", "{{json .Mounts}}", containerId,
+  ], { env: cleanEnvironment(), label: "embedding_worker_mounts" }).stdout);
+  const credentialMount = mounts.find((mount) => (
+    mount.Destination === "/run/aionis/embedding-api-key"
+  ));
+  assert.deepEqual(
+    { type: credentialMount?.Type, readWrite: credentialMount?.RW },
+    { type: "bind", readWrite: false },
+  );
+}
+
+function assertEmbeddingWorkerShutdown(containerId) {
+  const events = containerJsonLogs(
+    containerId,
+    "embedding_worker_shutdown_logs",
+    [EMBEDDING_TOKEN, "/run/aionis/embedding-api-key"],
+  );
+  const polling = events.find((event) => event.event === "polling");
+  assert.equal(polling?.public_config?.embedding?.apiKeyFileConfigured, true);
+  assert.deepEqual(events.findLast((event) => (
+    event.event === "shutdown_complete"
+  ))?.shutdown, {
+    schema_version: "continuation_runtime_shutdown_result_v1",
+    status: "graceful",
+    signal: "SIGTERM",
+    exit_code: 0,
+    terminal_phase: "complete",
+    failure_code: null,
+    completed_phases: ["stop_new_work", "drain_in_flight", "close_database"],
+  });
+  const state = run("docker", [
+    "inspect", "--format", "{{.State.ExitCode}}:{{.State.Status}}", containerId,
+  ], { env: cleanEnvironment(), label: "embedding_worker_exit" });
+  assert.equal(state.stdout.trim(), "0:exited");
+}
+
 function assertContainerPosture(containerId) {
   const result = run("docker", [
     "exec",
@@ -398,12 +505,9 @@ function assertContainerPosture(containerId) {
 }
 
 function daemonLogs(containerId) {
-  return run("docker", ["logs", containerId], {
-    env: cleanEnvironment(),
-    label: "daemon_logs",
-  }).stdout.split("\n").map((line) => line.trim()).filter(Boolean)
-    .filter((line) => line.startsWith("{") && line.endsWith("}"))
-    .map((line) => JSON.parse(line));
+  return containerJsonLogs(containerId, "daemon_logs", [
+    HOST_TOKEN, OPERATOR_TOKEN, "host-api-key", "operator-api-key",
+  ]);
 }
 
 function assertShutdown(containerId, minimumCount) {
@@ -674,10 +778,12 @@ function prepareContainerSecrets(authorityDirectory, seedPath, deploymentDirecto
   const seedCopy = join(deploymentDirectory, "cohort-seed.bin");
   const hostTokenCopy = join(deploymentDirectory, "host-api-key");
   const operatorTokenCopy = join(deploymentDirectory, "operator-api-key");
+  const embeddingTokenCopy = join(deploymentDirectory, "embedding-api-key");
   copyFileSync(join(authorityDirectory, "root-public.pem"), publicCopy);
   copyFileSync(seedPath, seedCopy);
   writeFileSync(hostTokenCopy, HOST_TOKEN, { mode: 0o600 });
   writeFileSync(operatorTokenCopy, OPERATOR_TOKEN, { mode: 0o600 });
+  writeFileSync(embeddingTokenCopy, EMBEDDING_TOKEN, { mode: 0o600 });
   chmodSync(publicCopy, 0o600);
   chmodSync(seedCopy, 0o600);
   assert.equal(existsSync(join(deploymentDirectory, "root-private.pem")), false);
@@ -697,18 +803,21 @@ function prepareContainerSecrets(authorityDirectory, seedPath, deploymentDirecto
       "chmod 0444 /secrets/root-public.pem",
       "chown 1000:1000 /secrets/cohort-seed.bin",
       "chmod 0400 /secrets/cohort-seed.bin",
-      "chown 1000:1000 /secrets/host-api-key /secrets/operator-api-key",
-      "chmod 0400 /secrets/host-api-key /secrets/operator-api-key",
+      "chown 1000:1000 /secrets/host-api-key /secrets/operator-api-key /secrets/embedding-api-key",
+      "chmod 0400 /secrets/host-api-key /secrets/operator-api-key /secrets/embedding-api-key",
       "test \"$(stat -c %u:%g:%a /secrets/root-public.pem)\" = 0:0:444",
       "test \"$(stat -c %u:%g:%a /secrets/cohort-seed.bin)\" = 1000:1000:400",
       "test \"$(stat -c %u:%g:%a /secrets/host-api-key)\" = 1000:1000:400",
       "test \"$(stat -c %u:%g:%a /secrets/operator-api-key)\" = 1000:1000:400",
+      "test \"$(stat -c %u:%g:%a:%h /secrets/embedding-api-key)\" = 1000:1000:400:1",
     ].join("; "),
   ], {
     env: cleanEnvironment(),
     label: "container_secret_posture",
   });
-  return { hostTokenCopy, operatorTokenCopy, publicCopy, seedCopy };
+  return {
+    embeddingTokenCopy, hostTokenCopy, operatorTokenCopy, publicCopy, seedCopy,
+  };
 }
 
 async function main() {
@@ -748,6 +857,9 @@ async function main() {
     );
     composeEnvironment = cleanEnvironment({
       AIONIS_CONTAINER_IMAGE: IMAGE,
+      AIONIS_EMBEDDING_BASE_URL: "https://embedding.invalid/v1",
+      AIONIS_EMBEDDING_DIMENSIONS: "16",
+      AIONIS_EMBEDDING_MODEL: "container-smoke-embedding-v1",
       AIONIS_HOST_PRINCIPAL_ID: HOST_ID,
       AIONIS_LOG_LEVEL: "silent",
       AIONIS_OPERATOR_PRINCIPAL_ID: OPERATOR_ID,
@@ -758,6 +870,7 @@ async function main() {
       COMPOSE_IGNORE_ORPHANS: "true",
       HTTP_BIND: "127.0.0.1",
       HTTP_PORT: String(port),
+      EMBEDDING_API_KEY_FILE: deployed.embeddingTokenCopy,
       HOST_API_KEY_FILE: deployed.hostTokenCopy,
       OPERATOR_API_KEY_FILE: deployed.operatorTokenCopy,
       TRUST_ROOT_PUBLIC_KEY_FILE: deployed.publicCopy,
@@ -775,6 +888,16 @@ async function main() {
       policyResult.evidence_policy_ref,
       artifactRef(signedPolicy.policy_bundle.evidence_policy),
     );
+    compose(["up", "--detach", "--no-build", "--no-deps", "worker-embedding"], {
+      label: "compose_embedding_worker_up",
+    });
+    const embeddingWorkerId = serviceContainerId("worker-embedding");
+    await waitForEmbeddingWorker(embeddingWorkerId);
+    assertEmbeddingWorkerPosture(embeddingWorkerId);
+    compose(["stop", "worker-embedding"], {
+      label: "compose_embedding_worker_stop",
+    });
+    assertEmbeddingWorkerShutdown(embeddingWorkerId);
     compose(["up", "--detach", "--no-build", "--no-deps", "daemon"], {
       label: "compose_daemon_up",
     });
@@ -847,6 +970,7 @@ async function main() {
       policy_provisioned: true,
       daemon_uid: 1000,
       graceful_shutdown_verified: true,
+      embedding_worker_file_authority_verified: true,
       same_volume_reopen_ready: true,
       real_candidate_state: activeCandidate.branch_state,
       cohort_seed_fd: 3,

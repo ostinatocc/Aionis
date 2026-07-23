@@ -7,6 +7,7 @@ import {
   type ContinuationRuntimeV1AuthorityClock,
 } from "../store/continuation-runtime-v1-database.js";
 import { continuationRuntimeV1EmbeddingBaseUrl } from "./config-support.js";
+import { withContinuationRuntimeV1StableFileBytes } from "./stable-file.js";
 import type { ContinuationRuntimeV1EmbeddingWorkerConfig } from
   "./worker-config.js";
 
@@ -20,7 +21,7 @@ const RESPONSE_ENVELOPE_BYTES = 65_536;
 const RESPONSE_BYTES_PER_COMPONENT = 32;
 const ABSOLUTE_RESPONSE_BODY_LIMIT_BYTES = 34 * 1_024 * 1_024;
 const CONFIG_KEYS = Object.freeze([
-  "apiKey", "baseUrl", "dimensions", "model",
+  "apiKeyFilePath", "baseUrl", "dimensions", "model",
 ] as const);
 const INPUT_KEYS = Object.freeze([
   "lease_deadline_at", "schema_version", "signal", "texts",
@@ -107,6 +108,35 @@ function boundedText(
   return value;
 }
 
+export type ContinuationRuntimeV1EmbeddingCredential = Readonly<{
+  destroy(): void;
+  withAuthorizationHeader<T>(consume: (header: string) => T): T;
+}>;
+
+export function loadContinuationRuntimeV1EmbeddingCredential(
+  config: ContinuationRuntimeV1EmbeddingWorkerConfig,
+): ContinuationRuntimeV1EmbeddingCredential {
+  return withContinuationRuntimeV1StableFileBytes(
+    config.apiKeyFilePath, [16, 2_048], "runtime", "private",
+    () => fail("configuration_invalid"), (bytes) => {
+      if (bytes.some((byte) => byte < 0x21 || byte > 0x7e)) {
+        fail("configuration_invalid");
+      }
+      let secret: Buffer | null = Buffer.from(bytes);
+      return Object.freeze({
+        destroy(): void {
+          secret?.fill(0);
+          secret = null;
+        },
+        withAuthorizationHeader<T>(consume: (header: string) => T): T {
+          if (secret === null) fail("configuration_invalid");
+          return consume(`Bearer ${secret.toString("ascii")}`);
+        },
+      });
+    },
+  );
+}
+
 function denseArray(
   value: unknown,
   maximum: number,
@@ -138,17 +168,11 @@ function parseConfig(value: ContinuationRuntimeV1EmbeddingWorkerConfig) {
     fail("configuration_invalid");
   }
   const model = boundedText(record.model, 256, "configuration_invalid");
-  const apiKey = boundedText(record.apiKey, 2_048, "configuration_invalid");
-  if (apiKey.length < 16 || /\s/u.test(apiKey)) fail("configuration_invalid");
+  boundedText(record.apiKeyFilePath, 4_096, "configuration_invalid");
   if (!Number.isSafeInteger(record.dimensions)
     || (record.dimensions as number) < 1
     || (record.dimensions as number) > 65_536) fail("configuration_invalid");
-  return Object.freeze({
-    baseUrl,
-    model,
-    apiKey,
-    dimensions: record.dimensions as number,
-  });
+  return Object.freeze({ baseUrl, model, dimensions: record.dimensions as number });
 }
 
 function parseInput(value: ContinuationRuntimeV1EmbeddingBatchInput) {
@@ -324,11 +348,14 @@ function parseResponse(
 
 export function createContinuationRuntimeV1EmbeddingProvider(
   workerConfig: ContinuationRuntimeV1EmbeddingWorkerConfig,
+  credential: ContinuationRuntimeV1EmbeddingCredential,
   authorityNow: ContinuationRuntimeV1AuthorityClock,
 ): ContinuationRuntimeV1EmbeddingProvider {
   try { assertContinuationRuntimeV1AuthorityClock(authorityNow); } catch {
     fail("configuration_invalid");
   }
+  if (!credential || typeof credential.withAuthorizationHeader !== "function"
+    || typeof credential.destroy !== "function") fail("configuration_invalid");
   let config: ReturnType<typeof parseConfig>;
   try {
     config = parseConfig(workerConfig);
@@ -358,22 +385,21 @@ export function createContinuationRuntimeV1EmbeddingProvider(
           + input.texts.length * config.dimensions * RESPONSE_BYTES_PER_COMPONENT,
       );
       try {
-        const response = await fetch(`${config.baseUrl}/embeddings`, {
-          method: "POST",
-          redirect: "error",
-          headers: {
-            accept: "application/json",
-            authorization: `Bearer ${config.apiKey}`,
-            "content-type": "application/json",
-          },
-          body: JSON.stringify({
-            model: config.model,
-            input: input.texts,
-            dimensions: config.dimensions,
-            encoding_format: "float",
-          }),
-          signal: authority.signal,
-        });
+        const response = await credential.withAuthorizationHeader((authorization) => (
+          fetch(`${config.baseUrl}/embeddings`, {
+            method: "POST",
+            redirect: "error",
+            headers: { accept: "application/json", authorization,
+              "content-type": "application/json" },
+            body: JSON.stringify({
+              model: config.model,
+              input: input.texts,
+              dimensions: config.dimensions,
+              encoding_format: "float",
+            }),
+            signal: authority.signal,
+          })
+        ));
         if (!response.ok) {
           try { await response.body?.cancel(); } catch { /* emit only stable code */ }
           fail("provider_http_failure");

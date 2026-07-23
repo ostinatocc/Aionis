@@ -1,5 +1,8 @@
 import assert from "node:assert/strict";
-import test from "node:test";
+import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import test, { after } from "node:test";
 
 import {
   CONTINUATION_RUNTIME_V1_WORKER_ENV_FIELDS,
@@ -8,6 +11,16 @@ import {
 } from "../../src/runtime-v1/worker-config.js";
 import type { ContinuationRuntimeV1WorkerRole } from
   "../../src/runtime-v1/worker-identity.js";
+
+const fixtureRoot = mkdtempSync(join(tmpdir(), "aionis-v1-worker-config-"));
+let fixtureSequence = 0;
+after(() => rmSync(fixtureRoot, { recursive: true, force: true }));
+
+function apiKeyFile(value = "s".repeat(32)): string {
+  const path = join(fixtureRoot, `embedding-key-${fixtureSequence++}`);
+  writeFileSync(path, value, { mode: 0o600 });
+  return path;
+}
 
 function requiredEnv(
   workerRole: ContinuationRuntimeV1WorkerRole = "effect",
@@ -34,7 +47,7 @@ function embeddingEnv(): Record<string, string> {
     ...requiredEnv("embedding"),
     AIONIS_EMBEDDING_BASE_URL: "https://dashscope.aliyuncs.com/compatible-mode/v1",
     AIONIS_EMBEDDING_MODEL: "qwen3.7-text-embedding",
-    AIONIS_EMBEDDING_API_KEY: "s".repeat(32),
+    AIONIS_EMBEDDING_API_KEY_FILE: apiKeyFile(),
     AIONIS_EMBEDDING_DIMENSIONS: "1024",
   };
 }
@@ -105,17 +118,19 @@ test("only the effect role requires and retains its dedicated signing key identi
 });
 
 test("only the embedding role requires and retains all four provider fields", () => {
-  const config = loadContinuationRuntimeV1WorkerConfig(embeddingEnv());
+  const environment = embeddingEnv();
+  const config = loadContinuationRuntimeV1WorkerConfig(environment);
   assert.deepEqual(config.embedding, {
     baseUrl: "https://dashscope.aliyuncs.com/compatible-mode/v1",
     model: "qwen3.7-text-embedding",
-    apiKey: "s".repeat(32),
+    apiKeyFilePath: environment.AIONIS_EMBEDDING_API_KEY_FILE,
     dimensions: 1024,
   });
+  assert.equal(config.embedding?.apiKeyFilePath.startsWith(fixtureRoot), true);
   for (const field of [
     "AIONIS_EMBEDDING_BASE_URL",
     "AIONIS_EMBEDDING_MODEL",
-    "AIONIS_EMBEDDING_API_KEY",
+    "AIONIS_EMBEDDING_API_KEY_FILE",
     "AIONIS_EMBEDDING_DIMENSIONS",
   ] as const) {
     const partial = embeddingEnv();
@@ -133,7 +148,7 @@ test("ANN, effect, and retention roles reject every embedding provider field", (
     for (const field of [
       "AIONIS_EMBEDDING_BASE_URL",
       "AIONIS_EMBEDDING_MODEL",
-      "AIONIS_EMBEDDING_API_KEY",
+      "AIONIS_EMBEDDING_API_KEY_FILE",
       "AIONIS_EMBEDDING_DIMENSIONS",
     ] as const) {
       assert.throws(
@@ -146,6 +161,10 @@ test("ANN, effect, and retention roles reject every embedding provider field", (
       );
     }
   }
+  assert.throws(() => loadContinuationRuntimeV1WorkerConfig({
+    ...embeddingEnv(),
+    AIONIS_EMBEDDING_API_KEY: "legacy-plaintext-provider-secret",
+  }), /unknown_AIONIS_fields:AIONIS_EMBEDDING_API_KEY/u);
 });
 
 test("worker rejects daemon authentication and HTTP controls instead of parsing them", () => {
@@ -218,7 +237,7 @@ test("worker public config never exposes provider credentials, paths, or tenant 
     AIONIS_DATA_PATH: `/tmp/${secret}/runtime.sqlite`,
     AIONIS_TENANT_ID: `${secret}-tenant`,
     AIONIS_TRUST_ROOT_PUBLIC_KEY_PATH: `/tmp/${secret}/root.pem`,
-    AIONIS_EMBEDDING_API_KEY: `${secret}-embedding-key`,
+    AIONIS_EMBEDDING_API_KEY_FILE: `/tmp/${secret}/embedding-key`,
   });
   const publicConfig = publicContinuationRuntimeV1WorkerConfig(config);
   const serialized = JSON.stringify(publicConfig);
@@ -227,7 +246,7 @@ test("worker public config never exposes provider credentials, paths, or tenant 
     baseUrl: "https://dashscope.aliyuncs.com/compatible-mode/v1",
     model: "qwen3.7-text-embedding",
     dimensions: 1024,
-    apiKeyConfigured: true,
+    apiKeyFileConfigured: true,
   });
   assert.equal(publicConfig.effect, null);
   assert.ok(Object.isFrozen(publicConfig));

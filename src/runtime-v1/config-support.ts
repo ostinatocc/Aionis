@@ -109,24 +109,6 @@ export function continuationRuntimeV1OptionalText(
     : fallback;
 }
 
-export function continuationRuntimeV1RequiredToken(
-  env: ContinuationRuntimeV1Environment,
-  field: string,
-  maxBytes: number,
-  minBytes: number,
-  fail: ConfigFailure,
-): string {
-  const value = continuationRuntimeV1RequiredText(
-    env,
-    field,
-    maxBytes,
-    fail,
-    minBytes,
-  );
-  if (/\s/u.test(value)) fail(`${field}_must_not_contain_whitespace`);
-  return value;
-}
-
 export function continuationRuntimeV1Integer(
   env: ContinuationRuntimeV1Environment,
   field: string,

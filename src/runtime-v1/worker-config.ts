@@ -10,7 +10,6 @@ import {
   continuationRuntimeV1LogLevel,
   continuationRuntimeV1RequiredSha256,
   continuationRuntimeV1RequiredText,
-  continuationRuntimeV1RequiredToken,
   continuationRuntimeV1Sha256,
   strictContinuationRuntimeV1Environment,
   type ContinuationRuntimeV1LogLevel,
@@ -23,7 +22,7 @@ import type { ContinuationRuntimeV1WorkerRole } from "./worker-identity.js";
  */
 export const CONTINUATION_RUNTIME_V1_WORKER_ENV_FIELDS = Object.freeze([
   "AIONIS_DATA_PATH",
-  "AIONIS_EMBEDDING_API_KEY",
+  "AIONIS_EMBEDDING_API_KEY_FILE",
   "AIONIS_EMBEDDING_BASE_URL",
   "AIONIS_EMBEDDING_DIMENSIONS",
   "AIONIS_EMBEDDING_MODEL",
@@ -41,7 +40,7 @@ export const CONTINUATION_RUNTIME_V1_WORKER_ENV_FIELDS = Object.freeze([
 ] as const);
 
 const EMBEDDING_FIELDS = Object.freeze([
-  "AIONIS_EMBEDDING_API_KEY",
+  "AIONIS_EMBEDDING_API_KEY_FILE",
   "AIONIS_EMBEDDING_BASE_URL",
   "AIONIS_EMBEDDING_DIMENSIONS",
   "AIONIS_EMBEDDING_MODEL",
@@ -55,7 +54,7 @@ const EFFECT_SIGNER_FIELDS = Object.freeze([
 export type ContinuationRuntimeV1EmbeddingWorkerConfig = Readonly<{
   baseUrl: string;
   model: string;
-  apiKey: string;
+  apiKeyFilePath: string;
   dimensions: number;
 }>;
 
@@ -98,7 +97,7 @@ export type PublicContinuationRuntimeV1WorkerConfig = Readonly<{
     baseUrl: string;
     model: string;
     dimensions: number;
-    apiKeyConfigured: true;
+    apiKeyFileConfigured: true;
   }>;
   effect: null | Readonly<{
     signerPrivateKeyPathConfigured: true;
@@ -148,11 +147,9 @@ function embeddingConfig(
       256,
       fail,
     ),
-    apiKey: continuationRuntimeV1RequiredToken(
+    apiKeyFilePath: continuationRuntimeV1AbsolutePath(
       env,
-      "AIONIS_EMBEDDING_API_KEY",
-      2048,
-      16,
+      "AIONIS_EMBEDDING_API_KEY_FILE",
       fail,
     ),
     dimensions: continuationRuntimeV1Integer(
@@ -282,7 +279,7 @@ export function publicContinuationRuntimeV1WorkerConfig(
           baseUrl: config.embedding.baseUrl,
           model: config.embedding.model,
           dimensions: config.embedding.dimensions,
-          apiKeyConfigured: true as const,
+          apiKeyFileConfigured: true as const,
         },
     effect: config.effect === null
       ? null
