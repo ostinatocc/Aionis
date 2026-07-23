@@ -62,8 +62,8 @@ const ASSIGNMENT_BASIS_KEYS = Object.freeze([
   "create_continuation_operation_id", "decision_id", "episode_id",
   "experiment_cohort_ref", "host_principal_sha256",
   "host_task_envelope_sha256", "host_task_id", "memory_scope_head_ref",
-  "operation_request_sha256", "run_id", "schema_version", "task_family",
-  "world_snapshot_ref",
+  "operation_request_sha256", "run_id", "schema_version",
+  "source_task_sha256", "task_family", "world_snapshot_ref",
 ] as const);
 const OBLIGATION_KEYS = Object.freeze([
   "evidence_requirement", "kind", "obligation_id", "required_probe_ids",
@@ -318,7 +318,7 @@ function parseServingAssignmentReceipt(
   ] as const) text(basis[field], `assignment_basis_${field}`);
   for (const field of [
     "operation_request_sha256", "host_task_envelope_sha256",
-    "host_principal_sha256",
+    "host_principal_sha256", "source_task_sha256",
   ] as const) sha(basis[field], `assignment_basis_${field}`);
   const snapshot = record(
     basis.world_snapshot_ref,
@@ -377,6 +377,7 @@ function parseServingAssignmentReceipt(
     || basis.host_task_id !== identity.host_task_id
     || basis.host_task_envelope_sha256 !== identity.host_task_envelope_sha256
     || basis.task_family !== identity.task_family
+    || basis.source_task_sha256 !== identity.source_task_sha256
     || snapshot.world_snapshot_id !== identity.world_snapshot_id
     || snapshot.world_snapshot_sha256 !== identity.world_snapshot_sha256
     || memory.revision !== expected.memoryRevision

@@ -108,8 +108,9 @@ ledger, and one reversible authority model.
 Aionis becomes a **Verified Branching Continuation Runtime**.
 
 Its canonical product primitive is one `ContinuationContractV1`. Its learning
-primitive is a decision branch over immutable capsule revisions. Its evidence
-primitive is a per-capsule `EffectCertificateV1` rooted in the episode ledger.
+primitive is a decision branch over immutable capsule revisions. Its causal
+evidence primitive is one whole-treatment `EffectCertificateV1` rooted in the
+episode ledger; it does not assign causal credit to individual capsules.
 
 The product promise is:
 
@@ -269,9 +270,9 @@ The episode ledger remains the evidence spine and records four distinct facts:
 
 1. `exposure`: the exact contract and capsule surfaces shown to the Agent;
 2. `use`: host-verified evidence of which exposed capsules influenced action;
-3. `outcome`: verifier-bound action result;
-4. `effect`: branch and per-capsule marginal-effect claims admitted by an
-   evidence authority.
+3. `outcome`: a trusted-host result bound to an evidence digest, optionally
+   backed by a separately signed external-verifier artifact;
+4. `effect`: a whole-branch treatment claim admitted by an evidence authority.
 
 An Agent-facing exposure receipt is not named a use receipt. A use receipt
 requires host evidence and records `used`, `not_used`, or `unknown` for each
@@ -302,10 +303,12 @@ only that cohort's seed for external replay. Assignment closes at
 ingested by the settlement cutoff. One effect job is created with cohort
 installation and becomes available only at that cutoff.
 
-Pair counts, namespace counts, activation waves, holdout sizes, statistical
-tests, and external execution protocols belong to the authority package or
-evaluation laboratory. Runtime SQL and core TypeScript contain only generic
-bounds, identity, integrity, atomicity, and state-machine invariants.
+Pair counts, namespace counts, activation waves, holdout sizes, and external
+execution protocols belong to the authority package or evaluation laboratory.
+Runtime owns a versioned, digest-bound generic statistical evaluator; signed
+evidence policy owns its thresholds. Runtime SQL and core TypeScript otherwise
+contain only generic bounds, identity, integrity, atomicity, and state-machine
+invariants.
 
 ### 8. Durable counterfactual Flight Recorder
 
@@ -384,9 +387,10 @@ never required on the production serving path.
    adapters.
 5. Replace the v0.3.x database schema with the clean continuation/branch/ledger
    schema. No legacy migration runs on the new binary.
-6. Move fixed experiment protocol and statistical authority out of Runtime
-   core, then delete its Runtime SQL constraints and environment surface.
-7. Add per-capsule use, outcome, and effect facts to the episode ledger.
+6. Move fixed experiment protocols and study authority out of Runtime core;
+   retain only the versioned generic evaluator and its digest-bound invariants.
+7. Add per-capsule use facts plus decision outcome and whole-treatment effect
+   facts to the episode ledger.
 8. Add atomic branch promotion, rejection, quarantine, expiry, and rollback.
 9. Rebuild the Flight Recorder from durable authority rows.
 10. Ratchet complexity budgets downward and run real Runtime, recovery,

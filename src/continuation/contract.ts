@@ -295,6 +295,7 @@ export type ContractServingAssignmentReceiptV1 = Readonly<{
     host_task_envelope_sha256: Sha256;
     host_principal_sha256: Sha256;
     task_family: string;
+    source_task_sha256: Sha256;
     world_snapshot_ref: Readonly<{
       world_snapshot_id: string;
       world_snapshot_sha256: Sha256;

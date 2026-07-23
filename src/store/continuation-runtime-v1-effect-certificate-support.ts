@@ -641,6 +641,8 @@ export function rebuildEffectSettlementCensusV1(
       || exposureRow.serving_mode !== expectedMode
       || assignment.assignment_basis.decision_id !== exposure.context.decision_id
       || assignment.assignment_basis.episode_id !== exposure.episode_id
+      || assignment.assignment_basis.source_task_sha256
+        !== verifiedExposure.contract.identity.source_task_sha256
       || assignment.assigned_at < cohort.assignment_window_opened_at
       || assignment.assigned_at >= cohort.assignment_window_closed_at
       || canonicalContinuationJson(assignment.served_learning_ref)

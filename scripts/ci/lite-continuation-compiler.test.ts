@@ -37,6 +37,7 @@ import {
 } from "../../src/continuation/task-envelope.ts";
 import { buildWorldObservationSnapshotV1 } from "../../src/continuation/world-snapshot.ts";
 import {
+  EXPERIMENT_ASSIGNMENT_ALGORITHM_CONTRACT_SHA256_V1,
   experimentCohortPayloadSha256V1,
   type ExperimentCohortV1,
 } from "../../src/continuation/experiment-cohort.ts";
@@ -401,7 +402,7 @@ function assignedCandidateAuthority(
       assignment_protocol: {
         algorithm: "hmac_sha256_threshold_v1",
         algorithm_contract_sha256:
-          "46d34d5aae649a6cce53074cfcb1c04f41cb715de6228f05b53117e4ac5940a1",
+          EXPERIMENT_ASSIGNMENT_ALGORITHM_CONTRACT_SHA256_V1,
         assignment_seed_commitment_sha256: assignmentSeedCommitmentSha256V1(seed),
         basis_schema: "serving_assignment_basis_v1",
         candidate_allocation_bps: 9_999,
@@ -432,6 +433,7 @@ function assignedCandidateAuthority(
         host_task_envelope_sha256: input.identity.host_task_envelope_sha256,
         host_principal_sha256: input.identity.collection_principal_sha256,
         task_family: input.identity.task_family,
+        source_task_sha256: input.identity.source_task_sha256,
         world_snapshot_ref: {
           world_snapshot_id: input.identity.world_snapshot_id,
           world_snapshot_sha256: input.identity.world_snapshot_sha256,

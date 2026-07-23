@@ -13,7 +13,8 @@ export const EFFECT_STATISTICAL_CONTRACT_V1 = canonicalContinuationClone({
     unknown: "missing" as const,
     absent_outcome: "missing" as const,
   },
-  interval: "newcombe_difference_from_independent_wilson_score_intervals" as const,
+  interval:
+    "newcombe_hybrid_score_difference_from_independent_wilson_score_intervals" as const,
   interval_rounding: "outward_to_integer_basis_points" as const,
   confidence_bps: [9_000, 9_500, 9_900] as const,
   admission: "all_closed_policy_checks_must_pass" as const,
@@ -70,6 +71,13 @@ export type EffectDifferenceIntervalV1 = Readonly<{
   lower_bps: number;
   upper_bps: number;
 }>;
+
+type RateIntervalCalculation = EffectRateIntervalV1 & Readonly<{
+  estimate: number | null; lower: number; upper: number;
+}>;
+type ArmEvaluationCalculation = readonly [
+  EffectArmEvaluationV1, RateIntervalCalculation, RateIntervalCalculation,
+];
 
 export type EffectAdmissionRejectionReasonV1 =
   | "control_exposure_minimum_not_met"
@@ -198,9 +206,16 @@ function rateInterval(
   successes: number,
   observations: number,
   confidence: 9_000 | 9_500 | 9_900,
-): EffectRateIntervalV1 {
+): RateIntervalCalculation {
   if (observations === 0) {
-    return { estimate_bps: null, lower_bps: 0, upper_bps: 10_000 };
+    return {
+      estimate: null,
+      lower: 0,
+      upper: 1,
+      estimate_bps: null,
+      lower_bps: 0,
+      upper_bps: 10_000,
+    };
   }
   const proportion = successes / observations;
   const z = Z_BY_CONFIDENCE[confidence];
@@ -211,10 +226,23 @@ function rateInterval(
     (proportion * (1 - proportion) / observations)
       + (z2 / (4 * observations * observations)),
   );
+  const lower = Math.max(0, center - radius);
+  const upper = Math.min(1, center + radius);
   return {
+    estimate: proportion,
+    lower,
+    upper,
     estimate_bps: Math.round(proportion * 10_000),
-    lower_bps: Math.max(0, Math.floor((center - radius) * 10_000)),
-    upper_bps: Math.min(10_000, Math.ceil((center + radius) * 10_000)),
+    lower_bps: Math.max(0, Math.floor(lower * 10_000)),
+    upper_bps: Math.min(10_000, Math.ceil(upper * 10_000)),
+  };
+}
+
+function publishedInterval(value: RateIntervalCalculation): EffectRateIntervalV1 {
+  return {
+    estimate_bps: value.estimate_bps,
+    lower_bps: value.lower_bps,
+    upper_bps: value.upper_bps,
   };
 }
 
@@ -222,29 +250,51 @@ function armEvaluation(
   value: EffectArmObservationCountsV1,
   confidence: 9_000 | 9_500 | 9_900,
   field: string,
-): EffectArmEvaluationV1 {
+): ArmEvaluationCalculation {
   const parsed = counts(value, field);
   const observed = parsed.succeeded_count + parsed.partial_count + parsed.failed_count;
   const missing = parsed.unknown_count + parsed.missing_outcome_count;
-  return {
-    ...parsed,
-    observed_outcome_count: observed,
-    missing_total_count: missing,
-    harm: rateInterval(parsed.failed_count, observed, confidence),
-    utility: rateInterval(parsed.succeeded_count, observed, confidence),
-  };
+  const harm = rateInterval(parsed.failed_count, observed, confidence);
+  const utility = rateInterval(parsed.succeeded_count, observed, confidence);
+  return [
+    {
+      ...parsed,
+      observed_outcome_count: observed,
+      missing_total_count: missing,
+      harm: publishedInterval(harm),
+      utility: publishedInterval(utility),
+    },
+    harm, utility,
+  ];
 }
 
 function difference(
-  candidate: EffectRateIntervalV1,
-  control: EffectRateIntervalV1,
+  candidate: RateIntervalCalculation,
+  control: RateIntervalCalculation,
 ): EffectDifferenceIntervalV1 {
+  if (candidate.estimate === null || control.estimate === null) {
+    return {
+      estimate_bps: null,
+      lower_bps: Math.max(-10_000, candidate.lower_bps - control.upper_bps),
+      upper_bps: Math.min(10_000, candidate.upper_bps - control.lower_bps),
+    };
+  }
+
+  const estimate = candidate.estimate - control.estimate;
+  // Newcombe method 10 (without continuity correction) combines the
+  // corresponding Wilson deviations by square-and-add.
+  const lower = estimate - Math.hypot(
+    candidate.estimate - candidate.lower,
+    control.upper - control.estimate,
+  );
+  const upper = estimate + Math.hypot(
+    candidate.upper - candidate.estimate,
+    control.estimate - control.lower,
+  );
   return {
-    estimate_bps: candidate.estimate_bps === null || control.estimate_bps === null
-      ? null
-      : candidate.estimate_bps - control.estimate_bps,
-    lower_bps: Math.max(-10_000, candidate.lower_bps - control.upper_bps),
-    upper_bps: Math.min(10_000, candidate.upper_bps - control.lower_bps),
+    estimate_bps: Math.max(-10_000, Math.min(10_000, Math.round(estimate * 10_000))),
+    lower_bps: Math.max(-10_000, Math.floor(lower * 10_000)),
+    upper_bps: Math.min(10_000, Math.ceil(upper * 10_000)),
   };
 }
 
@@ -254,14 +304,16 @@ export function evaluateEffectEvidenceV1(input: Readonly<{
   candidate: EffectArmObservationCountsV1;
 }>): EffectEvidenceEvaluationV1 {
   const thresholds = policy(input.policy);
-  const control = armEvaluation(input.control, thresholds.confidence_bps, "control");
-  const candidate = armEvaluation(input.candidate, thresholds.confidence_bps, "candidate");
+  const [control, controlHarm, controlUtility] =
+    armEvaluation(input.control, thresholds.confidence_bps, "control");
+  const [candidate, candidateHarm, candidateUtility] =
+    armEvaluation(input.candidate, thresholds.confidence_bps, "candidate");
   const total = control.assigned_exposure_count + candidate.assigned_exposure_count;
   if (total > 4_096) fail("total_exposure_count_exceeded");
   const missing = control.missing_total_count + candidate.missing_total_count;
   const missingness = total === 0 ? 10_000 : Math.ceil((missing * 10_000) / total);
-  const harm = difference(candidate.harm, control.harm);
-  const utility = difference(candidate.utility, control.utility);
+  const harm = difference(candidateHarm, controlHarm);
+  const utility = difference(candidateUtility, controlUtility);
   const checks = {
     min_control_exposures_met:
       control.assigned_exposure_count >= thresholds.min_control_exposures,

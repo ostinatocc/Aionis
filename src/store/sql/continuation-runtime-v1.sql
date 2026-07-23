@@ -2619,7 +2619,7 @@ WHEN NEW.artifact_kind = 'experiment_cohort'
     AND json_extract(
       NEW.payload_json,
       '$.assignment_protocol.algorithm_contract_sha256'
-    ) = '46d34d5aae649a6cce53074cfcb1c04f41cb715de6228f05b53117e4ac5940a1'
+    ) = '0f168b830027d4228849ed16ecadbef0cb1f186c007f0c478e1f706e55ca1d55'
     AND json_extract(
       NEW.payload_json,
       '$.assignment_protocol.basis_schema'

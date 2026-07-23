@@ -22,6 +22,8 @@ import {
 
 export const SERVING_ASSIGNMENT_BASIS_SCHEMA_V1 =
   "serving_assignment_basis_v1" as const;
+export const SERVING_ASSIGNMENT_CLUSTER_SCHEMA_V1 =
+  "serving_assignment_cluster_v1" as const;
 export const SERVING_ASSIGNMENT_RECEIPT_SCHEMA_V1 =
   "serving_assignment_receipt_v1" as const;
 
@@ -37,6 +39,7 @@ export type ServingAssignmentBasisV1 = Readonly<{
   host_task_envelope_sha256: Sha256;
   host_principal_sha256: Sha256;
   task_family: string;
+  source_task_sha256: Sha256;
   world_snapshot_ref: Readonly<{
     world_snapshot_id: string;
     world_snapshot_sha256: Sha256;
@@ -81,6 +84,7 @@ const BASIS_KEYS = Object.freeze([
   "operation_request_sha256",
   "run_id",
   "schema_version",
+  "source_task_sha256",
   "task_family",
   "world_snapshot_ref",
 ] as const);
@@ -266,6 +270,10 @@ function parseBasis(value: unknown): ServingAssignmentBasisV1 {
       "assignment_basis.host_principal_sha256",
     ),
     task_family: text(record.task_family, "assignment_basis.task_family"),
+    source_task_sha256: sha(
+      record.source_task_sha256,
+      "assignment_basis.source_task_sha256",
+    ),
     world_snapshot_ref: {
       world_snapshot_id: text(
         snapshot.world_snapshot_id,
@@ -308,8 +316,14 @@ function assignmentDrawSha256(
   seed: Buffer,
   basis: ServingAssignmentBasisV1,
 ): Sha256 {
+  const cluster = canonicalContinuationClone({
+    schema_version: SERVING_ASSIGNMENT_CLUSTER_SCHEMA_V1,
+    experiment_cohort_ref: basis.experiment_cohort_ref,
+    task_family: basis.task_family,
+    source_task_sha256: basis.source_task_sha256,
+  });
   return createHmac("sha256", assignmentSeed(seed))
-    .update(canonicalContinuationJson(basis), "utf8")
+    .update(canonicalContinuationJson(cluster), "utf8")
     .digest("hex");
 }
 

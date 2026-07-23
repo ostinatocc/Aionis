@@ -150,7 +150,10 @@ function parseConfig(value: unknown): AionisRuntimeV1ClientConfig & Readonly<{ o
   try { url = new URL(baseUrl); } catch (error) {
     clientError("configuration", "base_url_invalid", { cause: error });
   }
-  if ((url.protocol !== "https:" && url.protocol !== "http:")
+  const loopback = url.hostname === "localhost"
+    || url.hostname === "127.0.0.1"
+    || url.hostname === "[::1]";
+  if ((url.protocol !== "https:" && !(url.protocol === "http:" && loopback))
     || url.username !== "" || url.password !== "" || url.search !== "" || url.hash !== ""
     || (url.pathname !== "" && url.pathname !== "/")) {
     clientError("configuration", "base_url_invalid");

@@ -22,7 +22,10 @@ export const EXPERIMENT_ASSIGNMENT_ALGORITHM_CONTRACT_V1 =
     schema_version: "hmac_sha256_threshold_algorithm_contract_v1" as const,
     prf: "hmac_sha256" as const,
     secret: "one_independent_32_byte_seed_per_cohort" as const,
-    message: "canonical_json_utf8(serving_assignment_basis_v1)" as const,
+    message:
+      "canonical_json_utf8(serving_assignment_cluster_v1)" as const,
+    cluster:
+      "experiment_cohort_ref+task_family+source_task_sha256" as const,
     draw: "unsigned_big_endian_256_bit_integer" as const,
     candidate_rule: "draw*10000 < 2^256*candidate_allocation_bps" as const,
     control_rule: "otherwise" as const,

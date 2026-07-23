@@ -303,6 +303,27 @@ test("configuration, call shapes, body bounds, and counterfactual selectors are 
     requestBodyLimitBytes: 16_384,
     responseBodyLimitBytes: 1_024,
   }), /base_url_invalid/u);
+  assert.throws(() => createAionisRuntimeV1Client({
+    baseUrl: "http://runtime.example.test",
+    apiKey: KEY,
+    timeoutMs: 1_000,
+    requestBodyLimitBytes: 16_384,
+    responseBodyLimitBytes: 1_024,
+  }), /base_url_invalid/u);
+  assert.doesNotThrow(() => createAionisRuntimeV1Client({
+    baseUrl: "https://runtime.example.test",
+    apiKey: KEY,
+    timeoutMs: 1_000,
+    requestBodyLimitBytes: 16_384,
+    responseBodyLimitBytes: 1_024,
+  }));
+  assert.doesNotThrow(() => createAionisRuntimeV1Client({
+    baseUrl: "http://[::1]:3000",
+    apiKey: KEY,
+    timeoutMs: 1_000,
+    requestBodyLimitBytes: 16_384,
+    responseBodyLimitBytes: 1_024,
+  }));
   const value = await fixture();
   try {
     await assert.rejects(value.client.recordObservations({

@@ -166,6 +166,7 @@ const servingAssignmentBasisSchema = z.object({
   host_task_envelope_sha256: sha256Schema,
   host_principal_sha256: sha256Schema,
   task_family: idSchema,
+  source_task_sha256: sha256Schema,
   world_snapshot_ref: z.object({
     world_snapshot_id: idSchema,
     world_snapshot_sha256: sha256Schema,

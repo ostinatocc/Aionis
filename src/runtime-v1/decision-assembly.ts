@@ -643,6 +643,7 @@ export function createContinuationRuntimeV1DecisionAssemblyService(
                 decisionIdentity.host_task_envelope_sha256,
               host_principal_sha256: binding.actorPrincipalSha256,
               task_family: decisionIdentity.task_family,
+              source_task_sha256: decisionIdentity.source_task_sha256,
               world_snapshot_ref: args.world_snapshot_ref,
               memory_scope_head_ref: {
                 revision: memoryHead.head_revision,

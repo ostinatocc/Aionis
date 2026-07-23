@@ -727,10 +727,14 @@ assignment window `[window_opened_at, window_closed_at)` and no subject may
 have overlapping active cohorts. Runtime stores the verified seed as a
 protected BLOB in the existing artifact row; no daemon read or HTTP API can
 return it. Assignment is derived inside `create_continuation` from HMAC-SHA-256
-over the cohort ref, operation request digest, decision/episode/run/host
-identity, exact snapshot, and exact memory head. Both arms receive a complete
-serving-assignment receipt, and the receipt is persisted atomically with the
-exposure.
+over a stable task cluster containing the cohort ref, task family, and
+`source_task_sha256` from the authenticated host task envelope. Operation,
+decision, episode, run, host, snapshot, and memory-head identity remain in the
+complete serving-assignment basis and receipt, but do not rerandomize the same
+source task. Both arms receive that complete receipt, and it is persisted
+atomically with the exposure. A benchmark or other evidence authority must
+pre-register a deterministic `source_task_sha256`; allowing a host to change it
+after observing an arm would permit assignment rerolls.
 
 An outcome belongs to the census only when `observed_at <= outcome_deadline`;
 its operation may be ingested only through
@@ -811,9 +815,13 @@ closed member set as
 `count === 0 ? 10000 : ceil(outcome_missing_count * 10000 / count)` and
 requires exact equality before persisting or re-authorizing a certificate.
 
-Runtime V1 does not hardcode pair counts, activation waves, holdout sizes, or a
-statistical test. Those belong to signed policy/contract artifacts outside the
-daemon.
+Runtime V1 does not hardcode pair counts, activation waves, holdout sizes, or
+release-study protocols. Those remain outside the daemon. Runtime does contain
+one versioned, digest-bound generic evaluator (including the Newcombe
+hybrid-score risk-difference interval); signed evidence policy supplies its
+confidence level, sample floors, missingness ceiling, harm margin, and utility
+threshold. Changing the evaluator requires a new statistical-contract digest,
+not an untracked external interpretation.
 
 No GuidePacket field, Agent statement, aggregate four-kernel score, or expected
 effect declared by the Runtime may grant per-capsule credit.

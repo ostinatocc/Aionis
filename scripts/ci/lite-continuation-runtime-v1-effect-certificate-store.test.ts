@@ -1597,6 +1597,7 @@ test("active cohort freezes its pair while break-glass abort preserves settlemen
         host_task_envelope_sha256: "b".repeat(64),
         host_principal_sha256: HOST,
         task_family: FAMILY,
+        source_task_sha256: "d".repeat(64),
         world_snapshot_ref: {
           world_snapshot_id: "pre-abort-snapshot",
           world_snapshot_sha256: "c".repeat(64),
@@ -1695,6 +1696,7 @@ test("cohort capabilities never retain the protected assignment seed", async () 
       host_task_envelope_sha256: "2".repeat(64),
       host_principal_sha256: HOST,
       task_family: FAMILY,
+      source_task_sha256: "4".repeat(64),
       world_snapshot_ref: {
         world_snapshot_id: "seed-hygiene-snapshot",
         world_snapshot_sha256: "3".repeat(64),

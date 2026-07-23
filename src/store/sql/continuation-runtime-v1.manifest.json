@@ -686,7 +686,7 @@
       "type": "trigger",
       "name": "authority_artifacts_experiment_cohort_guard",
       "table_name": "authority_artifacts",
-      "sql_sha256": "80234d24ed50629a2d1cc7e760e4f7124bac9350a4ca96bae84613b0395cab3f"
+      "sql_sha256": "5e088397cd4a111900ae1da2d709e8cc0376527930041092f98310bbf5ee5738"
     },
     {
       "type": "trigger",
@@ -1810,6 +1810,6 @@
       "rows_sha256": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945"
     }
   ],
-  "ddl_sha256": "1605bf3552f3e32e7466b57e53c3e3df0f42161b137550f7710abf5d060466ff",
-  "schema_sha256": "65c6e58f4e4b9f95b34d061c79c11a3e3fbabd36ba1293e80c6b75c872cfbf8e"
+  "ddl_sha256": "0029678afe09f86ede7cd71cf74139fe0ff6c53c534aa59222f7a32f81a6ec3b",
+  "schema_sha256": "9185937260541800df7d99ad3893f6f139d4a7d4a8f60cf0bf54a5828cd92599"
 }
