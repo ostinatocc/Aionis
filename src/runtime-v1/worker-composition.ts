@@ -1,6 +1,4 @@
-import {
-  assertContinuationRuntimeV1Host,
-} from "../continuation/host-contract.js";
+import { assertContinuationRuntimeV1Host } from "../continuation/host-contract.js";
 import {
   openContinuationRuntimeV1Database,
   type ContinuationRuntimeV1Database,
@@ -17,8 +15,10 @@ import { createContinuationRuntimeV1AnnIndexSegmentStore } from
   "./ann-index-segment-store.js";
 import { createContinuationRuntimeV1AnnWorkerProcessor } from
   "./ann-worker-processor.js";
-import { createContinuationRuntimeV1EmbeddingProvider } from
-  "./embedding-provider.js";
+import {
+  createContinuationRuntimeV1EmbeddingProvider,
+  loadContinuationRuntimeV1EmbeddingCredential,
+} from "./embedding-provider.js";
 import { createContinuationRuntimeV1EmbeddingWorkerProcessor } from
   "./embedding-worker-processor.js";
 import { loadContinuationRuntimeV1EffectSigner } from "./effect-signer.js";
@@ -42,6 +42,7 @@ import {
 } from "./worker-config.js";
 import {
   createContinuationRuntimeV1WorkerService,
+  type ContinuationRuntimeV1WorkerProcessor,
   type ContinuationRuntimeV1WorkerService,
 } from "./worker-service.js";
 
@@ -60,12 +61,12 @@ export type RunningContinuationRuntimeV1Worker =
 
 type CompositionState = {
   closePromise: Promise<void> | null;
+  drainInFlight: () => Promise<void>;
+  stopNewWork: () => Promise<void>;
 };
 
-const COMPOSITION_STATES = new WeakMap<
-  ContinuationRuntimeV1WorkerComposition,
-  CompositionState
->();
+const COMPOSITION_STATES =
+  new WeakMap<ContinuationRuntimeV1WorkerComposition, CompositionState>();
 
 function fail(reason: string, cause?: unknown): never {
   throw new Error(
@@ -74,11 +75,6 @@ function fail(reason: string, cause?: unknown): never {
   );
 }
 
-/**
- * The rebuildable vector sidecar is deliberately colocated by convention,
- * not configured by another capability-bearing environment field. The path
- * itself never appears in the public worker configuration.
- */
 export function continuationRuntimeV1VectorArtifactRoot(
   dataPath: string,
 ): string {
@@ -107,10 +103,7 @@ async function closeAfterCompositionFailure(
   throw cause;
 }
 
-/**
- * Constructs one role-confined worker. Every accepted role has one concrete
- * processor and receives only the capabilities required by that processor.
- */
+/** Constructs one role-confined worker with one concrete processor. */
 export async function composeContinuationRuntimeV1Worker(
   environment: unknown,
 ): Promise<ContinuationRuntimeV1WorkerComposition> {
@@ -124,50 +117,48 @@ export async function composeContinuationRuntimeV1Worker(
     fail("worker_role_unavailable");
   }
 
-  // Every worker authenticates the pinned authority root at startup even if
-  // its current processor only reads immutable memory state.
   const trustRoot = loadContinuationRuntimeV1TrustRoot(config);
   const effectSigner = config.workerRole === "effect" && config.effect !== null
     ? loadContinuationRuntimeV1EffectSigner(config.effect)
     : null;
-  const database = openContinuationRuntimeV1Database(config.dataPath);
+  const embeddingCredential =
+    config.workerRole === "embedding" && config.embedding !== null
+      ? loadContinuationRuntimeV1EmbeddingCredential(config.embedding) : null;
+  let database: ContinuationRuntimeV1Database;
+  try { database = openContinuationRuntimeV1Database(config.dataPath); }
+  catch (error) {
+    embeddingCredential?.destroy(); throw error;
+  }
   try {
+    const serviceFor = <R extends ContinuationRuntimeV1WorkerProcessor["worker_role"]>(
+      processor: ContinuationRuntimeV1WorkerProcessor<R>,
+    ): ContinuationRuntimeV1WorkerService =>
+      createContinuationRuntimeV1WorkerService({ database, config, processor });
     let service: ContinuationRuntimeV1WorkerService;
     if (config.workerRole === "embedding" && config.embedding !== null) {
       const memoryStore = createContinuationRuntimeV1MemoryStore(database);
       const durableJobStore = createContinuationRuntimeV1DurableJobEnqueuer(database);
       const vectorRoot = continuationRuntimeV1VectorArtifactRoot(config.dataPath);
-      const processor = createContinuationRuntimeV1EmbeddingWorkerProcessor({
+      service = serviceFor(createContinuationRuntimeV1EmbeddingWorkerProcessor({
         memoryStore,
         durableJobStore,
         provider: createContinuationRuntimeV1EmbeddingProvider(
-          config.embedding,
-          database.authorityNow,
+          config.embedding, embeddingCredential!, database.authorityNow,
         ),
         vectorArtifactStore: createContinuationRuntimeV1VectorArtifactStore({
           rootPath: vectorRoot,
         }),
-      });
-      service = createContinuationRuntimeV1WorkerService({
-        database,
-        config,
-        processor,
-      });
+      }));
     } else if (config.workerRole === "ann") {
       const vectorRoot = continuationRuntimeV1VectorArtifactRoot(config.dataPath);
-      const processor = createContinuationRuntimeV1AnnWorkerProcessor({
+      service = serviceFor(createContinuationRuntimeV1AnnWorkerProcessor({
         vectorArtifactStore: createContinuationRuntimeV1VectorArtifactStore({
           rootPath: vectorRoot,
         }),
         indexSegmentStore: createContinuationRuntimeV1AnnIndexSegmentStore({
           rootPath: continuationRuntimeV1AnnIndexSegmentRoot(config.dataPath),
         }),
-      });
-      service = createContinuationRuntimeV1WorkerService({
-        database,
-        config,
-        processor,
-      });
+      }));
     } else if (config.workerRole === "effect" && effectSigner !== null) {
       const artifactStore = createContinuationRuntimeV1AuthorityArtifactReader(
         database,
@@ -177,20 +168,15 @@ export async function composeContinuationRuntimeV1Worker(
         database,
         artifactStore,
       );
-      const processor = createContinuationRuntimeV1EffectWorkerProcessor({
+      service = serviceFor(createContinuationRuntimeV1EffectWorkerProcessor({
         database,
         artifactStore,
         policyAuthority,
         signer: effectSigner,
-      });
-      service = createContinuationRuntimeV1WorkerService({
-        database,
-        config,
-        processor,
-      });
+      }));
     } else if (config.workerRole === "retention") {
       const vectorRoot = continuationRuntimeV1VectorArtifactRoot(config.dataPath);
-      const processor = createContinuationRuntimeV1RetentionWorkerProcessor({
+      service = serviceFor(createContinuationRuntimeV1RetentionWorkerProcessor({
         authorityResolver:
           createContinuationRuntimeV1RetentionAuthorityResolver(database),
         vectorArtifactStore: createContinuationRuntimeV1VectorArtifactStore({
@@ -199,15 +185,19 @@ export async function composeContinuationRuntimeV1Worker(
         indexSegmentStore: createContinuationRuntimeV1AnnIndexSegmentStore({
           rootPath: continuationRuntimeV1AnnIndexSegmentRoot(config.dataPath),
         }),
-      });
-      service = createContinuationRuntimeV1WorkerService({
-        database,
-        config,
-        processor,
-      });
+      }));
     } else {
       fail("worker_role_unavailable");
     }
+    let drainPromise: Promise<void> | null = null;
+    const drainInFlight = (): Promise<void> => (
+      drainPromise ??= service.drainInFlight().then(() => embeddingCredential?.destroy())
+    );
+    const stopNewWork = (): Promise<void> => {
+      const stopping = service.stopNewWork();
+      void drainInFlight().catch(() => undefined);
+      return stopping;
+    };
 
     let composition!: ContinuationRuntimeV1WorkerComposition;
     composition = Object.freeze({
@@ -219,17 +209,18 @@ export async function composeContinuationRuntimeV1Worker(
         if (!state) fail("state_missing");
         if (state.closePromise === null) {
           state.closePromise = (async () => {
-            await service.stopNewWork();
-            await service.drainInFlight();
+            await stopNewWork();
+            await drainInFlight();
             await database.close();
           })();
         }
         return state.closePromise;
       },
     });
-    COMPOSITION_STATES.set(composition, { closePromise: null });
+    COMPOSITION_STATES.set(composition, { closePromise: null, drainInFlight, stopNewWork });
     return composition;
   } catch (error) {
+    embeddingCredential?.destroy();
     return await closeAfterCompositionFailure(database, error);
   }
 }
@@ -239,11 +230,13 @@ export async function startContinuationRuntimeV1Worker(
   environment: unknown,
 ): Promise<RunningContinuationRuntimeV1Worker> {
   const composition = await composeContinuationRuntimeV1Worker(environment);
+  const state = COMPOSITION_STATES.get(composition);
+  if (!state) fail("state_missing");
   const lifecycle = createContinuationRuntimeV1ProcessLifecycle({
     shutdownTimeoutMs: composition.publicConfig.shutdownTimeoutMs,
-    stopNewWork: composition.service.stopNewWork,
-    drainInFlight: composition.service.drainInFlight,
-    closeDatabase: composition.database.close,
+    stopNewWork: state.stopNewWork,
+    drainInFlight: state.drainInFlight,
+    closeDatabase: composition.close,
   });
   let workerLoop: Promise<void>;
   try {

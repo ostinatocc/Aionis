@@ -55,6 +55,8 @@ function workerFixture(
     effectPair.privateKey.export({ type: "pkcs8", format: "pem" }),
     { mode: 0o600 },
   );
+  const embeddingApiKeyPath = join(root, "embedding-api-key");
+  writeFileSync(embeddingApiKeyPath, PROVIDER_SECRET, { mode: 0o600 });
   const effectSpki = createPublicKey(effectPair.privateKey).export({
     type: "spki",
     format: "der",
@@ -78,7 +80,7 @@ function workerFixture(
     environment: Object.freeze(role === "embedding"
       ? {
           ...common,
-          AIONIS_EMBEDDING_API_KEY: PROVIDER_SECRET,
+          AIONIS_EMBEDDING_API_KEY_FILE: embeddingApiKeyPath,
           AIONIS_EMBEDDING_BASE_URL: "https://embedding.invalid/v1",
           AIONIS_EMBEDDING_DIMENSIONS: "16",
           AIONIS_EMBEDDING_MODEL: "embedding-contract-model-v1",
@@ -123,6 +125,22 @@ async function waitFor(
   }
 }
 
+test("invalid embedding credential fails before creating authority SQLite", async () => {
+  const fixture = workerFixture();
+  try {
+    rmSync(fixture.environment.AIONIS_EMBEDDING_API_KEY_FILE);
+    await assert.rejects(
+      composeContinuationRuntimeV1Worker(fixture.environment),
+      /continuation_runtime_v1_embedding_provider_configuration_invalid/u,
+    );
+    assert.equal(existsSync(fixture.dataPath), false);
+    assert.equal(existsSync(`${fixture.dataPath}-wal`), false);
+    assert.equal(existsSync(`${fixture.dataPath}-shm`), false);
+  } finally {
+    fixture.cleanup();
+  }
+});
+
 test("real embedding worker composition is role-confined and fully redacted", async () => {
   const fixture = workerFixture();
   let worker: Awaited<ReturnType<typeof composeContinuationRuntimeV1Worker>> | null = null;
@@ -133,7 +151,7 @@ test("real embedding worker composition is role-confined and fully redacted", as
       baseUrl: "https://embedding.invalid/v1",
       model: "embedding-contract-model-v1",
       dimensions: 16,
-      apiKeyConfigured: true,
+      apiKeyFileConfigured: true,
     });
     const projection = JSON.stringify(worker.publicConfig);
     assert.equal(projection.includes(PROVIDER_SECRET), false);

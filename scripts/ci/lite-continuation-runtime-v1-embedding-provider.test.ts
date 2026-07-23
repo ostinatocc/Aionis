@@ -1,17 +1,26 @@
 import assert from "node:assert/strict";
-import { mkdtempSync, rmSync } from "node:fs";
+import {
+  chmodSync,
+  linkSync,
+  mkdtempSync,
+  rmSync,
+  symlinkSync,
+  writeFileSync,
+} from "node:fs";
 import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
 import type { AddressInfo } from "node:net";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import test, { after } from "node:test";
+import test, { after, afterEach } from "node:test";
 
 import {
   CONTINUATION_RUNTIME_V1_EMBEDDING_MAX_BATCH,
   CONTINUATION_RUNTIME_V1_EMBEDDING_MAX_TEXT_BYTES,
   ContinuationRuntimeV1EmbeddingProviderError,
   createContinuationRuntimeV1EmbeddingProvider,
+  loadContinuationRuntimeV1EmbeddingCredential,
   type ContinuationRuntimeV1EmbeddingBatchInput,
+  type ContinuationRuntimeV1EmbeddingCredential,
 } from "../../src/runtime-v1/embedding-provider.js";
 import {
   openContinuationRuntimeV1Database,
@@ -24,6 +33,9 @@ const DIMENSIONS = 3;
 const liveAuthorityNow = () => new Date().toISOString();
 let authoritySource = liveAuthorityNow;
 const authorityRoot = mkdtempSync(join(tmpdir(), "aionis-embedding-provider-clock-"));
+const apiKeyPath = join(authorityRoot, "embedding-api-key");
+writeFileSync(apiKeyPath, API_KEY, { mode: 0o600 });
+const credentials = new Set<ContinuationRuntimeV1EmbeddingCredential>();
 const authorityDatabase = openContinuationRuntimeV1Database(
   join(authorityRoot, "authority", "runtime.sqlite"),
   {
@@ -35,6 +47,10 @@ const authorityClock = authorityDatabase.authorityNow;
 after(async () => {
   await authorityDatabase.close();
   rmSync(authorityRoot, { recursive: true, force: true });
+});
+afterEach(() => {
+  for (const credential of credentials) credential.destroy();
+  credentials.clear();
 });
 
 type HttpHandler = (
@@ -82,17 +98,24 @@ async function requestJson(request: IncomingMessage): Promise<unknown> {
   return JSON.parse(Buffer.concat(chunks, bytes).toString("utf8")) as unknown;
 }
 
-function provider(
-  baseUrl: string,
-  authorityNow: () => string = liveAuthorityNow,
-) {
+function providerConfig(baseUrl: string, keyPath = apiKeyPath) {
+  return { baseUrl, model: MODEL, apiKeyFilePath: keyPath, dimensions: DIMENSIONS };
+}
+
+function credential(config = providerConfig("http://127.0.0.1:1/v1")) {
+  const loaded = loadContinuationRuntimeV1EmbeddingCredential(config);
+  credentials.add(loaded);
+  return loaded;
+}
+
+function provider(baseUrl: string, authorityNow: () => string = liveAuthorityNow) {
   authoritySource = authorityNow;
-  return createContinuationRuntimeV1EmbeddingProvider({
-    baseUrl,
-    model: MODEL,
-    apiKey: API_KEY,
-    dimensions: DIMENSIONS,
-  }, authorityClock);
+  const config = providerConfig(baseUrl);
+  return createContinuationRuntimeV1EmbeddingProvider(
+    config,
+    credential(config),
+    authorityClock,
+  );
 }
 
 function input(
@@ -195,6 +218,66 @@ test("embedding provider performs one exact authenticated bounded batch and rest
   });
 });
 
+test("embedding credential authority is file-only, private, stable, bounded, and zeroizable", () => {
+  let sequence = 0;
+  const writeSecret = (value: string | Buffer, mode = 0o600): string => {
+    const path = join(authorityRoot, `credential-${sequence++}`);
+    writeFileSync(path, value, { mode });
+    chmodSync(path, mode);
+    return path;
+  };
+  const load = (path: string): ContinuationRuntimeV1EmbeddingCredential => (
+    loadContinuationRuntimeV1EmbeddingCredential(providerConfig(
+      "http://127.0.0.1:1/v1",
+      path,
+    ))
+  );
+
+  for (const [value, mode] of ([
+    ["x".repeat(16), 0o400], ["x".repeat(2_048), 0o600],
+  ] as const)) {
+    const loaded = load(writeSecret(value, mode));
+    assert.equal(loaded.withAuthorizationHeader((header) => header),
+      `Bearer ${value}`);
+    loaded.destroy();
+    loaded.destroy();
+    assertProviderError(
+      thrownError(() => loaded.withAuthorizationHeader(() => "unreachable")),
+      "configuration_invalid",
+    );
+  }
+
+  for (const invalid of [
+    "x".repeat(15),
+    "x".repeat(2_049),
+    `${"x".repeat(16)}\n`,
+    `${"x".repeat(8)} ${"x".repeat(8)}`,
+    Buffer.concat([Buffer.from("x".repeat(16)), Buffer.from([0])]),
+    Buffer.concat([Buffer.from("x".repeat(16)), Buffer.from([0xff])]),
+  ]) {
+    assertProviderError(thrownError(() => load(writeSecret(invalid))),
+      "configuration_invalid");
+  }
+  for (const mode of [0o000, 0o440, 0o640, 0o644]) {
+    assertProviderError(thrownError(() => load(writeSecret("x".repeat(32), mode))),
+      "configuration_invalid");
+  }
+
+  const linked = writeSecret("x".repeat(32));
+  const hardlink = `${linked}-hardlink`;
+  linkSync(linked, hardlink);
+  assertProviderError(thrownError(() => load(linked)), "configuration_invalid");
+  rmSync(hardlink);
+  const symlink = `${linked}-symlink`;
+  symlinkSync(linked, symlink);
+  assertProviderError(thrownError(() => load(symlink)), "configuration_invalid");
+  const missing = join(authorityRoot, "credential-path-marker-missing");
+  const missingError = thrownError(() => load(missing));
+  assertProviderError(missingError, "configuration_invalid");
+  assert.equal(`${missingError.stack ?? ""}`.includes(missing), false);
+  assertProviderError(thrownError(() => load(authorityRoot)), "configuration_invalid");
+});
+
 test("embedding provider rejects non-exact and over-bound input before transport", async () => {
   const unused = provider("http://127.0.0.1:1/v1");
   for (const invalid of [
@@ -222,6 +305,7 @@ test("embedding provider converts adversarial reflection failures into stable re
     hostileConfig as unknown as Parameters<
       typeof createContinuationRuntimeV1EmbeddingProvider
     >[0],
+    credential(),
     authorityClock,
   ));
   assertProviderError(configError, "configuration_invalid");
@@ -238,21 +322,18 @@ test("embedding provider converts adversarial reflection failures into stable re
 });
 
 test("embedding provider requires one explicit canonical authority clock", () => {
-  const config = {
-    baseUrl: "http://127.0.0.1:1/v1",
-    model: MODEL,
-    apiKey: API_KEY,
-    dimensions: DIMENSIONS,
-  };
+  const config = providerConfig("http://127.0.0.1:1/v1");
+  const providerCredential = credential(config);
   const withoutClock = createContinuationRuntimeV1EmbeddingProvider as unknown as
-    (value: typeof config) => unknown;
+    (value: typeof config, valueCredential: typeof providerCredential) => unknown;
   assertProviderError(
-    thrownError(() => withoutClock(config)),
+    thrownError(() => withoutClock(config, providerCredential)),
     "configuration_invalid",
   );
   assertProviderError(
     thrownError(() => createContinuationRuntimeV1EmbeddingProvider(
       config,
+      providerCredential,
       null as unknown as ContinuationRuntimeV1AuthorityClock,
     )),
     "configuration_invalid",
@@ -260,6 +341,7 @@ test("embedding provider requires one explicit canonical authority clock", () =>
   assertProviderError(
     thrownError(() => createContinuationRuntimeV1EmbeddingProvider(
       config,
+      providerCredential,
       liveAuthorityNow as unknown as ContinuationRuntimeV1AuthorityClock,
     )),
     "configuration_invalid",

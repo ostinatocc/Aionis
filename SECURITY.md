@@ -41,7 +41,10 @@ terminate TLS or provide a cloud identity layer.
 - Offline provisioning receives canonical signed artifacts, the public root,
   and—only for cohort install—a 32-byte seed over a separate inherited file
   descriptor. It never receives the root private key.
-- The `embedding` worker alone receives the embedding provider credential.
+- The `embedding` worker alone receives the embedding provider credential from
+  a single-link owner-private stable file. The raw credential is excluded from
+  process and container environment and its worker-owned buffer is destroyed
+  after in-flight work drains.
 - The `effect` worker alone receives a dedicated owner-private Ed25519 signing
   key. That key must not reuse the authority root. The provided Compose profile
   also removes networking from this worker.

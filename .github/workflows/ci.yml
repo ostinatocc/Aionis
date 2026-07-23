@@ -329,9 +329,11 @@ jobs:
           existing_root="$probe_root/existing-root.pem"
           existing_host_token="$probe_root/existing-host-api-key"
           existing_operator_token="$probe_root/existing-operator-api-key"
+          existing_embedding_token="$probe_root/existing-embedding-api-key"
           existing_effect="$probe_root/existing-effect.pem"
           existing_seed="$probe_root/existing-seed.bin"
           render_root="$probe_root/render-root.pem"
+          render_embedding="$probe_root/render-embedding-api-key"
           render_effect="$probe_root/render-effect.pem"
           render_seed="$probe_root/render-seed.bin"
           : > "$existing_root"
@@ -339,11 +341,12 @@ jobs:
           : > "$existing_seed"
           printf %s 'ci-host-token-visible-ascii-0123456789' > "$existing_host_token"
           printf %s 'ci-operator-token-visible-ascii-9876543210' > "$existing_operator_token"
-          TOKEN_FILES="$existing_host_token:$existing_operator_token" \
+          printf %s 'ci-embedding-token-visible-ascii-2468135790' > "$existing_embedding_token"
+          TOKEN_FILES="$existing_host_token:$existing_operator_token:$existing_embedding_token" \
             node --input-type=module -e '
               import fs from "node:fs";
               const paths = process.env.TOKEN_FILES?.split(":") ?? [];
-              if (paths.length !== 2) throw new Error("token file inventory drift");
+              if (paths.length !== 3) throw new Error("token file inventory drift");
               const values = paths.map((path) => fs.readFileSync(path));
               for (const value of values) {
                 if (value.length < 32 || value.length > 512
@@ -351,14 +354,17 @@ jobs:
                   throw new Error("invalid Compose token fixture");
                 }
               }
-              if (values[0].equals(values[1])) {
-                throw new Error("Compose token fixtures must be distinct");
+              if (new Set(values.map((value) => value.toString("hex"))).size !== 3) {
+                throw new Error("Compose secret fixtures must be distinct");
               }
             '
-          chmod 0400 "$existing_host_token" "$existing_operator_token"
-          sudo chown 1000:1000 "$existing_host_token" "$existing_operator_token"
+          chmod 0400 "$existing_host_token" "$existing_operator_token" \
+            "$existing_embedding_token"
+          sudo chown 1000:1000 "$existing_host_token" "$existing_operator_token" \
+            "$existing_embedding_token"
           test "$(stat -c '%u:%g:%a' "$existing_host_token")" = "1000:1000:400"
           test "$(stat -c '%u:%g:%a' "$existing_operator_token")" = "1000:1000:400"
+          test "$(stat -c '%u:%g:%a' "$existing_embedding_token")" = "1000:1000:400"
           probe_projects=()
           cleanup_probe() {
             local project
@@ -367,6 +373,7 @@ jobs:
                 TRUST_ROOT_PUBLIC_KEY_FILE="$existing_root" \
                 HOST_API_KEY_FILE="$existing_host_token" \
                 OPERATOR_API_KEY_FILE="$existing_operator_token" \
+                EMBEDDING_API_KEY_FILE="$existing_embedding_token" \
                 EFFECT_SIGNER_PRIVATE_KEY_FILE="$existing_effect" \
                 COHORT_SEED_FILE="$existing_seed" \
                 docker compose --ansi never --env-file /dev/null \
@@ -381,6 +388,7 @@ jobs:
           compose_json="$(TRUST_ROOT_PUBLIC_KEY_FILE="$render_root" \
             HOST_API_KEY_FILE="$existing_host_token" \
             OPERATOR_API_KEY_FILE="$existing_operator_token" \
+            EMBEDDING_API_KEY_FILE="$render_embedding" \
             EFFECT_SIGNER_PRIVATE_KEY_FILE="$render_effect" \
             COHORT_SEED_FILE="$render_seed" \
             docker compose --env-file /dev/null \
@@ -414,6 +422,12 @@ jobs:
                 aliasUses: 1,
                 source: "  source: ${OPERATOR_API_KEY_FILE:-./.secrets/UNCONFIGURED_OPERATOR_API_KEY}",
                 target: "/run/aionis/operator-api-key",
+              },
+              "x-embedding-api-key-mount": {
+                alias: "embedding-api-key-mount",
+                aliasUses: 1,
+                source: "  source: ${EMBEDDING_API_KEY_FILE:-./.secrets/UNCONFIGURED_EMBEDDING_API_KEY}",
+                target: "/run/aionis/embedding-api-key",
               },
               "x-effect-private-key-mount": {
                 alias: "effect-private-key-mount",
@@ -460,8 +474,9 @@ jobs:
               ["/run/aionis/trust-root-public.pem", process.argv[2]],
               ["/run/aionis/host-api-key", process.argv[3]],
               ["/run/aionis/operator-api-key", process.argv[4]],
-              ["/run/aionis/effect-signer-private.pem", process.argv[5]],
-              ["/run/aionis/cohort-assignment-seed.bin", process.argv[6]],
+              ["/run/aionis/embedding-api-key", process.argv[5]],
+              ["/run/aionis/effect-signer-private.pem", process.argv[6]],
+              ["/run/aionis/cohort-assignment-seed.bin", process.argv[7]],
             ]);
             const authority = [
               "AIONIS_DATA_PATH", "AIONIS_TRUST_ROOT_PUBLIC_KEY_PATH",
@@ -485,7 +500,7 @@ jobs:
               "provision-cohort": [...authority, "AIONIS_PROVISIONING_SEED_FD"],
               "worker-embedding": [
                 ...worker, "AIONIS_EMBEDDING_BASE_URL", "AIONIS_EMBEDDING_MODEL",
-                "AIONIS_EMBEDDING_DIMENSIONS", "AIONIS_EMBEDDING_API_KEY",
+                "AIONIS_EMBEDDING_DIMENSIONS", "AIONIS_EMBEDDING_API_KEY_FILE",
               ],
               "worker-ann": worker,
               "worker-effect": [
@@ -509,7 +524,10 @@ jobs:
                 "/data", "/run/aionis/cohort-assignment-seed.bin",
                 "/run/aionis/trust-root-public.pem",
               ],
-              "worker-embedding": ["/data", "/run/aionis/trust-root-public.pem"],
+              "worker-embedding": [
+                "/data", "/run/aionis/embedding-api-key",
+                "/run/aionis/trust-root-public.pem",
+              ],
               "worker-ann": ["/data", "/run/aionis/trust-root-public.pem"],
               "worker-effect": [
                 "/data", "/run/aionis/effect-signer-private.pem",
@@ -566,22 +584,35 @@ jobs:
               }
             }
           ' "$compose_json" "$render_root" "$existing_host_token" \
-            "$existing_operator_token" "$render_effect" "$render_seed"
+            "$existing_operator_token" "$render_embedding" "$render_effect" \
+            "$render_seed"
           positive_project="$probe_base-positive"
           probe_projects+=("$positive_project")
           AIONIS_CONTAINER_IMAGE=aionis-continuation-runtime-v1:ci \
             TRUST_ROOT_PUBLIC_KEY_FILE="$existing_root" \
             HOST_API_KEY_FILE="$existing_host_token" \
             OPERATOR_API_KEY_FILE="$existing_operator_token" \
+            EMBEDDING_API_KEY_FILE="$existing_embedding_token" \
             EFFECT_SIGNER_PRIVATE_KEY_FILE="$existing_effect" \
             COHORT_SEED_FILE="$existing_seed" \
             docker compose --ansi never --env-file /dev/null \
               --project-name "$positive_project" \
               --profile provision --profile embedding --profile ann \
               --profile effect --profile retention \
-              create --no-build --pull never daemon
+              create --no-build --pull never daemon worker-embedding
           test -n "$(docker compose --project-name "$positive_project" \
             ps --all --quiet daemon)"
+          embedding_id="$(docker compose --project-name "$positive_project" \
+            ps --all --quiet worker-embedding)"
+          test -n "$embedding_id"
+          embedding_environment="$(docker inspect --format '{{json .Config.Env}}' \
+            "$embedding_id")"
+          test "${embedding_environment#*AIONIS_EMBEDDING_API_KEY_FILE=/run/aionis/embedding-api-key}" \
+            != "$embedding_environment"
+          test "${embedding_environment#*AIONIS_EMBEDDING_API_KEY=}" \
+            = "$embedding_environment"
+          test "${embedding_environment#*ci-embedding-token-visible-ascii-2468135790}" \
+            = "$embedding_environment"
           probe_missing_bind() {
             local service="$1"
             local label="$2"
@@ -589,8 +620,9 @@ jobs:
             local root_file="$4"
             local host_token_file="$5"
             local operator_token_file="$6"
-            local effect_file="$7"
-            local seed_file="$8"
+            local embedding_token_file="$7"
+            local effect_file="$8"
+            local seed_file="$9"
             local project="$probe_base-$service-$label"
             local log="$probe_root/$service-$label.log"
             probe_projects+=("$project")
@@ -598,6 +630,7 @@ jobs:
               TRUST_ROOT_PUBLIC_KEY_FILE="$root_file" \
               HOST_API_KEY_FILE="$host_token_file" \
               OPERATOR_API_KEY_FILE="$operator_token_file" \
+              EMBEDDING_API_KEY_FILE="$embedding_token_file" \
               EFFECT_SIGNER_PRIVATE_KEY_FILE="$effect_file" \
               COHORT_SEED_FILE="$seed_file" \
               docker compose --ansi never --env-file /dev/null \
@@ -621,22 +654,28 @@ jobs:
             missing="$probe_root/missing-$service-root.pem"
             probe_missing_bind "$service" root "$missing" "$missing" \
               "$existing_host_token" "$existing_operator_token" \
-              "$existing_effect" "$existing_seed"
+              "$existing_embedding_token" "$existing_effect" "$existing_seed"
           done
           missing="$probe_root/missing-host-api-key"
           probe_missing_bind daemon host-token "$missing" "$existing_root" \
-            "$missing" "$existing_operator_token" "$existing_effect" "$existing_seed"
+            "$missing" "$existing_operator_token" "$existing_embedding_token" \
+            "$existing_effect" "$existing_seed"
           missing="$probe_root/missing-operator-api-key"
           probe_missing_bind daemon operator-token "$missing" "$existing_root" \
-            "$existing_host_token" "$missing" "$existing_effect" "$existing_seed"
+            "$existing_host_token" "$missing" "$existing_embedding_token" \
+            "$existing_effect" "$existing_seed"
+          missing="$probe_root/missing-embedding-api-key"
+          probe_missing_bind worker-embedding embedding-token "$missing" "$existing_root" \
+            "$existing_host_token" "$existing_operator_token" "$missing" \
+            "$existing_effect" "$existing_seed"
           missing="$probe_root/missing-effect.pem"
           probe_missing_bind worker-effect effect "$missing" "$existing_root" \
             "$existing_host_token" "$existing_operator_token" \
-            "$missing" "$existing_seed"
+            "$existing_embedding_token" "$missing" "$existing_seed"
           missing="$probe_root/missing-seed.bin"
           probe_missing_bind provision-cohort seed "$missing" "$existing_root" \
             "$existing_host_token" "$existing_operator_token" \
-            "$existing_effect" "$missing"
+            "$existing_embedding_token" "$existing_effect" "$missing"
           cleanup_probe
           trap - EXIT
 

@@ -88,8 +88,8 @@ ledger, and one reversible authority model.
   from audit receipts. Receipts contain bounded projections and digests.
 - The HTTP daemon and workers have disjoint strict configuration allowlists.
   The daemon never parses provider or queue controls; workers never parse
-  caller credentials or HTTP controls; only the embedding worker may retain an
-  embedding-provider key.
+  caller credentials or HTTP controls; only the embedding worker may load an
+  embedding-provider key from an owner-private stable file.
 - Every implementation batch must preserve the exact route, environment,
   schema, and capability boundaries, introduce no runtime import cycle or full
   type-dependency strongly connected component, and keep every production

@@ -30,6 +30,9 @@ does not provide compatibility aliases or a database migration path.
 - The daemon has no provider credential, effect signing key, or root private
   key. Embedding, ANN, effect settlement, and retention run as isolated worker
   roles.
+- The embedding provider credential is accepted only from a private stable file,
+  never from process or container environment, and its worker-owned buffer is
+  destroyed during ordered shutdown.
 - Cohort assignment is deterministic, signed-policy-bound, and made atomically
   with continuation creation. Effect settlement evaluates the complete ITT
   census and the whole candidate treatment delta.

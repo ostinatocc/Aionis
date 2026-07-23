@@ -264,10 +264,12 @@ test("a failed phase is redacted and cannot advance to a less safe phase", async
 test("the total deadline returns a stable result and never closes under active work", async () => {
   const drain = deferred();
   let closeCalls = 0;
+  let postDrainReleases = 0;
   const { input, controlled } = lifecycleInput({
     shutdownTimeoutMs: 20,
     drainInFlight: async () => {
       await drain.promise;
+      postDrainReleases += 1;
     },
     closeDatabase: () => {
       closeCalls += 1;
@@ -292,9 +294,43 @@ test("the total deadline returns a stable result and never closes under active w
 
   drain.resolve();
   await new Promise<void>((resolve) => setImmediate(resolve));
+  assert.equal(postDrainReleases, 1);
   assert.equal(closeCalls, 0);
   assert.equal(lifecycle.result(), result);
   assert.deepEqual(controlled.exitCodes, [1]);
+});
+
+test("a stop-phase timeout still permits eventual drain release without closing", async () => {
+  const stop = deferred();
+  const drain = deferred();
+  let drainPromise: Promise<void> | null = null;
+  let releases = 0;
+  let closeCalls = 0;
+  const drainInFlight = (): Promise<void> => (
+    drainPromise ??= drain.promise.then(() => { releases += 1; })
+  );
+  const { input } = lifecycleInput({
+    shutdownTimeoutMs: 20,
+    stopNewWork: async () => {
+      void drainInFlight().catch(() => undefined);
+      await stop.promise;
+    },
+    drainInFlight,
+    closeDatabase: () => { closeCalls += 1; },
+  });
+  const lifecycle = createContinuationRuntimeV1ProcessLifecycle(input);
+  const result = await lifecycle.requestShutdown("SIGTERM");
+  assert.equal(result.status, "timed_out");
+  assert.equal(result.terminal_phase, "stop_new_work");
+  assert.deepEqual(result.completed_phases, []);
+  assert.equal(releases, 0);
+  assert.equal(closeCalls, 0);
+
+  stop.resolve();
+  drain.resolve();
+  await new Promise<void>((resolve) => setImmediate(resolve));
+  assert.equal(releases, 1);
+  assert.equal(closeCalls, 0);
 });
 
 test("a timeout cannot duplicate a database close already in progress", async () => {

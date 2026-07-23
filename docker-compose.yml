@@ -43,6 +43,14 @@ x-operator-api-key-mount: &operator-api-key-mount
   bind:
     create_host_path: false
 
+x-embedding-api-key-mount: &embedding-api-key-mount
+  type: bind
+  source: ${EMBEDDING_API_KEY_FILE:-./.secrets/UNCONFIGURED_EMBEDDING_API_KEY}
+  target: /run/aionis/embedding-api-key
+  read_only: true
+  bind:
+    create_host_path: false
+
 x-effect-private-key-mount: &effect-private-key-mount
   type: bind
   source: ${EFFECT_SIGNER_PRIVATE_KEY_FILE:-./.secrets/UNCONFIGURED_EFFECT_SIGNER_KEY}
@@ -153,10 +161,11 @@ services:
       AIONIS_EMBEDDING_BASE_URL: ${AIONIS_EMBEDDING_BASE_URL:-}
       AIONIS_EMBEDDING_MODEL: ${AIONIS_EMBEDDING_MODEL:-}
       AIONIS_EMBEDDING_DIMENSIONS: ${AIONIS_EMBEDDING_DIMENSIONS:-}
-      AIONIS_EMBEDDING_API_KEY: ${AIONIS_EMBEDDING_API_KEY:-}
+      AIONIS_EMBEDDING_API_KEY_FILE: /run/aionis/embedding-api-key
     volumes:
       - *data-mount
       - *root-public-key-mount
+      - *embedding-api-key-mount
     healthcheck:
       disable: true
 

@@ -143,6 +143,7 @@ test("daemon rejects every worker-only or legacy AIONIS control", () => {
     "AIONIS_JOB_LEASE_MS",
     "AIONIS_JOB_POLL_MS",
     "AIONIS_EMBEDDING_API_KEY",
+    "AIONIS_EMBEDDING_API_KEY_FILE",
     "AIONIS_EMBEDDING_BASE_URL",
     "AIONIS_EMBEDDING_DIMENSIONS",
     "AIONIS_EMBEDDING_MODEL",
