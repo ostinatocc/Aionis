@@ -7,6 +7,8 @@ import {
 } from "../../src/runtime-v1/auth.js";
 import { loadContinuationRuntimeV1DaemonConfig } from
   "../../src/runtime-v1/config.js";
+import { daemonTokenFileEnvironment } from
+  "./support/continuation-runtime-v1-daemon-token-files.js";
 
 const TOKEN = "runtime-secret-token-abcdefghijklmnopqrstuvwxyz";
 const OPERATOR_TOKEN = "operator-secret-token-abcdefghijklmnopqrstuvwxyz";
@@ -16,11 +18,10 @@ function config() {
     AIONIS_DATA_PATH: "/tmp/aionis-v1/runtime.sqlite",
     AIONIS_TENANT_ID: "tenant-a",
     AIONIS_HOST_PRINCIPAL_ID: "host-a",
-    AIONIS_HOST_API_KEY: TOKEN,
     AIONIS_OPERATOR_PRINCIPAL_ID: "operator-a",
-    AIONIS_OPERATOR_API_KEY: OPERATOR_TOKEN,
     AIONIS_TRUST_ROOT_PUBLIC_KEY_PATH: "/tmp/aionis-v1/trust-root.pem",
     AIONIS_TRUST_ROOT_SHA256: "0".repeat(64),
+    ...daemonTokenFileEnvironment(TOKEN, OPERATOR_TOKEN),
   });
 }
 
@@ -68,12 +69,11 @@ test("credential-bearing config fields reject whitespace before authentication",
       AIONIS_DATA_PATH: "/tmp/aionis-v1/runtime.sqlite",
       AIONIS_TENANT_ID: "tenant-a",
       AIONIS_HOST_PRINCIPAL_ID: "host-a",
-      AIONIS_HOST_API_KEY: value,
       AIONIS_OPERATOR_PRINCIPAL_ID: "operator-a",
-      AIONIS_OPERATOR_API_KEY: OPERATOR_TOKEN,
       AIONIS_TRUST_ROOT_PUBLIC_KEY_PATH: "/tmp/aionis-v1/trust-root.pem",
       AIONIS_TRUST_ROOT_SHA256: "0".repeat(64),
-    }), /must_not_contain_whitespace|bounded_canonical_text/u);
+      ...daemonTokenFileEnvironment(value, OPERATOR_TOKEN),
+    }), /must_be_visible_ASCII_without_whitespace/u);
   }
 });
 
@@ -84,11 +84,10 @@ test("credential rotation preserves the stable authenticated principal", () => {
     AIONIS_DATA_PATH: "/tmp/aionis-v1/runtime.sqlite",
     AIONIS_TENANT_ID: "tenant-a",
     AIONIS_HOST_PRINCIPAL_ID: "host-a",
-    AIONIS_HOST_API_KEY: rotatedToken,
     AIONIS_OPERATOR_PRINCIPAL_ID: "operator-a",
-    AIONIS_OPERATOR_API_KEY: OPERATOR_TOKEN,
     AIONIS_TRUST_ROOT_PUBLIC_KEY_PATH: "/tmp/aionis-v1/trust-root.pem",
     AIONIS_TRUST_ROOT_SHA256: "0".repeat(64),
+    ...daemonTokenFileEnvironment(rotatedToken, OPERATOR_TOKEN),
   });
   const before = authenticateContinuationRuntimeV1(
     { authorization: `Bearer ${TOKEN}` },

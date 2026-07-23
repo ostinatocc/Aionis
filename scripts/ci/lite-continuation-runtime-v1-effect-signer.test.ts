@@ -103,7 +103,7 @@ test("effect signer rejects wrong pin, weak mode, links, public/RSA keys, and PE
     assert.throws(() => loadContinuationRuntimeV1EffectSigner({
       signerPrivateKeyPath: symbolic,
       signerSha256: value.digest,
-    }), /open_failed/u);
+    }), /file_posture_invalid/u);
 
     const hard = join(value.directory, "hard.pem");
     linkSync(value.path, hard);
@@ -156,6 +156,10 @@ test("effect signer never copies private PEM bytes into an immutable JS string",
     "../../src/runtime-v1/effect-signer.ts",
     import.meta.url,
   ), "utf8");
+  const reader = readFileSync(new URL(
+    "../../src/runtime-v1/stable-file.ts",
+    import.meta.url,
+  ), "utf8");
   assert.equal(source.includes("bytes.toString"), false);
-  assert.equal(source.includes("bytes.fill(0)"), true);
+  assert.equal(reader.includes("bytes?.fill(0)"), true);
 });

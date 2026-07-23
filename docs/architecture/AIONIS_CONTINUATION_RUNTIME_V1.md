@@ -963,6 +963,10 @@ signer identity, root identity, validity window, schema, kind, ID, revision,
 and optional authority subject are all revalidated before insertion and on
 read.
 
+The trust-root path must resolve to a stable regular file with one hard link,
+owned by the Runtime uid or root, and not writable by group or others. Runtime
+checks the path and descriptor identity before and after a bounded read.
+
 Provisioning is an offline `authority_decision` operation, so policy insertion
 and its receipt are atomic. The first trusted observation for an authority
 subject may then create an empty authoritative **learning** genesis branch and
@@ -982,14 +986,20 @@ silently retained capability.
 The daemon allowlist has exactly 13 fields:
 
 `AIONIS_DATA_PATH`, `AIONIS_TENANT_ID`, `AIONIS_HOST_PRINCIPAL_ID`,
-`AIONIS_HOST_API_KEY`, `AIONIS_OPERATOR_PRINCIPAL_ID`,
-`AIONIS_OPERATOR_API_KEY`, `AIONIS_TRUST_ROOT_PUBLIC_KEY_PATH`,
+`AIONIS_HOST_API_KEY_FILE`, `AIONIS_OPERATOR_PRINCIPAL_ID`,
+`AIONIS_OPERATOR_API_KEY_FILE`, `AIONIS_TRUST_ROOT_PUBLIC_KEY_PATH`,
 `AIONIS_TRUST_ROOT_SHA256`, `AIONIS_HTTP_HOST`, `AIONIS_HTTP_PORT`,
 `AIONIS_HTTP_BODY_LIMIT_BYTES`, `AIONIS_LOG_LEVEL`, and
 `AIONIS_SHUTDOWN_TIMEOUT_MS`.
 
-The daemon hashes both API keys while parsing and retains no raw caller
-credential. It has no worker role, queue lease/poll/batch control, embedding
+Each daemon role requires one absolute private-token file. It must be regular,
+owned by the current Runtime uid, single-linked, exact mode `0400` or `0600`,
+and contain 32–512 visible-ASCII bytes (`0x21`–`0x7e`). Type, ownership, mode, link count,
+size, and mutation stability are checked before Runtime hashes both API keys;
+the files are read once and no raw caller credential is retained. Direct
+`AIONIS_HOST_API_KEY` and `AIONIS_OPERATOR_API_KEY` fields no longer belong to
+the daemon contract, so either field is rejected by the unknown-field gate.
+The daemon has no worker role, queue lease/poll/batch control, embedding
 provider endpoint, model, dimensions, or provider API key.
 
 The worker allowlist has exactly 16 fields. Ten are process-common worker

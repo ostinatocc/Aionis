@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { generateKeyPairSync } from "node:crypto";
-import { chmodSync, mkdtempSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
+import { chmodSync, linkSync, mkdtempSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
@@ -58,7 +58,15 @@ test("wrong pins, writable files, symlinks, private keys, and non-Ed25519 keys f
     assert.throws(() => loadContinuationRuntimeV1TrustRoot({
       trustRootPublicKeyPath: link,
       trustRootSha256: value.digest,
-    }), /open_failed/u);
+    }), /file_posture_invalid/u);
+
+    const hardlink = join(value.directory, "root-hardlink.pem");
+    linkSync(value.path, hardlink);
+    assert.throws(() => loadContinuationRuntimeV1TrustRoot({
+      trustRootPublicKeyPath: value.path,
+      trustRootSha256: value.digest,
+    }), /file_posture_invalid/u);
+    rmSync(hardlink);
 
     const privatePath = join(value.directory, "private.pem");
     writeFileSync(privatePath, value.pair.privateKey.export({ type: "pkcs8", format: "pem" }), { mode: 0o600 });

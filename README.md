@@ -375,15 +375,22 @@ export AIONIS_TENANT_ID=tenant-1
 export AIONIS_TRUST_ROOT_PUBLIC_KEY_PATH=/absolute/path/to/root-public.pem
 export AIONIS_TRUST_ROOT_SHA256=<64-lowercase-hex-spki-digest>
 export AIONIS_HOST_PRINCIPAL_ID=host-1
-export AIONIS_HOST_API_KEY=<random-token-at-least-32-bytes>
+export AIONIS_HOST_API_KEY_FILE=/absolute/path/to/host-api-key
 export AIONIS_OPERATOR_PRINCIPAL_ID=operator-1
-export AIONIS_OPERATOR_API_KEY=<different-random-token-at-least-32-bytes>
+export AIONIS_OPERATOR_API_KEY_FILE=/absolute/path/to/operator-api-key
 export AIONIS_HTTP_HOST=127.0.0.1
 export AIONIS_HTTP_PORT=3000
 export AIONIS_LOG_LEVEL=info
 
 npm run -s start
 ```
+
+Both token files must be absolute, regular, owned by the current Runtime uid,
+single-linked, exact mode `0400` or `0600`, and contain 32–512 bytes with no
+whitespace; every byte must be visible ASCII (`0x21`–`0x7e`). Runtime reads each file once, hashes the token, closes and zeroizes
+the read buffer, and retains no raw credential. Direct
+`AIONIS_HOST_API_KEY`/`AIONIS_OPERATOR_API_KEY` daemon fields have been removed;
+supplying either is an unknown-field error and startup fails closed.
 
 Optional daemon settings are `AIONIS_HTTP_BODY_LIMIT_BYTES` (default
 `1048576`) and `AIONIS_SHUTDOWN_TIMEOUT_MS` (default `30000`).
@@ -475,7 +482,7 @@ import { createAionisRuntimeV1Client } from "@aionis/continuation-sdk";
 
 const runtime = createAionisRuntimeV1Client({
   baseUrl: "http://127.0.0.1:3000",
-  apiKey: process.env.AIONIS_HOST_API_KEY!,
+  apiKey: process.env.AIONIS_CLIENT_API_KEY!,
   timeoutMs: 10_000,
   requestBodyLimitBytes: 1_048_576,
   responseBodyLimitBytes: 4_194_304,
@@ -511,17 +518,21 @@ only under `/data`, and has no built-in API key, provider credential, private
 key, or policy default.
 
 Copy [.env.example](.env.example) to `.env` and fill every value required by
-the services you intend to run. Compose passes an exact environment subset to
-each process; never add `env_file: .env` to a Runtime service. Secret bind
-mounts set `create_host_path: false`, so a missing key or seed path fails before
-container startup instead of being silently created as a host directory.
+the services you intend to run. The `.env` file contains only host paths for
+the daemon bearer tokens, never the tokens themselves. Compose passes an exact
+environment subset to each process; never add `env_file: .env` to a Runtime
+service. Secret bind mounts set `create_host_path: false`, so a missing token,
+key, or seed path fails before container startup instead of being silently
+created as a host directory.
 
 The image runs as `node` (`uid=1000`, `gid=1000`). Do not bind-mount the host
 keygen originals directly unless their numeric ownership already matches. Make
 deployment copies with the permissions the container can actually open. In a
 standard rootful Docker deployment, the trust-root public key may be
-`root:root 0444`; the effect private key and cohort seed must be private files
-owned by `1000:1000`. The root private key is never copied:
+`root:root 0444`; the daemon token files, effect private key, and cohort seed
+must be private files owned by `1000:1000`. Every token must contain 32–512
+visible-ASCII bytes (`0x21`–`0x7e`), use exact mode `0400` or `0600`, and have one hard
+link. The root private key is never copied:
 
 ```bash
 COMPOSE_SECRET_DIR=/absolute/private/path/aionis-compose-secrets
@@ -529,11 +540,17 @@ sudo install -d -o root -g root -m 0700 "$COMPOSE_SECRET_DIR"
 sudo install -o root -g root -m 0444 \
   "$AUTHORITY_DIR/root-public.pem" "$COMPOSE_SECRET_DIR/root-public.pem"
 sudo install -o 1000 -g 1000 -m 0400 \
+  "$AUTHORITY_DIR/host-api-key" "$COMPOSE_SECRET_DIR/host-api-key"
+sudo install -o 1000 -g 1000 -m 0400 \
+  "$AUTHORITY_DIR/operator-api-key" "$COMPOSE_SECRET_DIR/operator-api-key"
+sudo install -o 1000 -g 1000 -m 0400 \
   "$AUTHORITY_DIR/effect-private.pem" "$COMPOSE_SECRET_DIR/effect-private.pem"
 sudo install -o 1000 -g 1000 -m 0400 \
   "$AUTHORITY_DIR/cohort-assignment-seed.bin" "$COMPOSE_SECRET_DIR/cohort-seed.bin"
 
 export TRUST_ROOT_PUBLIC_KEY_FILE="$COMPOSE_SECRET_DIR/root-public.pem"
+export HOST_API_KEY_FILE="$COMPOSE_SECRET_DIR/host-api-key"
+export OPERATOR_API_KEY_FILE="$COMPOSE_SECRET_DIR/operator-api-key"
 export EFFECT_SIGNER_PRIVATE_KEY_FILE="$COMPOSE_SECRET_DIR/effect-private.pem"
 export COHORT_SEED_FILE="$COMPOSE_SECRET_DIR/cohort-seed.bin"
 ```

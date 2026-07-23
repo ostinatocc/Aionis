@@ -88,8 +88,9 @@ operator route may be registered. The route inventory in
 `src/runtime-v1/http-surface.ts` is the single authority for registration and
 tests.
 
-The daemon receives caller credentials and a pinned root public key. It never
-receives an embedding API key, effect private key, or root private key. A cohort
+The daemon reads each caller token once from a private stable file, retains only
+its SHA-256 digest, and receives a pinned root public key. It never receives an
+embedding API key, effect private key, or root private key. A cohort
 seed reaches the daemon only by reading the exact protected authority row from
 SQLite during assignment; it is never accepted through HTTP or environment,
 never returned or logged, and its transient buffer is cleared after HMAC use.

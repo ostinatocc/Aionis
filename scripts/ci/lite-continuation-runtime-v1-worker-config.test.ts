@@ -151,8 +151,10 @@ test("ANN, effect, and retention roles reject every embedding provider field", (
 test("worker rejects daemon authentication and HTTP controls instead of parsing them", () => {
   for (const field of [
     "AIONIS_HOST_API_KEY",
+    "AIONIS_HOST_API_KEY_FILE",
     "AIONIS_HOST_PRINCIPAL_ID",
     "AIONIS_OPERATOR_API_KEY",
+    "AIONIS_OPERATOR_API_KEY_FILE",
     "AIONIS_OPERATOR_PRINCIPAL_ID",
     "AIONIS_HTTP_HOST",
     "AIONIS_HTTP_PORT",
