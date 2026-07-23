@@ -18,7 +18,7 @@ import { createAionisRuntimeV1Client } from "@aionis/continuation-sdk";
 
 const runtime = createAionisRuntimeV1Client({
   baseUrl: "http://127.0.0.1:3000",
-  apiKey: process.env.AIONIS_HOST_API_KEY!,
+  apiKey: process.env.AIONIS_CLIENT_API_KEY!,
   timeoutMs: 10_000,
   requestBodyLimitBytes: 1_048_576,
   responseBodyLimitBytes: 4_194_304,

@@ -16,6 +16,8 @@ import {
 } from "../../src/runtime-v1/application.js";
 import { createContinuationRuntimeV1HttpServer } from
   "../../src/runtime-v1/http-server.js";
+import { daemonTokenFileEnvironment } from
+  "./support/continuation-runtime-v1-daemon-token-files.js";
 
 const HOST_TOKEN = "host-runtime-token-abcdefghijklmnopqrstuvwxyz";
 const OPERATOR_TOKEN = "operator-runtime-token-abcdefghijklmnopqrstuvwxyz";
@@ -30,11 +32,10 @@ function config() {
     AIONIS_DATA_PATH: "/tmp/aionis-v1/runtime.sqlite",
     AIONIS_TENANT_ID: "tenant-a",
     AIONIS_HOST_PRINCIPAL_ID: "host-a",
-    AIONIS_HOST_API_KEY: HOST_TOKEN,
     AIONIS_OPERATOR_PRINCIPAL_ID: "operator-a",
-    AIONIS_OPERATOR_API_KEY: OPERATOR_TOKEN,
     AIONIS_TRUST_ROOT_PUBLIC_KEY_PATH: "/tmp/aionis-v1/trust-root.pem",
     AIONIS_TRUST_ROOT_SHA256: "0".repeat(64),
+    ...daemonTokenFileEnvironment(HOST_TOKEN, OPERATOR_TOKEN),
   });
 }
 
