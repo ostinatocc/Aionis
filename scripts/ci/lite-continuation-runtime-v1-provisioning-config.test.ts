@@ -75,7 +75,9 @@ test("offline provisioner exposes only pinned public-root and optional seed-fd p
 test("offline provisioner rejects every daemon, worker, provider, signer, and root-private surface", () => {
   for (const [field, value] of [
     ["AIONIS_HOST_API_KEY", "host-secret"],
+    ["AIONIS_HOST_API_KEY_FILE", "/tmp/host-secret"],
     ["AIONIS_OPERATOR_API_KEY", "operator-secret"],
+    ["AIONIS_OPERATOR_API_KEY_FILE", "/tmp/operator-secret"],
     ["AIONIS_EMBEDDING_API_KEY", "provider-secret"],
     ["AIONIS_EFFECT_SIGNER_PRIVATE_KEY_PATH", "/tmp/effect.key"],
     ["AIONIS_TRUST_ROOT_PRIVATE_KEY_PATH", "/tmp/root.key"],

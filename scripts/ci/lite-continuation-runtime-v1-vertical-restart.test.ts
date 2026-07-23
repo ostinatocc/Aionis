@@ -47,6 +47,8 @@ import type { OfflinePolicyBundleInstallCommandV1 } from
   "../../src/runtime-v1/provisioning.js";
 import { createAionisRuntimeV1Client } from
   "../../src/runtime-v1/sdk.js";
+import { daemonTokenFileEnvironment } from
+  "./support/continuation-runtime-v1-daemon-token-files.js";
 
 const ROOT = fileURLToPath(new URL("../..", import.meta.url));
 const DAEMON_ENTRY = fileURLToPath(
@@ -484,14 +486,13 @@ function createFixture(port: number): VerticalFixture {
       ...authorityEnvironment,
       AIONIS_TENANT_ID: TENANT,
       AIONIS_HOST_PRINCIPAL_ID: HOST_PRINCIPAL_ID,
-      AIONIS_HOST_API_KEY: HOST_TOKEN,
       AIONIS_OPERATOR_PRINCIPAL_ID: OPERATOR_PRINCIPAL_ID,
-      AIONIS_OPERATOR_API_KEY: OPERATOR_TOKEN,
       AIONIS_HTTP_HOST: "127.0.0.1",
       AIONIS_HTTP_PORT: String(port),
       AIONIS_HTTP_BODY_LIMIT_BYTES: "1048576",
       AIONIS_LOG_LEVEL: "silent",
       AIONIS_SHUTDOWN_TIMEOUT_MS: "10000",
+      ...daemonTokenFileEnvironment(HOST_TOKEN, OPERATOR_TOKEN),
     },
     provisioningCommand,
     observationBody,

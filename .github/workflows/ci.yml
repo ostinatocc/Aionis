@@ -327,6 +327,8 @@ jobs:
           probe_root="$(mktemp -d)"
           probe_base="aionis-capability-${GITHUB_RUN_ID:-local}-${GITHUB_RUN_ATTEMPT:-0}"
           existing_root="$probe_root/existing-root.pem"
+          existing_host_token="$probe_root/existing-host-api-key"
+          existing_operator_token="$probe_root/existing-operator-api-key"
           existing_effect="$probe_root/existing-effect.pem"
           existing_seed="$probe_root/existing-seed.bin"
           render_root="$probe_root/render-root.pem"
@@ -335,12 +337,36 @@ jobs:
           : > "$existing_root"
           : > "$existing_effect"
           : > "$existing_seed"
+          printf %s 'ci-host-token-visible-ascii-0123456789' > "$existing_host_token"
+          printf %s 'ci-operator-token-visible-ascii-9876543210' > "$existing_operator_token"
+          TOKEN_FILES="$existing_host_token:$existing_operator_token" \
+            node --input-type=module -e '
+              import fs from "node:fs";
+              const paths = process.env.TOKEN_FILES?.split(":") ?? [];
+              if (paths.length !== 2) throw new Error("token file inventory drift");
+              const values = paths.map((path) => fs.readFileSync(path));
+              for (const value of values) {
+                if (value.length < 32 || value.length > 512
+                  || !value.every((byte) => byte >= 0x21 && byte <= 0x7e)) {
+                  throw new Error("invalid Compose token fixture");
+                }
+              }
+              if (values[0].equals(values[1])) {
+                throw new Error("Compose token fixtures must be distinct");
+              }
+            '
+          chmod 0400 "$existing_host_token" "$existing_operator_token"
+          sudo chown 1000:1000 "$existing_host_token" "$existing_operator_token"
+          test "$(stat -c '%u:%g:%a' "$existing_host_token")" = "1000:1000:400"
+          test "$(stat -c '%u:%g:%a' "$existing_operator_token")" = "1000:1000:400"
           probe_projects=()
           cleanup_probe() {
             local project
             for project in "${probe_projects[@]}"; do
               AIONIS_CONTAINER_IMAGE=aionis-continuation-runtime-v1:ci \
                 TRUST_ROOT_PUBLIC_KEY_FILE="$existing_root" \
+                HOST_API_KEY_FILE="$existing_host_token" \
+                OPERATOR_API_KEY_FILE="$existing_operator_token" \
                 EFFECT_SIGNER_PRIVATE_KEY_FILE="$existing_effect" \
                 COHORT_SEED_FILE="$existing_seed" \
                 docker compose --ansi never --env-file /dev/null \
@@ -353,6 +379,8 @@ jobs:
           }
           trap cleanup_probe EXIT
           compose_json="$(TRUST_ROOT_PUBLIC_KEY_FILE="$render_root" \
+            HOST_API_KEY_FILE="$existing_host_token" \
+            OPERATOR_API_KEY_FILE="$existing_operator_token" \
             EFFECT_SIGNER_PRIVATE_KEY_FILE="$render_effect" \
             COHORT_SEED_FILE="$render_seed" \
             docker compose --env-file /dev/null \
@@ -374,6 +402,18 @@ jobs:
                 aliasUses: 7,
                 source: "  source: ${TRUST_ROOT_PUBLIC_KEY_FILE:-./.secrets/UNCONFIGURED_TRUST_ROOT_PUBLIC_KEY}",
                 target: "/run/aionis/trust-root-public.pem",
+              },
+              "x-host-api-key-mount": {
+                alias: "host-api-key-mount",
+                aliasUses: 1,
+                source: "  source: ${HOST_API_KEY_FILE:-./.secrets/UNCONFIGURED_HOST_API_KEY}",
+                target: "/run/aionis/host-api-key",
+              },
+              "x-operator-api-key-mount": {
+                alias: "operator-api-key-mount",
+                aliasUses: 1,
+                source: "  source: ${OPERATOR_API_KEY_FILE:-./.secrets/UNCONFIGURED_OPERATOR_API_KEY}",
+                target: "/run/aionis/operator-api-key",
               },
               "x-effect-private-key-mount": {
                 alias: "effect-private-key-mount",
@@ -418,8 +458,10 @@ jobs:
             }
             const renderedCapabilitySources = new Map([
               ["/run/aionis/trust-root-public.pem", process.argv[2]],
-              ["/run/aionis/effect-signer-private.pem", process.argv[3]],
-              ["/run/aionis/cohort-assignment-seed.bin", process.argv[4]],
+              ["/run/aionis/host-api-key", process.argv[3]],
+              ["/run/aionis/operator-api-key", process.argv[4]],
+              ["/run/aionis/effect-signer-private.pem", process.argv[5]],
+              ["/run/aionis/cohort-assignment-seed.bin", process.argv[6]],
             ]);
             const authority = [
               "AIONIS_DATA_PATH", "AIONIS_TRUST_ROOT_PUBLIC_KEY_PATH",
@@ -434,8 +476,8 @@ jobs:
             const expectedEnvironment = {
               daemon: [
                 ...authority, "AIONIS_TENANT_ID", "AIONIS_HOST_PRINCIPAL_ID",
-                "AIONIS_HOST_API_KEY", "AIONIS_OPERATOR_PRINCIPAL_ID",
-                "AIONIS_OPERATOR_API_KEY", "AIONIS_HTTP_HOST",
+                "AIONIS_HOST_API_KEY_FILE", "AIONIS_OPERATOR_PRINCIPAL_ID",
+                "AIONIS_OPERATOR_API_KEY_FILE", "AIONIS_HTTP_HOST",
                 "AIONIS_HTTP_PORT", "AIONIS_HTTP_BODY_LIMIT_BYTES",
                 "AIONIS_LOG_LEVEL", "AIONIS_SHUTDOWN_TIMEOUT_MS",
               ],
@@ -452,8 +494,16 @@ jobs:
               ],
               "worker-retention": worker,
             };
+            if (expectedEnvironment.daemon.length !== 13
+              || expectedEnvironment.daemon.includes("AIONIS_HOST_API_KEY")
+              || expectedEnvironment.daemon.includes("AIONIS_OPERATOR_API_KEY")) {
+              throw new Error("daemon file-only environment inventory drift");
+            }
             const expectedMounts = {
-              daemon: ["/data", "/run/aionis/trust-root-public.pem"],
+              daemon: [
+                "/data", "/run/aionis/host-api-key",
+                "/run/aionis/operator-api-key", "/run/aionis/trust-root-public.pem",
+              ],
               provision: ["/data", "/run/aionis/trust-root-public.pem"],
               "provision-cohort": [
                 "/data", "/run/aionis/cohort-assignment-seed.bin",
@@ -515,11 +565,14 @@ jobs:
                 throw new Error(`shutdown grace drift: ${name}`);
               }
             }
-          ' "$compose_json" "$render_root" "$render_effect" "$render_seed"
+          ' "$compose_json" "$render_root" "$existing_host_token" \
+            "$existing_operator_token" "$render_effect" "$render_seed"
           positive_project="$probe_base-positive"
           probe_projects+=("$positive_project")
           AIONIS_CONTAINER_IMAGE=aionis-continuation-runtime-v1:ci \
             TRUST_ROOT_PUBLIC_KEY_FILE="$existing_root" \
+            HOST_API_KEY_FILE="$existing_host_token" \
+            OPERATOR_API_KEY_FILE="$existing_operator_token" \
             EFFECT_SIGNER_PRIVATE_KEY_FILE="$existing_effect" \
             COHORT_SEED_FILE="$existing_seed" \
             docker compose --ansi never --env-file /dev/null \
@@ -534,13 +587,17 @@ jobs:
             local label="$2"
             local missing="$3"
             local root_file="$4"
-            local effect_file="$5"
-            local seed_file="$6"
+            local host_token_file="$5"
+            local operator_token_file="$6"
+            local effect_file="$7"
+            local seed_file="$8"
             local project="$probe_base-$service-$label"
             local log="$probe_root/$service-$label.log"
             probe_projects+=("$project")
             if AIONIS_CONTAINER_IMAGE=aionis-continuation-runtime-v1:ci \
               TRUST_ROOT_PUBLIC_KEY_FILE="$root_file" \
+              HOST_API_KEY_FILE="$host_token_file" \
+              OPERATOR_API_KEY_FILE="$operator_token_file" \
               EFFECT_SIGNER_PRIVATE_KEY_FILE="$effect_file" \
               COHORT_SEED_FILE="$seed_file" \
               docker compose --ansi never --env-file /dev/null \
@@ -563,13 +620,22 @@ jobs:
             worker-ann worker-effect worker-retention; do
             missing="$probe_root/missing-$service-root.pem"
             probe_missing_bind "$service" root "$missing" "$missing" \
+              "$existing_host_token" "$existing_operator_token" \
               "$existing_effect" "$existing_seed"
           done
+          missing="$probe_root/missing-host-api-key"
+          probe_missing_bind daemon host-token "$missing" "$existing_root" \
+            "$missing" "$existing_operator_token" "$existing_effect" "$existing_seed"
+          missing="$probe_root/missing-operator-api-key"
+          probe_missing_bind daemon operator-token "$missing" "$existing_root" \
+            "$existing_host_token" "$missing" "$existing_effect" "$existing_seed"
           missing="$probe_root/missing-effect.pem"
           probe_missing_bind worker-effect effect "$missing" "$existing_root" \
+            "$existing_host_token" "$existing_operator_token" \
             "$missing" "$existing_seed"
           missing="$probe_root/missing-seed.bin"
           probe_missing_bind provision-cohort seed "$missing" "$existing_root" \
+            "$existing_host_token" "$existing_operator_token" \
             "$existing_effect" "$missing"
           cleanup_probe
           trap - EXIT

@@ -26,6 +26,8 @@ import {
 } from "../../src/runtime-v1/daemon-composition.js";
 import { openContinuationRuntimeV1Database } from
   "../../src/store/continuation-runtime-v1-database.js";
+import { daemonTokenFileEnvironment } from
+  "./support/continuation-runtime-v1-daemon-token-files.js";
 
 const ROOT = fileURLToPath(new URL("../..", import.meta.url));
 const ENTRY = fileURLToPath(
@@ -58,19 +60,18 @@ function daemonFixture(port: number): DaemonFixture {
     trustRootPath,
     environment: Object.freeze({
       AIONIS_DATA_PATH: dataPath,
-      AIONIS_HOST_API_KEY: HOST_TOKEN,
       AIONIS_HOST_PRINCIPAL_ID: "trusted-host-a",
       AIONIS_HTTP_BODY_LIMIT_BYTES: "1048576",
       AIONIS_HTTP_HOST: "127.0.0.1",
       AIONIS_HTTP_PORT: String(port),
       AIONIS_LOG_LEVEL: "info",
-      AIONIS_OPERATOR_API_KEY: OPERATOR_TOKEN,
       AIONIS_OPERATOR_PRINCIPAL_ID: "operator-a",
       AIONIS_SHUTDOWN_TIMEOUT_MS: "10000",
       AIONIS_TENANT_ID: "tenant-a",
       AIONIS_TRUST_ROOT_PUBLIC_KEY_PATH: trustRootPath,
       AIONIS_TRUST_ROOT_SHA256:
         authorityArtifactPublicKeySha256(pair.publicKey),
+      ...daemonTokenFileEnvironment(HOST_TOKEN, OPERATOR_TOKEN),
     }),
     cleanup: () => rmSync(root, { recursive: true, force: true }),
   };

@@ -11,6 +11,7 @@ import {
   mkdtempSync,
   readFileSync,
   rmSync,
+  writeFileSync,
 } from "node:fs";
 import { createServer } from "node:net";
 import { tmpdir } from "node:os";
@@ -379,6 +380,21 @@ function assertContainerPosture(containerId) {
     label: "container_posture",
   });
   assert.equal(result.stdout, "");
+  const inspected = run("docker", [
+    "inspect",
+    "--format",
+    "{{json .Config.Env}}",
+    containerId,
+  ], { env: cleanEnvironment(), label: "container_environment" });
+  const environment = JSON.parse(inspected.stdout);
+  assert.ok(environment.includes("AIONIS_HOST_API_KEY_FILE=/run/aionis/host-api-key"));
+  assert.ok(environment.includes(
+    "AIONIS_OPERATOR_API_KEY_FILE=/run/aionis/operator-api-key",
+  ));
+  assert.equal(environment.some((field) => field.startsWith("AIONIS_HOST_API_KEY=")), false);
+  assert.equal(environment.some((field) => field.startsWith("AIONIS_OPERATOR_API_KEY=")), false);
+  assert.equal(inspected.stdout.includes(HOST_TOKEN), false);
+  assert.equal(inspected.stdout.includes(OPERATOR_TOKEN), false);
 }
 
 function daemonLogs(containerId) {
@@ -392,6 +408,11 @@ function daemonLogs(containerId) {
 
 function assertShutdown(containerId, minimumCount) {
   const events = daemonLogs(containerId);
+  const serializedEvents = JSON.stringify(events);
+  assert.equal(serializedEvents.includes(HOST_TOKEN), false);
+  assert.equal(serializedEvents.includes(OPERATOR_TOKEN), false);
+  assert.equal(serializedEvents.includes("host-api-key"), false);
+  assert.equal(serializedEvents.includes("operator-api-key"), false);
   assert.ok(events.filter((event) => event.event === "listening").length
     >= minimumCount);
   const shutdowns = events.filter((event) => event.event === "shutdown_complete");
@@ -651,8 +672,12 @@ function prepareContainerSecrets(authorityDirectory, seedPath, deploymentDirecto
   chmodSync(deploymentDirectory, 0o700);
   const publicCopy = join(deploymentDirectory, "root-public.pem");
   const seedCopy = join(deploymentDirectory, "cohort-seed.bin");
+  const hostTokenCopy = join(deploymentDirectory, "host-api-key");
+  const operatorTokenCopy = join(deploymentDirectory, "operator-api-key");
   copyFileSync(join(authorityDirectory, "root-public.pem"), publicCopy);
   copyFileSync(seedPath, seedCopy);
+  writeFileSync(hostTokenCopy, HOST_TOKEN, { mode: 0o600 });
+  writeFileSync(operatorTokenCopy, OPERATOR_TOKEN, { mode: 0o600 });
   chmodSync(publicCopy, 0o600);
   chmodSync(seedCopy, 0o600);
   assert.equal(existsSync(join(deploymentDirectory, "root-private.pem")), false);
@@ -672,14 +697,18 @@ function prepareContainerSecrets(authorityDirectory, seedPath, deploymentDirecto
       "chmod 0444 /secrets/root-public.pem",
       "chown 1000:1000 /secrets/cohort-seed.bin",
       "chmod 0400 /secrets/cohort-seed.bin",
+      "chown 1000:1000 /secrets/host-api-key /secrets/operator-api-key",
+      "chmod 0400 /secrets/host-api-key /secrets/operator-api-key",
       "test \"$(stat -c %u:%g:%a /secrets/root-public.pem)\" = 0:0:444",
       "test \"$(stat -c %u:%g:%a /secrets/cohort-seed.bin)\" = 1000:1000:400",
+      "test \"$(stat -c %u:%g:%a /secrets/host-api-key)\" = 1000:1000:400",
+      "test \"$(stat -c %u:%g:%a /secrets/operator-api-key)\" = 1000:1000:400",
     ].join("; "),
   ], {
     env: cleanEnvironment(),
     label: "container_secret_posture",
   });
-  return { publicCopy, seedCopy };
+  return { hostTokenCopy, operatorTokenCopy, publicCopy, seedCopy };
 }
 
 async function main() {
@@ -719,10 +748,8 @@ async function main() {
     );
     composeEnvironment = cleanEnvironment({
       AIONIS_CONTAINER_IMAGE: IMAGE,
-      AIONIS_HOST_API_KEY: HOST_TOKEN,
       AIONIS_HOST_PRINCIPAL_ID: HOST_ID,
       AIONIS_LOG_LEVEL: "silent",
-      AIONIS_OPERATOR_API_KEY: OPERATOR_TOKEN,
       AIONIS_OPERATOR_PRINCIPAL_ID: OPERATOR_ID,
       AIONIS_SHUTDOWN_TIMEOUT_MS: "10000",
       AIONIS_TENANT_ID: TENANT,
@@ -731,6 +758,8 @@ async function main() {
       COMPOSE_IGNORE_ORPHANS: "true",
       HTTP_BIND: "127.0.0.1",
       HTTP_PORT: String(port),
+      HOST_API_KEY_FILE: deployed.hostTokenCopy,
+      OPERATOR_API_KEY_FILE: deployed.operatorTokenCopy,
       TRUST_ROOT_PUBLIC_KEY_FILE: deployed.publicCopy,
     });
 
