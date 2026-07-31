@@ -347,8 +347,8 @@ evidence or silently mutate validated content.
 | Plan authority established | Complete |
 | 1.1 Historical L1 product boundary | Complete |
 | 1.2 AgentSession developer quickstart | Complete |
-| 1.3 Installer alignment | In progress — public Runtime/create RC tags verified; npm installer distribution pending |
-| 1.4 Verifier onboarding | In progress — public GitHub install effect verified; npm installer distribution pending |
+| 1.3 Installer alignment | Complete — `@aionis/create@0.3.9-rc.1` published under npm `next` |
+| 1.4 Verifier onboarding | Complete — npm-installed pass/complete and fail/continue verified |
 | 1.5 Thin integration convergence | Pending |
 | 1.6 Expanded continuity evidence | Pending |
 | Phase 2 self-learning repair | Blocked on Phase 1 |
@@ -502,7 +502,43 @@ project state = fail
 -> process exit = 2
 ```
 
-The public source release path is therefore proven. Product Gate A remains
-open only because the newly tagged installer has not yet been published to
-npm; `npx @aionis/create` still resolves the previous npm release until that
-explicit external publication occurs.
+The public source release path was therefore proven. At that checkpoint,
+Product Gate A remained open because the newly tagged installer had not yet
+been published to npm. Section 15 records the subsequent npm publication and
+registry-installed product verification.
+
+## 15. npm installer publication evidence
+
+Published and verified on 2026-07-31:
+
+- npm identity `fielddd` published `@aionis/create@0.3.9-rc.1` with public
+  access under the `next` dist-tag;
+- npm `latest` remains `0.3.8`; the release candidate did not replace the
+  stable default;
+- `npx --yes @aionis/create@next` resolved the published package and, without
+  any Runtime repo or branch override, selected public Runtime
+  `v0.4.0-rc.1`;
+- the registry-installed package cloned Runtime commit
+  `6fb4052e62c49c15808680e23f297f1568f1b51a`, installed dependencies, built,
+  loaded the generated verifier definition from `.env`, and started;
+- the generated AgentSession completed a passing real project check and kept
+  a failing check in `continue`.
+
+Observed npm-installed product behavior:
+
+```text
+project state = pass
+-> candidate_verifier_status = passed
+-> finish_status = completed
+-> process exit = 0
+
+project state = fail
+-> candidate_verifier_status = failed
+-> finish_status = continue
+-> continuation.reason = verifier_failed
+-> process exit = 2
+```
+
+Tasks 1.3 and 1.4 are complete. Product Gate A remains open on the canonical
+public SDK and thin integrations: the independently published SDK still lacks
+the current AgentSession contract, and CLI/MCP/AIFS convergence is Task 1.5.
