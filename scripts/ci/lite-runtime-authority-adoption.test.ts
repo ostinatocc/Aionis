@@ -3,6 +3,8 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import test from "node:test";
+import { removeExecutionEpisodeV7ObjectsForPreviousSchemaFixture } from
+  "./schema-fixture-helpers.ts";
 
 import {
   inspectLiteMemoryCommitAuthority,
@@ -80,6 +82,7 @@ async function prepareV5DelegatedFixture(name: string): Promise<{
     try {
       db.exec("BEGIN IMMEDIATE");
       try {
+        removeExecutionEpisodeV7ObjectsForPreviousSchemaFixture(db);
         db.exec(`DROP TABLE ${LITE_RUNTIME_AUTHORITY_ADOPTION_BINDING_TABLE}`);
         db.exec(`DROP TABLE ${LITE_RUNTIME_AUTHORITY_ADOPTION_MANIFEST_TABLE}`);
         db.prepare(
@@ -136,8 +139,8 @@ test("fresh v6 authority adoption surface is sealed, empty, and authoritative", 
     try {
       const schema = inspectLiteRuntimeSchema(db);
       assert.equal(schema.classification, "current", JSON.stringify(schema));
-      assert.equal(schema.detected_version, 6);
-      assert.equal(LITE_RUNTIME_WRITE_SCHEMA_VERSION, 6);
+      assert.equal(schema.detected_version, 8);
+      assert.equal(LITE_RUNTIME_WRITE_SCHEMA_VERSION, 8);
       assert.equal(countRows(db, LITE_RUNTIME_AUTHORITY_ADOPTION_MANIFEST_TABLE), 0);
       assert.equal(countRows(db, LITE_RUNTIME_AUTHORITY_ADOPTION_BINDING_TABLE), 0);
 
@@ -162,7 +165,7 @@ test("v5 delegated operation becomes an exact v6 binding claimed by a direct v2 
     try {
       const schema = inspectLiteRuntimeSchema(db);
       assert.equal(schema.classification, "current", JSON.stringify(schema));
-      assert.equal(schema.detected_version, 6);
+      assert.equal(schema.detected_version, 8);
 
       const manifest = db.prepare(
         `SELECT scope, manifest_id, source_schema_version, target_schema_version,

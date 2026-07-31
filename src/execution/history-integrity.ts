@@ -15,7 +15,11 @@ import {
   type ExecutionTreeV1,
 } from "./tree.js";
 import {
+  CurrentExecutionStateProjectionTransitionV1Schema,
+  CurrentExecutionStateV2Schema,
   ExecutionStateV1Schema,
+  type CurrentExecutionStateProjectionTransitionV1,
+  type CurrentExecutionStateV2,
   type ExecutionStateV1,
 } from "./types.js";
 
@@ -71,7 +75,7 @@ type ParsedProjection = {
   sha256: string;
   scope: string;
   resourceId: string;
-  value: ExecutionStateV1 | ExecutionTreeV1;
+  value: ExecutionStateV1 | CurrentExecutionStateV2 | ExecutionTreeV1;
 };
 
 type ParsedEvent = {
@@ -89,8 +93,11 @@ type ParsedEvent = {
   afterScope: string;
   afterResourceId: string;
   afterUpdatedAt: string;
-  event: ExecutionStateTransitionV1 | ExecutionTreeOperationV1;
-  after: ExecutionStateV1 | ExecutionTreeV1;
+  event:
+    | ExecutionStateTransitionV1
+    | CurrentExecutionStateProjectionTransitionV1
+    | ExecutionTreeOperationV1;
+  after: ExecutionStateV1 | CurrentExecutionStateV2 | ExecutionTreeV1;
 };
 
 type ParsedHistory = {
@@ -211,6 +218,22 @@ function parseProjection(
 ): ParsedProjection {
   const parsed = parseCanonicalJson(row.projection_json);
   if (config.resourceKind === "execution_state") {
+    if (
+      parsed.raw
+      && typeof parsed.raw === "object"
+      && !Array.isArray(parsed.raw)
+      && (parsed.raw as { contract_version?: unknown }).contract_version
+        === "current_execution_state_v2"
+    ) {
+      const value = CurrentExecutionStateV2Schema.parse(parsed.raw);
+      return {
+        canonical: parsed.canonical,
+        sha256: parsed.sha256,
+        scope: value.scope_id,
+        resourceId: value.continuation_id,
+        value,
+      };
+    }
     const value = ExecutionStateV1Schema.parse(parsed.raw);
     return {
       canonical: parsed.canonical,
@@ -234,6 +257,39 @@ function parseEvent(row: EventRow, config: ExecutionHistoryAuditConfig): ParsedE
   const parsedEvent = parseCanonicalJson(row.event_json);
   const parsedAfter = parseCanonicalJson(row.event_after_json);
   if (config.resourceKind === "execution_state") {
+    if (
+      parsedEvent.raw
+      && typeof parsedEvent.raw === "object"
+      && !Array.isArray(parsedEvent.raw)
+      && (
+        parsedEvent.raw as { contract_version?: unknown }
+      ).contract_version
+        === "current_execution_state_projection_transition_v1"
+    ) {
+      const event =
+        CurrentExecutionStateProjectionTransitionV1Schema.parse(
+          parsedEvent.raw,
+        );
+      const after = CurrentExecutionStateV2Schema.parse(parsedAfter.raw);
+      return {
+        row,
+        eventCanonical: parsedEvent.canonical,
+        eventAfterCanonical: parsedAfter.canonical,
+        eventAfterSha256: parsedAfter.sha256,
+        scope: after.scope_id,
+        resourceId: event.continuation_id,
+        eventId: event.source_event.event_id,
+        type: "current_state_projected",
+        at: event.projected_at,
+        actorRole: "runtime_projector",
+        expectedRevision: event.expected_revision,
+        afterScope: after.scope_id,
+        afterResourceId: after.continuation_id,
+        afterUpdatedAt: after.updated_at,
+        event,
+        after,
+      };
+    }
     const event = ExecutionStateTransitionV1Schema.parse(parsedEvent.raw);
     const after = ExecutionStateV1Schema.parse(parsedAfter.raw);
     return {
@@ -283,6 +339,33 @@ function applyEventToAfter(
   config: ExecutionHistoryAuditConfig,
 ): string {
   if (config.resourceKind === "execution_state") {
+    if (
+      "contract_version" in current.event
+      && current.event.contract_version
+        === "current_execution_state_projection_transition_v1"
+    ) {
+      const prior = CurrentExecutionStateV2Schema.parse(previous.after);
+      const event =
+        CurrentExecutionStateProjectionTransitionV1Schema.parse(
+          current.event,
+        );
+      const after = CurrentExecutionStateV2Schema.parse(current.after);
+      if (
+        event.continuation_id !== prior.continuation_id
+        || event.expected_revision !== prior.revision
+        || event.expected_state_sha256 !== prior.state_sha256
+        || event.projected_revision !== after.revision
+        || event.projected_state_sha256 !== after.state_sha256
+        || after.parent_state_sha256 !== prior.state_sha256
+        || after.scope_id !== prior.scope_id
+        || after.continuation_id !== prior.continuation_id
+      ) {
+        throw new Error(
+          "current_execution_state_projection_chain_invalid",
+        );
+      }
+      return stableJson(after);
+    }
     return stableJson(applyExecutionStateTransition(
       previous.after as ExecutionStateV1,
       current.event as ExecutionStateTransitionV1,
@@ -349,7 +432,21 @@ function auditExecutionHistory(
     try {
       parsedEventJson = parseCanonicalJson(row.event_json);
       if (config.resourceKind === "execution_state") {
-        ExecutionStateTransitionV1Schema.parse(parsedEventJson.raw);
+        if (
+          parsedEventJson.raw
+          && typeof parsedEventJson.raw === "object"
+          && !Array.isArray(parsedEventJson.raw)
+          && (
+            parsedEventJson.raw as { contract_version?: unknown }
+          ).contract_version
+            === "current_execution_state_projection_transition_v1"
+        ) {
+          CurrentExecutionStateProjectionTransitionV1Schema.parse(
+            parsedEventJson.raw,
+          );
+        } else {
+          ExecutionStateTransitionV1Schema.parse(parsedEventJson.raw);
+        }
       } else {
         ExecutionTreeOperationV1Schema.parse(parsedEventJson.raw);
       }

@@ -3,6 +3,8 @@ import assert from "node:assert/strict";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
+import { removeExecutionEpisodeV7ObjectsForPreviousSchemaFixture } from
+  "./schema-fixture-helpers.ts";
 import { runAppliedAuthorityMutationV2 } from
   "../../src/memory/applied-authority-mutation.ts";
 import {
@@ -63,6 +65,9 @@ async function prepareMigratedStructuredFixture(
   try {
     legacyDatabase.db.exec("BEGIN IMMEDIATE");
     try {
+      removeExecutionEpisodeV7ObjectsForPreviousSchemaFixture(
+        legacyDatabase.db,
+      );
       legacyDatabase.db.exec("DROP TABLE lite_runtime_authority_adoption_bindings");
       legacyDatabase.db.exec("DROP TABLE lite_runtime_authority_adoption_manifests");
       const metadataUpdate = legacyDatabase.db.prepare(
@@ -97,7 +102,7 @@ async function prepareMigratedStructuredFixture(
       `SELECT version FROM lite_runtime_schema_metadata
        WHERE component = 'write_projection'`,
     ).get() as { version: number } | undefined;
-    assert.equal(metadata?.version, 6);
+    assert.equal(metadata?.version, 8);
     const authority = inspectLiteMemoryCommitAuthority(migrated);
     assert.equal(authority.ok, true, JSON.stringify(authority.findings));
     assert.ok(authority.adoption_manifest_count > 0);

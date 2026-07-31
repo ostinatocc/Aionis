@@ -22,7 +22,6 @@ import { type AssociativeLinkTriggerOrigin } from "./associative-linking-types.j
 import { MemoryWriteRequest } from "./schemas.js";
 import type { EmbeddingProvider } from "../embeddings/types.js";
 import { resolveTenantScope } from "./tenant.js";
-import { distillWriteArtifacts, type WriteDistillationSummary } from "./write-distillation.js";
 import type {
   PreparedEdge,
   PreparedNode,
@@ -35,10 +34,6 @@ export type {
   PreparedWrite,
   WriteResult,
 } from "./write-contract.js";
-import {
-  enrichPreparedNodeLifecycle,
-  normalizeExecutionNativeSlots,
-} from "./write-execution-native.js";
 import {
   resolveNodeAnchorKind,
   resolveNodeArchiveRelocationSurface,
@@ -552,41 +547,7 @@ export async function prepareMemoryWrite(
     defaultOwnerTeamId,
     nodes,
     edges,
-    seenNodeIds,
   } = prepareWriteBatch(parsed, tenancy, defaultTenantId, opts);
-
-  let distillation: WriteDistillationSummary | undefined;
-  if (parsed.distill?.enabled) {
-    const distilled = distillWriteArtifacts({
-      scope,
-      input_text: inputText ?? null,
-      nodes,
-      config: parsed.distill,
-      default_memory_lane: defaultLane,
-      default_producer_agent_id: defaultProducerAgentId,
-      default_owner_agent_id: defaultOwnerAgentId,
-      default_owner_team_id: defaultOwnerTeamId,
-    });
-    for (const node of distilled.nodes) {
-      node.slots = normalizeExecutionNativeSlots(node.type, node.slots ?? {}, node.title ?? null, node.text_summary ?? null, {
-        raw_ref: node.raw_ref ?? null,
-        evidence_ref: node.evidence_ref ?? null,
-      });
-      const enrichedNode = enrichPreparedNodeLifecycle(node);
-      const priorId = seenNodeIds.get(node.id);
-      if (priorId) {
-        badRequest("distillation_node_id_collision", "distillation generated duplicate node id within write batch", {
-          node_id: node.id,
-          existing_index: priorId.index,
-          generated_type: node.type,
-        });
-      }
-      seenNodeIds.set(node.id, { index: nodes.length, scope: node.scope });
-      nodes.push(enrichedNode);
-    }
-    edges.push(...distilled.edges);
-    distillation = distilled.summary;
-  }
 
   assertSingleScopeWrite(scope, tenancy.scope, nodes, edges);
 
@@ -626,7 +587,6 @@ export async function prepareMemoryWrite(
     force_reembed: parsed.force_reembed ?? false,
     nodes,
     edges,
-    distillation,
   };
 }
 

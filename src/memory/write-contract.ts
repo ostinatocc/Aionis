@@ -1,5 +1,3 @@
-import type { WriteDistillationSummary } from "./write-distillation.js";
-
 export type WriteResult = {
   tenant_id?: string;
   scope?: string;
@@ -14,7 +12,6 @@ export type WriteResult = {
     | { completed_inline: true; attempted_nodes: number; updated_nodes: number }
     | { failed_inline: true; attempted_nodes: number; failed_nodes: number; error?: string };
   warnings?: Array<{ code: string; message: string; details?: Record<string, unknown> }>;
-  distillation?: WriteDistillationSummary;
 };
 
 export type PreparedNode = {
@@ -72,5 +69,4 @@ export type PreparedWrite = {
   force_reembed: boolean;
   nodes: PreparedNode[];
   edges: PreparedEdge[];
-  distillation?: WriteDistillationSummary;
 };

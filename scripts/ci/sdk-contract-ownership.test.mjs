@@ -120,7 +120,15 @@ test("Runtime owns named SDK contract regions instead of the whole client file",
 
   const runtimeRegions = runtimeOwnedRegions(runtimeSource);
   const distributedRegions = runtimeOwnedRegions(distributedSource);
-  assert.deepEqual([...runtimeRegions.keys()].sort(), ["host-receipt-helpers", "public-contracts"]);
+  assert.deepEqual(
+    [...runtimeRegions.keys()].sort(),
+    [
+      "execution-episode-client",
+      "execution-episode-execution-client",
+      "host-receipt-helpers",
+      "public-contracts",
+    ],
+  );
   assert.deepEqual([...distributedRegions.keys()].sort(), [...runtimeRegions.keys()].sort());
   for (const [name, body] of runtimeRegions) assert.equal(distributedRegions.get(name), body, `${name} must be generated from Runtime`);
 });

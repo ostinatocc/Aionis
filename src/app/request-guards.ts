@@ -1,5 +1,4 @@
 import type { RuntimeConfig } from "../config/runtime-config.js";
-import type { RecallAuth } from "../memory/recall.js";
 import { secretTokensEqual } from "../util/admin_auth.js";
 import { createAuthResolver, type AuthPrincipal } from "../util/auth.js";
 import { sha256Hex } from "../util/crypto.js";
@@ -36,73 +35,23 @@ type ReplyWithHeader = {
   header: (name: string, value: unknown) => unknown;
 };
 
-export type RateLimitKind = "recall" | "debug_embeddings" | "write";
-export type TenantQuotaKind = "recall" | "debug_embeddings" | "write";
+export type RateLimitKind = "recall" | "write";
+export type TenantQuotaKind = "recall" | "write";
 export type InflightKind = "recall" | "write";
 
 export type IdentityRequestKind =
   | "write"
-  | "handoff_store"
-  | "handoff_recover"
-  | "rehydrate"
-  | "activate"
-  | "find"
-  | "continuity_review_pack"
-  | "agent_memory_inspect"
-  | "agent_memory_review_pack"
-  | "agent_memory_resume_pack"
-  | "agent_memory_handoff_pack"
-  | "execution_introspect"
-  | "execution_context_assemble"
-  | "evolution_review_pack"
-  | "action_retrieval"
-  | "experience_intelligence"
-  | "delegation_records_write"
-  | "delegation_records_find"
-  | "delegation_records_aggregate"
-  | "trajectory_compile"
+  | "execution_episode"
   | "resolve"
   | "rehydrate_payload"
   | "product_guide"
-  | "recall"
-  | "recall_text"
-  | "planning_context"
-  | "context_assemble"
   | "feedback"
-  | "rules_state"
-  | "rules_evaluate"
-  | "tools_select"
-  | "tools_decision"
-  | "tools_run"
-  | "tools_feedback"
-  | "learning_loop_run"
-  | "runtime_maintenance_run"
-  | "policy_learning_control_apply"
-  | "anchors_suppress"
-  | "anchors_unsuppress"
-  | "patterns_suppress"
-  | "patterns_unsuppress"
-  | "replay_run_start"
-  | "replay_step_before"
-  | "replay_step_after"
-  | "replay_run_end"
-  | "replay_run_get"
-  | "replay_playbook_compile"
-  | "replay_playbook_get"
-  | "replay_playbook_candidate"
-  | "replay_playbook_promote"
-  | "replay_playbook_repair"
-  | "replay_playbook_repair_review"
-  | "replay_playbook_run"
-  | "replay_playbook_dispatch";
+  | "anchors_suppress";
 
 type CreateRequestGuardsArgs = {
   config: Pick<RuntimeConfig, "runtime" | "governance" | "limits">;
-  embedder: { embed: (texts: string[]) => Promise<number[][]> } | null;
   recallLimiter: Limiter | null;
-  debugEmbedLimiter: Limiter | null;
   writeLimiter: Limiter | null;
-  recallTextEmbedLimiter: Limiter | null;
   recallInflightGate: InflightGate;
   writeInflightGate: InflightGate;
 };
@@ -304,62 +253,18 @@ function sleep(ms: number) {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
-function isReplayReadIdentityKind(kind: IdentityRequestKind): boolean {
-  return (
-    kind === "replay_run_start"
-    || kind === "replay_step_before"
-    || kind === "replay_step_after"
-    || kind === "replay_run_end"
-    || kind === "replay_run_get"
-    || kind === "replay_playbook_compile"
-    || kind === "replay_playbook_get"
-    || kind === "replay_playbook_candidate"
-    || kind === "replay_playbook_promote"
-    || kind === "replay_playbook_repair"
-    || kind === "replay_playbook_repair_review"
-    || kind === "replay_playbook_run"
-    || kind === "replay_playbook_dispatch"
-    || kind === "execution_introspect"
-    || kind === "continuity_review_pack"
-    || kind === "evolution_review_pack"
-  );
-}
-
-function isReplayWriteIdentityKind(kind: IdentityRequestKind): boolean {
-  return (
-    kind === "replay_run_start"
-    || kind === "replay_step_before"
-    || kind === "replay_step_after"
-    || kind === "replay_run_end"
-    || kind === "replay_playbook_compile"
-    || kind === "replay_playbook_promote"
-    || kind === "replay_playbook_repair"
-    || kind === "replay_playbook_repair_review"
-    || kind === "replay_playbook_run"
-    || kind === "replay_playbook_dispatch"
-  );
-}
-
 function isProductLifecycleIdentityKind(kind: IdentityRequestKind): boolean {
   return (
-    kind === "activate"
-    || kind === "rehydrate"
-    || kind === "rehydrate_payload"
+    kind === "rehydrate_payload"
     || kind === "feedback"
     || kind === "anchors_suppress"
-    || kind === "anchors_unsuppress"
-    || kind === "patterns_suppress"
-    || kind === "patterns_unsuppress"
   );
 }
 
 export function createRequestGuards({
   config,
-  embedder,
   recallLimiter,
-  debugEmbedLimiter,
   writeLimiter,
-  recallTextEmbedLimiter,
   recallInflightGate,
   writeInflightGate,
 }: CreateRequestGuardsArgs) {
@@ -386,26 +291,10 @@ export function createRequestGuards({
         sweep_every_n: 500,
       })
     : null;
-  const tenantDebugEmbedLimiter = governance.TENANT_QUOTA_ENABLED
-    ? new TokenBucketLimiter({
-        rate_per_sec: limits.TENANT_DEBUG_EMBED_RATE_LIMIT_RPS,
-        burst: limits.TENANT_DEBUG_EMBED_RATE_LIMIT_BURST,
-        ttl_ms: limits.RATE_LIMIT_TTL_MS,
-        sweep_every_n: 500,
-      })
-    : null;
   const tenantWriteLimiter = governance.TENANT_QUOTA_ENABLED
     ? new TokenBucketLimiter({
         rate_per_sec: limits.TENANT_WRITE_RATE_LIMIT_RPS,
         burst: limits.TENANT_WRITE_RATE_LIMIT_BURST,
-        ttl_ms: limits.RATE_LIMIT_TTL_MS,
-        sweep_every_n: 500,
-      })
-    : null;
-  const tenantRecallTextEmbedLimiter = governance.TENANT_QUOTA_ENABLED
-    ? new TokenBucketLimiter({
-        rate_per_sec: limits.TENANT_RECALL_TEXT_EMBED_RATE_LIMIT_RPS,
-        burst: limits.TENANT_RECALL_TEXT_EMBED_RATE_LIMIT_BURST,
         ttl_ms: limits.RATE_LIMIT_TTL_MS,
         sweep_every_n: 500,
       })
@@ -424,18 +313,6 @@ export function createRequestGuards({
       : String(req.raw?.socket?.remoteAddress ?? req.socket?.remoteAddress ?? req.ip ?? "");
     req.aionis_client_ip = ip;
     return ip;
-  };
-
-  const buildRecallAuth = (req: RequestLike, wantDebugEmbeddings: boolean): RecallAuth => {
-    if (!wantDebugEmbeddings) return { allow_debug_embeddings: false };
-
-    const headerToken = String(req.headers?.["x-admin-token"] ?? "");
-    if (secretTokensEqual(headerToken, governance.ADMIN_TOKEN)) return { allow_debug_embeddings: true };
-
-    const ip = requestClientIp(req);
-    if (!governance.ADMIN_TOKEN && runtime.APP_ENV !== "prod" && isLoopbackIp(ip)) return { allow_debug_embeddings: true };
-
-    return { allow_debug_embeddings: false };
   };
 
   const rateLimitKey = (req: RequestLike, category: string): string => {
@@ -462,12 +339,7 @@ export function createRequestGuards({
 
   const enforceRateLimit = async (req: RequestLike, reply: ReplyWithHeader, kind: RateLimitKind) => {
     if (!limits.RATE_LIMIT_ENABLED) return;
-    const limiter =
-      kind === "debug_embeddings"
-        ? debugEmbedLimiter
-        : kind === "write"
-          ? writeLimiter
-          : recallLimiter;
+    const limiter = kind === "write" ? writeLimiter : recallLimiter;
     if (!limiter) return;
 
     const ip = requestClientIp(req);
@@ -485,33 +357,8 @@ export function createRequestGuards({
 
     reply.header("retry-after", Math.ceil(res.retry_after_ms / 1000));
     const code =
-      kind === "debug_embeddings"
-        ? "rate_limited_debug_embeddings"
-        : kind === "write"
-          ? "rate_limited_write"
-          : "rate_limited_recall";
+      kind === "write" ? "rate_limited_write" : "rate_limited_recall";
     throw new HttpError(429, code, `rate limited (${kind}); retry later`, {
-      retry_after_ms: res.retry_after_ms,
-      waited_ms: waitedMs,
-    });
-  };
-
-  const enforceRecallTextEmbedQuota = async (req: RequestLike, reply: ReplyWithHeader, tenantId: string) => {
-    if (!embedder) return;
-    if (!limits.RATE_LIMIT_ENABLED || !recallTextEmbedLimiter) return;
-
-    const key = rateLimitKey(req, "recall_text_embed");
-    let waitedMs = 0;
-    let res = recallTextEmbedLimiter.check(key, 1);
-    if (!res.allowed && limits.RECALL_TEXT_EMBED_RATE_LIMIT_MAX_WAIT_MS > 0) {
-      waitedMs = Math.min(limits.RECALL_TEXT_EMBED_RATE_LIMIT_MAX_WAIT_MS, Math.max(1, res.retry_after_ms));
-      await sleep(waitedMs);
-      res = recallTextEmbedLimiter.check(key, 1);
-    }
-    if (res.allowed) return;
-
-    reply.header("retry-after", Math.ceil(res.retry_after_ms / 1000));
-    throw new HttpError(429, "rate_limited_recall_text_embed", "recall_text embedding quota exceeded; retry later", {
       retry_after_ms: res.retry_after_ms,
       waited_ms: waitedMs,
     });
@@ -533,7 +380,7 @@ export function createRequestGuards({
     kind: IdentityRequestKind,
   ): unknown => {
     if (!body || typeof body !== "object" || Array.isArray(body)) return body;
-    if (kind === "write" || kind === "handoff_store" || kind === "delegation_records_write") {
+    if (kind === "write") {
       assertNoReservedRuntimeWriteClaims(body);
     }
     const obj = { ...(body as Record<string, unknown>) };
@@ -554,10 +401,8 @@ export function createRequestGuards({
 
       if (
         kind === "write"
-        || kind === "handoff_store"
         || kind === "product_guide"
         || kind === "feedback"
-        || kind === "tools_feedback"
         || kind === "resolve"
         || isProductLifecycleIdentityKind(kind)
       ) {
@@ -574,7 +419,6 @@ export function createRequestGuards({
         if (
           kind === "product_guide"
           || kind === "feedback"
-          || kind === "tools_feedback"
           || kind === "resolve"
           || isProductLifecycleIdentityKind(kind)
         ) {
@@ -582,7 +426,7 @@ export function createRequestGuards({
           if (principalTeamId) obj.consumer_team_id = principalTeamId;
           else delete obj.consumer_team_id;
         }
-        if (kind === "product_guide" || kind === "tools_feedback") {
+        if (kind === "product_guide") {
           const contextRecord = asRecord(obj.context);
           if (contextRecord) {
             const agentRecord = asRecord(contextRecord.agent);
@@ -596,7 +440,7 @@ export function createRequestGuards({
             };
           }
         }
-        if (kind === "write" || kind === "handoff_store") {
+        if (kind === "write") {
           obj.actor = principalActorId;
           obj.producer_agent_id = principalAgentId ?? principalActorId;
           if (principalAgentId) obj.owner_agent_id = principalAgentId;
@@ -604,7 +448,7 @@ export function createRequestGuards({
           if (principalTeamId) obj.owner_team_id = principalTeamId;
           else delete obj.owner_team_id;
         }
-        if (kind === "feedback" || kind === "tools_feedback") obj.actor = principalActorId;
+        if (kind === "feedback") obj.actor = principalActorId;
         if (isProductLifecycleIdentityKind(kind)) {
           obj.actor = principalActorId;
           const payload = asRecord(obj.payload);
@@ -636,51 +480,24 @@ export function createRequestGuards({
       }
     }
 
-    if (isReplayReadIdentityKind(kind) && !obj.consumer_agent_id) {
-      obj.consumer_agent_id = runtime.LITE_LOCAL_ACTOR_ID;
-    }
-
     if (
       (
         kind === "rehydrate_payload"
         || kind === "anchors_suppress"
-        || kind === "anchors_unsuppress"
-        || kind === "patterns_suppress"
-        || kind === "patterns_unsuppress"
       )
       && !obj.actor
     ) {
       obj.actor = runtime.LITE_LOCAL_ACTOR_ID;
     }
 
-    if (kind === "write" || kind === "handoff_store" || isReplayWriteIdentityKind(kind)) {
+    if (kind === "write") {
       if (!obj.actor) obj.actor = runtime.LITE_LOCAL_ACTOR_ID;
       if (!obj.memory_lane) obj.memory_lane = "private";
       if (!obj.producer_agent_id) obj.producer_agent_id = runtime.LITE_LOCAL_ACTOR_ID;
       if (!obj.owner_agent_id && !obj.owner_team_id) obj.owner_agent_id = runtime.LITE_LOCAL_ACTOR_ID;
     }
 
-    if (kind === "delegation_records_write") {
-      if (!obj.actor) obj.actor = runtime.LITE_LOCAL_ACTOR_ID;
-      if (!obj.memory_lane) obj.memory_lane = "shared";
-      if (!obj.producer_agent_id) obj.producer_agent_id = runtime.LITE_LOCAL_ACTOR_ID;
-      if (!obj.owner_agent_id && !obj.owner_team_id) obj.owner_agent_id = runtime.LITE_LOCAL_ACTOR_ID;
-    }
-
-    if (
-      kind === "planning_context"
-      || kind === "context_assemble"
-      || kind === "execution_context_assemble"
-      || kind === "experience_intelligence"
-      || kind === "evolution_review_pack"
-      || kind === "continuity_review_pack"
-      || kind === "delegation_records_find"
-      || kind === "delegation_records_aggregate"
-    ) {
-      if (!obj.consumer_agent_id) obj.consumer_agent_id = runtime.LITE_LOCAL_ACTOR_ID;
-    }
-
-    if (kind === "product_guide" || kind === "rules_evaluate" || kind === "tools_select" || kind === "tools_feedback" || kind === "planning_context" || kind === "context_assemble" || kind === "experience_intelligence") {
+    if (kind === "product_guide") {
       const ctxRecord = asRecord(obj.context);
       const ctx = ctxRecord ? { ...ctxRecord } : {};
       const agentRecord = asRecord(ctx.agent);
@@ -703,46 +520,17 @@ export function createRequestGuards({
     return runtime.MEMORY_TENANT_ID;
   };
 
-  const scopeFromBody = (body: unknown): string => {
-    const record = asRecord(body);
-    if (record) {
-      const scope = record.scope;
-      if (typeof scope === "string" && scope.trim().length > 0) return scope.trim();
-    }
-    return runtime.MEMORY_SCOPE;
-  };
-
-  const projectFromBody = (body: unknown): string | null => {
-    const record = asRecord(body);
-    if (record) {
-      const projectId = record.project_id;
-      if (typeof projectId === "string" && projectId.trim().length > 0) return projectId.trim();
-    }
-    return null;
-  };
-
   const tenantQuotaKey = (kind: string, tenantId: string): string => {
     const normalized = tenantId.trim() || runtime.MEMORY_TENANT_ID;
     return `tenant:${kind}:${normalized}`;
   };
 
-  const enforceTenantLimiter = async (reply: ReplyWithHeader, kind: TenantQuotaKind | "recall_text_embed", tenantId: string) => {
+  const enforceTenantLimiter = async (reply: ReplyWithHeader, kind: TenantQuotaKind, tenantId: string) => {
     if (!governance.TENANT_QUOTA_ENABLED) return;
-    const limiter =
-      kind === "debug_embeddings"
-        ? tenantDebugEmbedLimiter
-        : kind === "write"
-          ? tenantWriteLimiter
-          : kind === "recall_text_embed"
-            ? tenantRecallTextEmbedLimiter
-            : tenantRecallLimiter;
+    const limiter = kind === "write" ? tenantWriteLimiter : tenantRecallLimiter;
     if (!limiter) return;
     const waitLimitMs =
-      kind === "write"
-        ? limits.TENANT_WRITE_RATE_LIMIT_MAX_WAIT_MS
-        : kind === "recall_text_embed"
-          ? limits.TENANT_RECALL_TEXT_EMBED_RATE_LIMIT_MAX_WAIT_MS
-          : 0;
+      kind === "write" ? limits.TENANT_WRITE_RATE_LIMIT_MAX_WAIT_MS : 0;
     let waitedMs = 0;
     let res = limiter.check(tenantQuotaKey(kind, tenantId), 1);
     if (!res.allowed && waitLimitMs > 0) {
@@ -759,26 +547,16 @@ export function createRequestGuards({
     });
   };
 
-  const originalEnforceRecallTextEmbedQuota = enforceRecallTextEmbedQuota;
-  const enforceRecallTextEmbedQuotaWithTenant = async (req: RequestLike, reply: ReplyWithHeader, tenantId: string) => {
-    await originalEnforceRecallTextEmbedQuota(req, reply, tenantId);
-    await enforceTenantLimiter(reply, "recall_text_embed", tenantId);
-  };
-
   const enforceTenantQuota = async (_req: RequestLike, reply: ReplyWithHeader, kind: TenantQuotaKind, tenantId: string) => {
     await enforceTenantLimiter(reply, kind, tenantId);
   };
 
   return {
-    buildRecallAuth,
     acquireInflightSlot,
     enforceRateLimit,
-    enforceRecallTextEmbedQuota: enforceRecallTextEmbedQuotaWithTenant,
     requireMemoryPrincipal,
     withIdentityFromRequest,
     tenantFromBody,
-    scopeFromBody,
-    projectFromBody,
     enforceTenantQuota,
   };
 }

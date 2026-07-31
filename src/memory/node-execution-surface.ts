@@ -9,7 +9,7 @@ import {
   type ExecutionEvidenceV1,
 } from "./execution-evidence.js";
 import {
-  normalizeExecutionOutcomeRoleFromValue,
+  deriveExecutionOutcomeRoleFromSlots,
   type ExecutionOutcomeRole,
 } from "./execution-outcome-role.js";
 export { executionOutcomeRoleBlocksDirectUse } from "./execution-outcome-role.js";
@@ -179,21 +179,7 @@ export type NodeExecutionOutcomeRole = ExecutionOutcomeRole;
 export function resolveNodeExecutionOutcomeRole(
   slots: Record<string, unknown> | null | undefined,
 ): ExecutionOutcomeRole {
-  const executionNative = parseNodeExecutionNative(slots);
-  const observation = asRecord(slots?.execution_observation_v1);
-  const resultSummary = asRecord(slots?.execution_result_summary);
-  const outcome = resolveNodeOutcomeSurface(slots);
-  return normalizeExecutionOutcomeRoleFromValue(executionNative?.execution_outcome_role)
-    ?? normalizeExecutionOutcomeRoleFromValue(executionNative?.outcome)
-    ?? normalizeExecutionOutcomeRoleFromValue(observation?.execution_outcome_role)
-    ?? normalizeExecutionOutcomeRoleFromValue(observation?.outcome_role)
-    ?? normalizeExecutionOutcomeRoleFromValue(observation?.outcome)
-    ?? normalizeExecutionOutcomeRoleFromValue(resultSummary?.execution_outcome_role)
-    ?? normalizeExecutionOutcomeRoleFromValue(resultSummary?.status)
-    ?? normalizeExecutionOutcomeRoleFromValue(resultSummary?.result)
-    ?? normalizeExecutionOutcomeRoleFromValue(resultSummary?.verdict)
-    ?? normalizeExecutionOutcomeRoleFromValue(outcome)
-    ?? "unknown";
+  return deriveExecutionOutcomeRoleFromSlots(slots);
 }
 
 export function resolveNodeTaskSignature(args: {

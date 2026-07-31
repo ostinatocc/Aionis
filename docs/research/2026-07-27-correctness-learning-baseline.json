@@ -1,0 +1,337 @@
+{
+  "contract_version": "aionis_correctness_learning_baseline_v1",
+  "created_at": "2026-07-27T07:26:05.000Z",
+  "purpose": "Freeze the pre-implementation product semantics, mechanism roles, complexity, and real-Agent evidence for the adaptive Execution Memory correctness-learning plan.",
+  "runtime": {
+    "repository": "/Volumes/ziel/new.aionis/AionisRuntime",
+    "branch": "product-main",
+    "head": "6f3557014117af85c19f1589a48173e87bd84b70",
+    "package_version": "0.3.12",
+    "tracked_diff_binary_sha256": "3c33740a32a8a97bc28fb7eff6854d96d18633e80009f3456f651ee073c97c03",
+    "tracked_diff_digest_algorithm": "git_diff_binary_bytes_sha256",
+    "tracked_diff_excludes_untracked_files": true,
+    "working_tree_semantic_files": [
+      "src/memory/agent-context-compiler.ts",
+      "src/memory/agent-context-renderer.ts",
+      "src/memory/governance-decision.ts",
+      "src/memory/product-output/guide-packet.ts",
+      "src/memory/product-output/memory-packet.ts",
+      "src/sdk.ts"
+    ]
+  },
+  "supporting_revisions": {
+    "aionis_sdk": "948cd738fea8e7bb787ef220a9b8afe53c7f48c0",
+    "aionis_claude_code": "175a0dcd398ff0e8df99e361b150373185acced3",
+    "aionis_runtime_evals": "6d48e102f9f3d5d7871827af55b6f84a31c1e5f0",
+    "aionis_runtime_evals_tracked_diff_sha256": "1683809536a0aa18e210ca0590b0e955d172b4546879369197fbe4b87c96bbba",
+    "truth_benchmark_v1_file_manifest_sha256": "8d3de326196ff84fc0380a684deb0bd9bb67dbe41f31ea94d75dd289df18edf1",
+    "aionis_manifest": "21ea1038aa2d34ba09e59dadf2995c696249f312",
+    "aionis_substrate": "410f6b1ad432f3cf3f8c750f904c09ec8159dc66",
+    "aionis_aifs": "977a0e09768acc0dd79ac68f9f8a5a0ca6bf9562",
+    "aionis_mcp": "5d97344029777f7a49a28afb906f8a664c57e80a",
+    "aionis_cli": "2befe6e9fb7250116250bd4852bfabe75aff542d",
+    "aionis_create": "561d073975a61d750e6266ec672fdea279b15776"
+  },
+  "verification": {
+    "typecheck": "passed",
+    "complexity_report": "passed",
+    "source_files": 339,
+    "source_lines": 171449,
+    "runtime_entry_source_files": 285,
+    "runtime_entry_source_lines": 140459,
+    "non_entry_source_files": 54,
+    "non_entry_source_lines": 30990,
+    "route_matrix_entries": 21,
+    "environment_schema_fields": 177,
+    "runtime_import_cycles": 0,
+    "semantic_contract_tests": {
+      "command": "node --import tsx --test --test-concurrency=1 scripts/ci/lite-governance-decision.test.ts scripts/ci/lite-agent-context-compiler.test.ts scripts/ci/lite-product-output-assembler.test.ts scripts/ci/lite-sdk-guide-agent-context.test.ts scripts/ci/lite-sdk-runtime-agent-context-scope.test.ts scripts/ci/lite-runtime-e2e-execution-evidence.test.ts",
+      "total": 69,
+      "passed": 53,
+      "failed": 16,
+      "exit_code": 1,
+      "interpretation": "This is not a green baseline. Most failures are frozen-fixture expectation drift from the pre-existing semantic changes; the execution-effect reason precedence and lexical self-verification path remain an open semantic gap until Phase 0 closes them.",
+      "failed_test_names": [
+        "governance decision preserves rehydrate and inspect-only states",
+        "governance decision keeps task, workflow, and family scope while excluding unrelated memory",
+        "governance decision applies conflict, handoff, lifecycle-candidate, and feedback precedence",
+        "product agent context contract renderer preserves execution state surfaces",
+        "product agent route contract does not promote background execution events to active route",
+        "product agent route contract expands coarse recovered target to concrete active execution files",
+        "product agent context contract renderer prioritizes inspect-gated current execution state",
+        "product agent context admits verified recovered handoff as should_continue",
+        "product agent context admits self-verified active handoff without recovered_state membership",
+        "product confidence decay shadow candidate admits threshold-met negative feedback",
+        "product memory lifecycle adjudication ignores task-domain corrected and fix words in workflow titles",
+        "product agent context downgrades conflicting trusted workflows to inspect-first",
+        "product agent context uses structured target files for trusted workflow conflict detection",
+        "product agent context keeps multiple trusted workflows inspect-first when direct-use selection is ambiguous",
+        "agent context prioritizes concrete acceptance constraints from accepted execution evidence",
+        "SDK guideAgentContext renders execution contract and resolved evidence by default"
+      ]
+    },
+    "phase0_semantic_close": {
+      "command": "node --import tsx --test --test-concurrency=1 scripts/ci/lite-governance-decision.test.ts scripts/ci/lite-agent-context-compiler.test.ts scripts/ci/lite-product-output-assembler.test.ts scripts/ci/lite-sdk-guide-agent-context.test.ts scripts/ci/lite-sdk-runtime-agent-context-scope.test.ts scripts/ci/lite-runtime-e2e-execution-evidence.test.ts",
+      "total": 70,
+      "passed": 70,
+      "failed": 0,
+      "exit_code": 0,
+      "closed_gaps": [
+        "unknown execution effect cannot become direct-use",
+        "lexical verified/passed text cannot self-promote a handoff",
+        "structured passed_solution plus recovered handoff may cross candidate presentation policy after hard blocks",
+        "inspect-before-use evidence resolution remains SDK opt-in",
+        "current state remains available as non-actionable fact"
+      ]
+    }
+  },
+  "preserved_semantics": [
+    {
+      "id": "current_state_is_fact_not_verified_route",
+      "meaning": "An exact-task current-state snapshot remains available as current workspace context while an unresolved execution route is inspect-before-use rather than direct authority."
+    },
+    {
+      "id": "positive_execution_effect_required_for_direct_use",
+      "meaning": "Execution memory without a verified positive outcome cannot become direct-use guidance; known failed or blocked execution evidence is do-not-use."
+    },
+    {
+      "id": "history_presence_is_not_actionable_history",
+      "meaning": "Continuity state, target files, candidates, blocked history, and rehydration evidence can be present without claiming actionable history was used."
+    },
+    {
+      "id": "only_verified_success_workflow_is_reusable",
+      "meaning": "A stable workflow with unknown or mixed outcome remains candidate or advisory evidence; only a verified-success workflow can contribute reusable workflow guidance."
+    },
+    {
+      "id": "current_state_wins_path_conflict",
+      "meaning": "A usable current-state or verified procedure target is not removed merely because stale inspect/blocked history names the same path."
+    },
+    {
+      "id": "completion_checks_survive_context_compaction",
+      "meaning": "Required acceptance checks and unresolved-current-state completion evidence remain visible and are not treated as proof that completion already happened."
+    },
+    {
+      "id": "inspect_evidence_is_opt_in_for_resolved_sdk_evidence",
+      "meaning": "The SDK does not silently resolve inspect-before-use memory as Agent evidence unless the caller explicitly opts in."
+    },
+    {
+      "id": "existing_artifacts_are_not_pending",
+      "meaning": "A pending artifact already present in the current repository state is not rendered as missing work."
+    }
+  ],
+  "mechanisms": [
+    {
+      "id": "product_guide_orchestration",
+      "path": "src/product/guide-service.ts",
+      "classification": "preserve",
+      "reason": "Canonical observe-to-guide product path, scope identity, candidate assembly, hard boundaries, guide receipt, and AgentContext handoff remain the online product spine."
+    },
+    {
+      "id": "fixed_final_guide_serving",
+      "path": "src/product/guide-service.ts",
+      "classification": "replace_after_effect_gate",
+      "reason": "Fixed admission, source preference, and final-use decisions remain only as the frozen comparator and fallback until the learned selector proves held-out value."
+    },
+    {
+      "id": "memory_lifecycle_and_feedback",
+      "path": "src/product/lifecycle-service.ts",
+      "classification": "preserve",
+      "reason": "Contested state, suppression, restoration, rehydration, and controlled forgetting are required hard product boundaries; they do not own final task reward."
+    },
+    {
+      "id": "product_measurement",
+      "path": "src/product/measure-service.ts",
+      "classification": "diagnostic_only",
+      "reason": "Continuity, context, reuse, promotion, and authority measurements remain useful mechanism diagnostics but cannot substitute for verifier-bound task correctness."
+    },
+    {
+      "id": "internal_effect_evaluator",
+      "path": "src/kernel/effect-evaluator.ts",
+      "classification": "diagnostic_only",
+      "reason": "Its current kernel scores measure internal mechanisms rather than independent final-task correctness."
+    },
+    {
+      "id": "product_tool_feedback_kernel",
+      "path": "src/kernel/learning-kernel.ts",
+      "classification": "preserve",
+      "reason": "The online Product tool-selection and tool-feedback path is connected and remains a compatibility mechanism while verifier-bound episode reward is added."
+    },
+    {
+      "id": "general_learning_loop",
+      "path": "src/memory/learning-loop.ts",
+      "classification": "dormant_or_unconnected",
+      "reason": "runLearningLoopLite is reachable from maintenance helpers and test support but is not registered by the current daemon or Product route path."
+    },
+    {
+      "id": "learning_episode_ledger",
+      "path": "src/memory/learning-episode-ledger.ts",
+      "classification": "preserve",
+      "reason": "Append-only exposure, feedback attribution, and effect evidence remain authoritative projections and will link to, not replace, the generic execution episode."
+    },
+    {
+      "id": "unused_exposure_learning_control_worker",
+      "path": "src/memory/learning-control-worker.ts",
+      "classification": "preserve_until_replacement",
+      "reason": "The daemon starts this worker and it controls connected but unused exposure; it remains until a verifier-reward replacement proves parity."
+    },
+    {
+      "id": "associative_link_worker",
+      "path": "src/memory/associative-link-worker.ts",
+      "classification": "candidate_generation_only",
+      "reason": "The daemon starts the worker and lite recall consumes its graph candidates, but association strength is not final utility authority."
+    },
+    {
+      "id": "admission_candidate_policy",
+      "path": "src/memory/learning-gate-policy.ts",
+      "classification": "diagnostic_only",
+      "reason": "Admission is off by default and its shadow output remains diagnostic until verifier-bound held-out effect exists."
+    },
+    {
+      "id": "recall_candidate_sources",
+      "path": "src/memory/recall-ranking.ts",
+      "classification": "candidate_generation_only",
+      "reason": "Lexical, semantic, structured, execution, graph, recent, ANN, and Substrate retrieval remain broad candidate sources."
+    },
+    {
+      "id": "fixed_recall_action_priority_and_graph_spread",
+      "path": "src/memory/recall-ranking.ts",
+      "classification": "replace_after_effect_gate",
+      "reason": "Fixed action priority, edge weights, score blends, and propagation thresholds remain the frozen comparator until the learned selector proves effect."
+    },
+    {
+      "id": "hybrid_rrf_merge",
+      "path": "src/memory/recall-hybrid-merge.ts",
+      "classification": "candidate_generation_only",
+      "reason": "Lexical, semantic, ANN, graph, and structured sources remain broad recall inputs."
+    },
+    {
+      "id": "trajectory_files_commands_acceptance_extraction",
+      "path": "src/memory/trajectory-compile.ts",
+      "classification": "candidate_generation_only",
+      "reason": "Generic files, commands, state transitions, and acceptance evidence are online candidate inputs."
+    },
+    {
+      "id": "trajectory_task_family_regex_and_recipes",
+      "path": "src/memory/trajectory-compile.ts",
+      "classification": "remove_after_parity",
+      "reason": "Hard-coded task families, lexical recipes, and prescribed next actions must not expand and are removed after the general contrastive compiler reaches parity."
+    },
+    {
+      "id": "tool_hard_safety_boundary",
+      "path": "src/memory/tool-registry.ts",
+      "classification": "preserve",
+      "reason": "Hard allow, deny, and safety constraints remain non-learned product boundaries."
+    },
+    {
+      "id": "tool_pattern_candidate_recall",
+      "path": "src/memory/tool-registry.ts",
+      "classification": "candidate_generation_only",
+      "reason": "Observed tool patterns may propose candidates but do not decide utility."
+    },
+    {
+      "id": "static_tool_preference_and_family_tier",
+      "path": "src/memory/tool-registry.ts",
+      "classification": "replace_after_effect_gate",
+      "reason": "Static prefer and family-tier ranking remains a comparator until the learned selector proves held-out effect."
+    },
+    {
+      "id": "synthetic_focused_test_execution_tools",
+      "path": "src/memory/tool-registry.ts",
+      "classification": "remove_after_parity",
+      "reason": "Synthetic focused test tools are not part of the general product algorithm and are removed after real-task parity."
+    },
+    {
+      "id": "canonical_sdk_context_compiler",
+      "path": "src/sdk.ts",
+      "classification": "preserve",
+      "reason": "The existing low-level SDK and AgentContext compiler remain; Phase 1 adds one high-level episode protocol without creating a second decision brain."
+    }
+  ],
+  "real_diagnostic_evidence": {
+    "task": {
+      "id": "playwright-sync-module-hooks",
+      "domain": "coding",
+      "repository": "microsoft/playwright",
+      "base_commit": "4d2890162af01bfad8330a51be7009b6796474ef",
+      "prompt_sha256": "f8ae5ccd1abdf1aa1d97c3c0506f96fc6d3fce33ee39d78227b47a969a21caae"
+    },
+    "agent": {
+      "provider_endpoint_host": "api.deepseek.com",
+      "requested_model": "deepseek-v4-flash",
+      "maximum_steps": 30
+    },
+    "aionis_context": {
+      "runtime_head": "6f3557014117af85c19f1589a48173e87bd84b70",
+      "embedding_provider": "dashscope",
+      "embedding_model": "qwen3.7-text-embedding",
+      "actionable_history_used": false,
+      "use_now_count": 0,
+      "inspect_before_use_count": 7
+    },
+    "verification_report_digest_algorithm": "sha256_json_stringify_v1",
+    "arms": [
+      {
+        "arm": "aionis",
+        "steps": 30,
+        "total_tokens": 522148,
+        "verified_pass": false,
+        "verification_exit_code": 1,
+        "verification_report_sha256": "cdf58f98df3ba75ebc7ad0e3301808a81db618f3fdf2c66db84d0e012714c48e"
+      },
+      {
+        "arm": "no_memory",
+        "steps": 30,
+        "total_tokens": 439625,
+        "verified_pass": false,
+        "verification_exit_code": 1,
+        "verification_report_sha256": "2d6864c5294f6cde23d7ac93b1244b6903ae325f838bd98c9fafb0ee33276b72"
+      },
+      {
+        "arm": "full_history",
+        "steps": 27,
+        "total_tokens": 826210,
+        "verified_pass": false,
+        "verification_exit_code": 1,
+        "verification_report_sha256": "134a21b33898f71de2fcfa6e14f9364f0b03234deefda19d7e3c00edc141670a"
+      }
+    ],
+    "artifacts": [
+      {
+        "path": "/Volumes/ziel/aionis-truth-runs/playwright-sync-hooks-aionis-live-governed-20260727-v1/summary.json",
+        "sha256": "c9ab70218cce9c7f19424a15b288282932473d64f1e36cb3beede9077e0947e0"
+      },
+      {
+        "path": "/Volumes/ziel/aionis-truth-runs/playwright-sync-hooks-aionis-live-governed-20260727-v1/verification/aionis/verification-report.json",
+        "sha256": "c2c6d65609e44997c8465cc6ad5a793f75e85c928ead2de9a7194d2d3b5de237"
+      },
+      {
+        "path": "/Volumes/ziel/aionis-truth-runs/playwright-sync-hooks-live-harness-baselines-20260727-v1/summary.json",
+        "sha256": "19dec6747bb698493991af0788bf1d7fe889196f49c33d69011b68b8c860aab8"
+      }
+    ],
+    "allowed_claim": "This task proves that Aionis supplied truthful continuity and completion boundaries, but no arm passed and the learned-history path did not execute. It is diagnostic evidence only."
+  },
+  "effect_contract": {
+    "primary_endpoint": "verified_pass_at_budget",
+    "confirmatory_hierarchy": [
+      "adaptive_aionis_vs_state_only",
+      "adaptive_aionis_vs_no_aionis",
+      "final_learned_policy_vs_implementation_identical_initial_policy"
+    ],
+    "primary_comparison_minimum_point_lift": 0.08,
+    "familywise_alpha": 0.05,
+    "target_power": 0.8,
+    "harm_guardrail": {
+      "metric": "paired_harmful_transfer",
+      "one_sided_upper_confidence_bound_maximum": 0.05
+    },
+    "token_guardrail": {
+      "metric": "tokens_per_verified_success_ratio_adaptive_over_state_only",
+      "one_sided_upper_confidence_bound_maximum": 1.2
+    },
+    "sample_size_rule": "Run a 24-base-task design-readiness pilot, then freeze a joint power simulation for the complete hierarchical conjunction before opening the confirmatory panel.",
+    "missing_rule": "Arm-dependent crash, timeout, cancellation, missing final state, or missing verifier is ITT failure. Only arm-blind external infrastructure failure may replace one full randomized block once.",
+    "search_in_primary_arms": false,
+    "post_hoc_task_exclusion": false
+  }
+}

@@ -90,7 +90,6 @@ cleanup() {
 trap cleanup EXIT
 
 LITE_WRITE_SQLITE_PATH="${TMP_DIR}/write.sqlite" \
-LITE_REPLAY_SQLITE_PATH="${TMP_DIR}/replay.sqlite" \
 PORT="${PORT}" \
 bash scripts/start-lite.sh >"${LOG_FILE}" 2>&1 &
 PID=$!
@@ -167,7 +166,6 @@ const guide = await post("/v1/guide", {
   scope: "lite-smoke/default",
   query_text: "Continue the local Runtime smoke check.",
   include_packets: true,
-  limit: 4,
 });
 if (
   observe?.contract_version !== "aionis_observe_result_v1"

@@ -23,12 +23,6 @@ FROM node:24-bookworm-slim@sha256:cb4e8f7c443347358b7875e717c29e27bf9befc8f5a26c
 
 WORKDIR /app
 
-# Protected learning-experiment close fails closed unless Linux ACL state can
-# be verified independently of stat.mode or a particular `ls` implementation.
-RUN apt-get update \
-    && apt-get install -y --no-install-recommends acl \
-    && rm -rf /var/lib/apt/lists/*
-
 ENV NODE_ENV=production \
     npm_config_update_notifier=false \
     AIONIS_EDITION=lite \
@@ -40,7 +34,6 @@ ENV NODE_ENV=production \
     TENANT_QUOTA_ENABLED=false \
     RATE_LIMIT_BYPASS_LOOPBACK=true \
     LITE_WRITE_SQLITE_PATH=/data/aionis-lite-write.sqlite \
-    LITE_REPLAY_SQLITE_PATH=/data/aionis-lite-replay.sqlite \
     LITE_LOCAL_ACTOR_ID=local-docker
 
 COPY --chown=node:node . /app
@@ -55,6 +48,6 @@ EXPOSE 3001
 VOLUME ["/data"]
 
 HEALTHCHECK --interval=30s --timeout=5s --start-period=15s --retries=3 \
-  CMD node -e "fetch('http://127.0.0.1:' + (process.env.PORT || '3001') + '/healthz').then((r) => process.exit(r.ok ? 0 : 1)).catch(() => process.exit(1))"
+  CMD node -e "fetch('http://127.0.0.1:' + (process.env.PORT || '3001') + '/health').then((r) => process.exit(r.ok ? 0 : 1)).catch(() => process.exit(1))"
 
 CMD ["bash", "scripts/start-lite.sh"]

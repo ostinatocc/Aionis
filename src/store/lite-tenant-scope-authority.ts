@@ -3,6 +3,7 @@ import stableStringify from "fast-json-stable-stringify";
 
 import type { SqliteDatabase } from "./sqlite.js";
 import type { SqliteTransactionRunner } from "./sqlite-transaction-runner.js";
+import { LITE_TENANT_SCOPE_ENCODING_ANCHOR_TABLE_SQL } from "./lite-runtime-identity.js";
 
 const TENANT_ID_RE = /^[a-zA-Z0-9][a-zA-Z0-9._-]{0,63}$/u;
 const TENANT_SCOPE_ENCODING_ALGORITHM = "default_tenant_unprefixed_else_tenant_prefix_v1";
@@ -12,6 +13,13 @@ export const LITE_TENANT_SCOPE_ANCHOR_POLICY_ID =
 export const LITE_TENANT_SCOPE_ANCHOR_POLICY_VERSION = "v1";
 
 const LITE_TENANT_SCOPE_ANCHOR_IMPLEMENTATION_SHA256 = sha256Text(stableStringify({
+  contract_version: "aionis_tenant_scope_encoding_anchor_implementation_v1",
+  carrier: "lite_tenant_scope_encoding_anchor_v1",
+  database_identity: "lite_runtime_authority_identity_v1",
+  uniqueness: "sqlite_singleton_v1",
+}));
+
+const LEGACY_TENANT_SCOPE_ANCHOR_IMPLEMENTATION_SHA256 = sha256Text(stableStringify({
   contract_version: "aionis_tenant_scope_encoding_anchor_implementation_v1",
   carrier: "lite_learning_policy_versions_reserved_candidate_v1",
   database_identity: "lite_runtime_authority_identity_v1",
@@ -47,15 +55,11 @@ type RuntimeAuthorityIdentityRow = Readonly<{
 }>;
 
 type TenantScopeAnchorRow = Readonly<{
-  tenant_id: string;
-  policy_kind: string;
-  policy_id: string;
-  policy_version: string;
-  policy_config_sha256: string;
-  policy_config_json: string;
-  implementation_contract_sha256: string;
-  prospective_calibration_sha256: string | null;
-  prospective_calibration_json: string | null;
+  singleton: number;
+  default_tenant_id: string;
+  config_sha256: string;
+  config_json: string;
+  implementation_sha256: string;
   created_at: string;
 }>;
 
@@ -121,17 +125,11 @@ function anchorConfig(defaultTenantId: string, databaseInstanceId: string) {
 
 function anchorRows(db: SqliteDatabase): TenantScopeAnchorRow[] {
   return db.prepare(
-    `SELECT tenant_id, policy_kind, policy_id, policy_version,
-            policy_config_sha256, policy_config_json,
-            implementation_contract_sha256,
-            prospective_calibration_sha256, prospective_calibration_json,
-            created_at
-     FROM lite_learning_policy_versions
-     WHERE policy_id = ?
-     ORDER BY tenant_id, policy_kind`,
-  ).all(
-    LITE_TENANT_SCOPE_ANCHOR_POLICY_ID,
-  ) as TenantScopeAnchorRow[];
+    `SELECT singleton, default_tenant_id, config_sha256, config_json,
+            implementation_sha256, created_at
+     FROM lite_tenant_scope_encoding_anchor
+     ORDER BY singleton`,
+  ).all() as TenantScopeAnchorRow[];
 }
 
 function parseCanonicalConfig(raw: string): Record<string, unknown> {
@@ -166,36 +164,18 @@ export function assertLiteTenantScopeEncodingAnchorSetIntegrity(
     );
   }
   const row = rows[0]!;
-  const defaultTenantId = exactTenantId(row.tenant_id);
+  const defaultTenantId = exactTenantId(row.default_tenant_id);
   const identity = runtimeAuthorityIdentity(db);
   const expectedConfig = anchorConfig(defaultTenantId, identity.database_instance_id);
-  const config = parseCanonicalConfig(row.policy_config_json);
-  if (row.policy_kind !== "candidate"
-    || row.policy_id !== LITE_TENANT_SCOPE_ANCHOR_POLICY_ID
-    || row.policy_version !== LITE_TENANT_SCOPE_ANCHOR_POLICY_VERSION
-    || row.policy_config_sha256 !== sha256Text(row.policy_config_json)
+  const config = parseCanonicalConfig(row.config_json);
+  if (row.singleton !== 1
+    || row.config_sha256 !== sha256Text(row.config_json)
     || stableStringify(config) !== stableStringify(expectedConfig)
-    || row.implementation_contract_sha256 !== LITE_TENANT_SCOPE_ANCHOR_IMPLEMENTATION_SHA256
-    || row.prospective_calibration_sha256 !== null
-    || row.prospective_calibration_json !== null
+    || row.implementation_sha256 !== LITE_TENANT_SCOPE_ANCHOR_IMPLEMENTATION_SHA256
     || row.created_at !== identity.created_at) {
     authorityError(
       "lite_tenant_scope_anchor_corrupt",
       "tenant-scope authority anchor does not match its immutable database identity",
-    );
-  }
-  const referenced = db.prepare(
-    `SELECT 1 AS present
-     FROM lite_learning_experiment_revisions
-     WHERE candidate_policy_id = ?
-     LIMIT 1`,
-  ).get(
-    LITE_TENANT_SCOPE_ANCHOR_POLICY_ID,
-  );
-  if (referenced !== undefined) {
-    authorityError(
-      "lite_tenant_scope_anchor_corrupt",
-      "tenant-scope authority carrier must not be referenced as an experiment policy",
     );
   }
   return {
@@ -203,6 +183,68 @@ export function assertLiteTenantScopeEncodingAnchorSetIntegrity(
     tenantScopeEncodingSha256: expectedConfig.tenant_scope_encoding_sha256,
     runtimeAuthorityLineageSha256: expectedConfig.runtime_authority_lineage_sha256,
   };
+}
+
+function legacyAnchorTenantId(db: SqliteDatabase): string | null {
+  const table = db.prepare(
+    `SELECT 1 AS present
+     FROM sqlite_schema
+     WHERE type = 'table' AND name = 'lite_learning_policy_versions'`,
+  ).get();
+  if (table === undefined) return null;
+  const rows = db.prepare(
+    `SELECT tenant_id, policy_kind, policy_version, policy_config_sha256,
+            policy_config_json, implementation_contract_sha256, created_at
+     FROM lite_learning_policy_versions
+     WHERE policy_id = ?`,
+  ).all(LITE_TENANT_SCOPE_ANCHOR_POLICY_ID) as Array<{
+    tenant_id: string;
+    policy_kind: string;
+    policy_version: string;
+    policy_config_sha256: string;
+    policy_config_json: string;
+    implementation_contract_sha256: string;
+    created_at: string;
+  }>;
+  if (rows.length === 0) return null;
+  if (rows.length !== 1) {
+    authorityError("lite_tenant_scope_anchor_corrupt", "legacy tenant-scope anchor is ambiguous");
+  }
+  const row = rows[0]!;
+  const tenantId = exactTenantId(row.tenant_id);
+  const identity = runtimeAuthorityIdentity(db);
+  const config = parseCanonicalConfig(row.policy_config_json);
+  if (
+    row.policy_kind !== "candidate"
+    || row.policy_version !== LITE_TENANT_SCOPE_ANCHOR_POLICY_VERSION
+    || row.policy_config_sha256 !== sha256Text(row.policy_config_json)
+    || stableStringify(config) !== stableStringify(anchorConfig(tenantId, identity.database_instance_id))
+    || row.implementation_contract_sha256 !== LEGACY_TENANT_SCOPE_ANCHOR_IMPLEMENTATION_SHA256
+    || row.created_at !== identity.created_at
+  ) {
+    authorityError("lite_tenant_scope_anchor_corrupt", "legacy tenant-scope anchor is invalid");
+  }
+  return tenantId;
+}
+
+function insertTenantScopeAnchor(
+  db: SqliteDatabase,
+  tenantId: string,
+): void {
+  const identity = runtimeAuthorityIdentity(db);
+  const configJson = stableStringify(anchorConfig(tenantId, identity.database_instance_id));
+  db.prepare(
+    `INSERT INTO lite_tenant_scope_encoding_anchor
+       (singleton, default_tenant_id, config_sha256, config_json,
+        implementation_sha256, created_at)
+     VALUES (1, ?, ?, ?, ?, ?)`,
+  ).run(
+    tenantId,
+    sha256Text(configJson),
+    configJson,
+    LITE_TENANT_SCOPE_ANCHOR_IMPLEMENTATION_SHA256,
+    identity.created_at,
+  );
 }
 
 export function assertLiteTenantScopeEncodingAnchor(
@@ -251,8 +293,28 @@ export function ensureLiteTenantScopeEncodingAnchor(
     );
   }
   const tenantId = exactTenantId(defaultTenantId);
+  db.exec(`${
+    LITE_TENANT_SCOPE_ENCODING_ANCHOR_TABLE_SQL.replace(
+      /^CREATE TABLE /u,
+      "CREATE TABLE IF NOT EXISTS ",
+    )
+  };`);
   const existing = assertLiteTenantScopeEncodingAnchorSetIntegrity(db);
   if (existing) {
+    return {
+      anchor: assertLiteTenantScopeEncodingAnchor(db, tenantId),
+      replayed: true,
+    };
+  }
+  const legacyTenantId = legacyAnchorTenantId(db);
+  if (legacyTenantId !== null) {
+    if (legacyTenantId !== tenantId) {
+      authorityError(
+        "lite_tenant_scope_anchor_mismatch",
+        "configured default tenant does not match the immutable legacy scope encoding anchor",
+      );
+    }
+    insertTenantScopeAnchor(db, tenantId);
     return {
       anchor: assertLiteTenantScopeEncodingAnchor(db, tenantId),
       replayed: true,
@@ -264,25 +326,7 @@ export function ensureLiteTenantScopeEncodingAnchor(
       "existing unprefixed memory has no immutable tenant-scope anchor and cannot be auto-claimed",
     );
   }
-  const identity = runtimeAuthorityIdentity(db);
-  const configJson = stableStringify(anchorConfig(tenantId, identity.database_instance_id));
-  db.prepare(
-    `INSERT INTO lite_learning_policy_versions
-       (tenant_id, policy_kind, policy_id, policy_version,
-        policy_config_sha256, policy_config_json,
-        implementation_contract_sha256,
-        prospective_calibration_sha256, prospective_calibration_json,
-        created_at)
-     VALUES (?, 'candidate', ?, ?, ?, ?, ?, NULL, NULL, ?)`,
-  ).run(
-    tenantId,
-    LITE_TENANT_SCOPE_ANCHOR_POLICY_ID,
-    LITE_TENANT_SCOPE_ANCHOR_POLICY_VERSION,
-    sha256Text(configJson),
-    configJson,
-    LITE_TENANT_SCOPE_ANCHOR_IMPLEMENTATION_SHA256,
-    identity.created_at,
-  );
+  insertTenantScopeAnchor(db, tenantId);
   return {
     anchor: assertLiteTenantScopeEncodingAnchor(db, tenantId),
     replayed: false,

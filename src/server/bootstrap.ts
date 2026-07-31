@@ -1,11 +1,8 @@
 import Fastify, { type FastifyInstance } from "fastify";
 import { randomUUID } from "node:crypto";
 import type { Env } from "../config.js";
-import type { LiteRuntimeStore } from "../store/memory-store.js";
 import { assertRecallStoreAccessContract } from "../store/recall-access.js";
 import type { RecallStoreAccess } from "../store/recall-access.js";
-import { assertReplayStoreAccessContract } from "../store/replay-access.js";
-import type { ReplayStoreAccess } from "../store/replay-access.js";
 import { assertWriteStoreAccessContract } from "../store/write-access.js";
 import type { WriteStoreAccess } from "../store/write-access.js";
 
@@ -168,16 +165,11 @@ export function createHttpApp(env: Env) {
 
 export function registerBootstrapLifecycle(args: {
   app: FastifyInstance;
-  store: LiteRuntimeStore;
-  sandboxExecutor: AsyncLifecycle;
   liteRecallStore?: CloseableRuntimeStore | null;
-  liteReplayStore?: CloseableRuntimeStore | null;
   liteWriteStore?: CloseableRuntimeStore | null;
   projectionWorker?: AsyncLifecycle | null;
-  learningControlWorker?: AsyncLifecycle | null;
+  executionEpisodeMemoryCompilerWorker?: AsyncLifecycle | null;
   associativeLinkWorker?: AsyncLifecycle | null;
-  liteClaimLedgerStore?: CloseableRuntimeStore | null;
-  liteSkillCandidateReviewStore?: CloseableRuntimeStore | null;
   executionStateStore?: CloseableRuntimeStore | null;
   executionTreeStore?: CloseableRuntimeStore | null;
 }) {
@@ -188,39 +180,32 @@ export function registerBootstrapLifecycle(args: {
 }
 
 export async function closeBootstrapResources(args: {
-  store: LiteRuntimeStore;
-  sandboxExecutor: AsyncLifecycle;
   liteRecallStore?: CloseableRuntimeStore | null;
-  liteReplayStore?: CloseableRuntimeStore | null;
   liteWriteStore?: CloseableRuntimeStore | null;
   projectionWorker?: AsyncLifecycle | null;
-  learningControlWorker?: AsyncLifecycle | null;
+  executionEpisodeMemoryCompilerWorker?: AsyncLifecycle | null;
   associativeLinkWorker?: AsyncLifecycle | null;
-  liteClaimLedgerStore?: CloseableRuntimeStore | null;
-  liteSkillCandidateReviewStore?: CloseableRuntimeStore | null;
   executionStateStore?: CloseableRuntimeStore | null;
   executionTreeStore?: CloseableRuntimeStore | null;
 }): Promise<void> {
   const {
-    store,
-    sandboxExecutor,
     liteRecallStore,
-    liteReplayStore,
     liteWriteStore,
     projectionWorker,
-    learningControlWorker,
+    executionEpisodeMemoryCompilerWorker,
     associativeLinkWorker,
-    liteClaimLedgerStore,
-    liteSkillCandidateReviewStore,
     executionStateStore,
     executionTreeStore,
   } = args;
   const errors: Error[] = [];
   const lifecycles: Array<readonly [string, () => Promise<void>]> = [
     ["associative_link_worker", () => associativeLinkWorker?.shutdown() ?? Promise.resolve()],
-    ["learning_control_worker", () => learningControlWorker?.shutdown() ?? Promise.resolve()],
+    [
+      "execution_episode_memory_compiler_worker",
+      () => executionEpisodeMemoryCompilerWorker?.shutdown()
+        ?? Promise.resolve(),
+    ],
     ["projection_worker", () => projectionWorker?.shutdown() ?? Promise.resolve()],
-    ["sandbox_executor", () => sandboxExecutor.shutdown()],
   ];
   const workerResults = await Promise.allSettled(
     lifecycles.map(([, close]) => Promise.resolve().then(close)),
@@ -234,15 +219,11 @@ export async function closeBootstrapResources(args: {
     }
   }
 
-  const stores: Array<readonly [string, CloseableRuntimeStore | LiteRuntimeStore | null | undefined]> = [
+  const stores: Array<readonly [string, CloseableRuntimeStore | null | undefined]> = [
     ["execution_tree_store", executionTreeStore],
     ["execution_state_store", executionStateStore],
-    ["skill_candidate_review_store", liteSkillCandidateReviewStore],
-    ["claim_ledger_store", liteClaimLedgerStore],
     ["recall_store", liteRecallStore],
-    ["replay_store", liteReplayStore],
     ["write_store", liteWriteStore],
-    ["runtime_store", store],
   ];
   for (const [label, closeable] of stores) {
     if (!closeable) continue;
@@ -260,14 +241,11 @@ export async function closeBootstrapResources(args: {
 
 export async function assertBootstrapStoreContracts(args: {
   liteRecallAccess: RecallStoreAccess | null;
-  liteReplayAccess: ReplayStoreAccess | null;
   liteWriteStore: WriteStoreAccess;
 }) {
-  const { liteRecallAccess, liteReplayAccess, liteWriteStore } = args;
+  const { liteRecallAccess, liteWriteStore } = args;
   if (!liteRecallAccess) throw new Error("recall store access is not available");
-  if (!liteReplayAccess) throw new Error("replay store access is not available");
   assertRecallStoreAccessContract(liteRecallAccess);
-  assertReplayStoreAccessContract(liteReplayAccess);
   assertWriteStoreAccessContract(liteWriteStore);
 }
 

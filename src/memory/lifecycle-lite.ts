@@ -4,7 +4,7 @@ import { normalizeText } from "../util/normalize.js";
 import { redactPII } from "../util/redaction.js";
 import { badRequest } from "../util/http.js";
 import { computeFeedbackUpdatedNodeState, mergeNodeFeedbackLearningControlSlots } from "./node-feedback-state.js";
-import { MEMORY_TIER_RANK, type MemoryTierName } from "./evolution-operators.js";
+import { MEMORY_TIER_RANK, type MemoryTierName } from "./memory-tier.js";
 import { resolveNodeLifecycleSignals } from "./lifecycle-signals.js";
 import { MemoryArchiveRehydrateRequest, MemoryNodesActivateRequest } from "./schemas.js";
 import { resolveTenantScope } from "./tenant.js";

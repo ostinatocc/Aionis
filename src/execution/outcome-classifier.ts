@@ -123,26 +123,16 @@ export function classifyExecutionOutcomeRecord(record: Record<string, unknown> |
   return UNKNOWN_OUTCOME;
 }
 
-function recordArray(value: unknown): Array<Record<string, unknown>> {
-  if (!Array.isArray(value)) return [];
-  return value
-    .map(asRecord)
-    .filter((entry): entry is Record<string, unknown> => !!entry);
-}
-
 export function classifyExecutionOutcomeFromSlots(slots: unknown): ExecutionOutcomeClassification {
-  const slotRecord = asRecord(slots);
-  if (!slotRecord) return UNKNOWN_OUTCOME;
-  const resultSummary = classifyExecutionOutcomeRecord(asRecord(slotRecord.execution_result_summary));
-  if (resultSummary.outcome !== "unknown") return resultSummary;
-
-  for (const record of [
-    asRecord(slotRecord.execution_evidence_v1),
-    ...recordArray(slotRecord.execution_evidence),
-    ...recordArray(asRecord(slotRecord.execution_result_summary)?.execution_evidence),
-  ]) {
-    const classified = classifyExecutionOutcomeRecord(record);
-    if (classified.outcome !== "unknown") return classified;
+  const role = deriveExecutionOutcomeRoleFromSlots(slots);
+  if (role === "passed_solution") {
+    return { outcome: "passed", conflict: false };
+  }
+  if (role === "failed_branch" || role === "blocked") {
+    return { outcome: "failed", conflict: false };
   }
   return UNKNOWN_OUTCOME;
 }
+import {
+  deriveExecutionOutcomeRoleFromSlots,
+} from "../memory/execution-outcome-role.js";

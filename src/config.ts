@@ -1,398 +1,17 @@
-import { isIP } from "node:net";
-import stableStringify from "fast-json-stable-stringify";
 import { z } from "zod";
-import { parseEmbeddingEnabledSurfacesJson } from "./embeddings/surface-policy.js";
-import {
-  AIONIS_ADMISSION_CANDIDATE_POLICY_ID,
-  AIONIS_ADMISSION_CANDIDATE_POLICY_VERSION,
-} from "./memory/admission-candidate-policy.js";
-import {
-  LEARNING_GATE_POLICY_ID,
-  LEARNING_GATE_POLICY_VERSION,
-} from "./memory/learning-gate-policy.js";
-import {
-  IntegrityOnlyExternalInputsV1Schema,
-  RequiredExternalInputsV1Schema,
-} from "./memory/learning-episode-ledger.js";
 import {
   AUTHORITY_RECEIPT_HMAC_ACTIVE_KEY_ID_ENV,
   AUTHORITY_RECEIPT_HMAC_KEYS_JSON_ENV,
   AUTHORITY_RECEIPT_HMAC_SECRET_ENV,
   resolveAuthorityReceiptKeyring,
 } from "./util/authority-receipt-keys.js";
-import { sha256Hex } from "./util/crypto.js";
 import { parseTrustedProxyCidrs } from "./util/ip-guard.js";
 import { applyRuntimeProfileDefaults } from "./config/runtime-profiles.js";
 
 const RuntimeModeSchema = z.enum(["local", "service", "cloud"]);
 const EditionSchema = z.enum(["lite", "server"]);
 const InspectBeforeUseModeSchema = z.enum(["shadow", "active"]);
-const AdmissionCandidatePolicyModeSchema = z.enum(["off", "shadow", "active"]);
 const RecallAnnProviderSchema = z.enum(["off", "local", "zvec"]);
-const RecallEngineModeSchema = z.enum(["semantic_scan", "hybrid"]);
-
-const BoundedLearningIdSchema = z.string().trim().min(1).max(256);
-const LearningDigestSha256Schema = z.string().regex(/^[0-9a-f]{64}$/);
-const AdmissionExperimentVerifierVersionSchema = z.string().trim().min(1).superRefine((value, ctx) => {
-  if (Buffer.byteLength(value, "utf8") > 120) {
-    ctx.addIssue({
-      code: z.ZodIssueCode.custom,
-      message: "verifier version must be bounded to 120 UTF-8 bytes",
-    });
-  }
-});
-
-const ExactBoundedLearningIdSchema = z.string().superRefine((value, ctx) => {
-  if (value.length === 0 || value !== value.trim() || Buffer.byteLength(value, "utf8") > 256) {
-    ctx.addIssue({
-      code: z.ZodIssueCode.custom,
-      message: "expected exact bounded UTF-8 identifier",
-    });
-  }
-});
-
-const ExactExternalInputV1Schema = z.object({
-  immutable_input_manifest_sha256: LearningDigestSha256Schema,
-  retry_policy_sha256: LearningDigestSha256Schema,
-  planned_run_id: ExactBoundedLearningIdSchema,
-}).strict();
-
-const AdmissionExperimentRequiredExternalInputsSchema = z.intersection(
-  RequiredExternalInputsV1Schema,
-  z.object({
-    offline_paired: ExactExternalInputV1Schema,
-    production_shadow: ExactExternalInputV1Schema,
-    tool_e2e: ExactExternalInputV1Schema,
-  }).strict(),
-).superRefine((inputs, ctx) => {
-  const runIds = [
-    inputs.offline_paired.planned_run_id,
-    inputs.production_shadow.planned_run_id,
-    inputs.tool_e2e.planned_run_id,
-  ];
-  if (new Set(runIds).size !== runIds.length) {
-    ctx.addIssue({
-      code: z.ZodIssueCode.custom,
-      path: ["tool_e2e", "planned_run_id"],
-      message: "external input planned_run_id values must be unique",
-    });
-  }
-});
-
-function canonicalUtf8Order(values: readonly string[]): string[] {
-  return [...values].sort((left, right) => Buffer.compare(
-    Buffer.from(left, "utf8"),
-    Buffer.from(right, "utf8"),
-  ));
-}
-
-const AdmissionExperimentEvidenceSeriesSchema = z.object({
-  offline_paired: BoundedLearningIdSchema,
-  production_shadow: BoundedLearningIdSchema,
-  tool_e2e: BoundedLearningIdSchema,
-  runtime_integrity: BoundedLearningIdSchema,
-}).strict().superRefine((series, ctx) => {
-  if (new Set(Object.values(series)).size !== 4) {
-    ctx.addIssue({
-      code: z.ZodIssueCode.custom,
-      message: "required evidence series IDs must be distinct",
-    });
-  }
-});
-
-const AdmissionExperimentVerifierSchema = z.object({
-  kind: z.enum(["instrumented_agent_trace", "deterministic_scorer"]),
-  version: AdmissionExperimentVerifierVersionSchema,
-  config_sha256: LearningDigestSha256Schema,
-}).strict();
-
-const AdmissionExperimentCollectionSourceSchema = z.object({
-  principal_sha256: LearningDigestSha256Schema,
-  class: z.enum(["eligible_host", "fixture_pilot"]),
-  collector_id: BoundedLearningIdSchema,
-  collector_version: z.string().trim().min(1).max(120),
-  verifier_policy_sha256: LearningDigestSha256Schema,
-  allowed_verifiers: z.array(AdmissionExperimentVerifierSchema).min(1).max(32),
-}).strict().superRefine((source, ctx) => {
-  const verifierKeys = source.allowed_verifiers.map((verifier) =>
-    `${verifier.kind}\u0000${verifier.version}\u0000${verifier.config_sha256}`
-  );
-  if (new Set(verifierKeys).size !== verifierKeys.length) {
-    ctx.addIssue({
-      code: z.ZodIssueCode.custom,
-      path: ["allowed_verifiers"],
-      message: "allowed verifier tuples must be unique",
-    });
-  }
-  if (stableStringify(verifierKeys) !== stableStringify(canonicalUtf8Order(verifierKeys))) {
-    ctx.addIssue({
-      code: z.ZodIssueCode.custom,
-      path: ["allowed_verifiers"],
-      message: "allowed verifier tuples must use canonical UTF-8 key order",
-    });
-  }
-  const expectedDigest = sha256Hex(stableStringify({
-    allowed_verifiers: source.allowed_verifiers,
-  }));
-  if (source.verifier_policy_sha256 !== expectedDigest) {
-    ctx.addIssue({
-      code: z.ZodIssueCode.custom,
-      path: ["verifier_policy_sha256"],
-      message: "verifier policy digest does not bind the exact allowed verifier list",
-    });
-  }
-});
-
-const AdmissionCandidatePolicyExperimentSchema = z.object({
-  experiment_id: BoundedLearningIdSchema,
-  revision: z.number().int().positive(),
-  serving_phase: z.enum(["aa", "shadow", "active_control"]),
-  evidence_intent: z.enum(["integrity_only", "confirmatory"]),
-  assignment_design: z.enum([
-    "diagnostic_hash_v1",
-    "matched_pair_complete_randomization_v1",
-  ]),
-  candidate_policy_id: z.literal(AIONIS_ADMISSION_CANDIDATE_POLICY_ID),
-  candidate_policy_version: z.literal(AIONIS_ADMISSION_CANDIDATE_POLICY_VERSION),
-  candidate_allocation_bps: z.number().int().min(1_000).max(9_000),
-  gate_policy_id: z.literal(LEARNING_GATE_POLICY_ID),
-  gate_policy_version: z.literal(LEARNING_GATE_POLICY_VERSION),
-  required_evidence_series: AdmissionExperimentEvidenceSeriesSchema,
-  required_external_inputs: z.union([
-    IntegrityOnlyExternalInputsV1Schema,
-    AdmissionExperimentRequiredExternalInputsSchema,
-  ]).default({}),
-  external_execution_policy_ref: z.object({
-    registry_key: z.literal("external-execution-v1"),
-  }).strict(),
-  collection_sources: z.array(AdmissionExperimentCollectionSourceSchema).max(100).default([]),
-  safety_pause_mode: z.literal("automatic"),
-}).strict().superRefine((experiment, ctx) => {
-  const integrityOnly = experiment.serving_phase === "aa" || experiment.serving_phase === "shadow";
-  const expectedEvidenceIntent = integrityOnly ? "integrity_only" : "confirmatory";
-  if (experiment.evidence_intent !== expectedEvidenceIntent) {
-    ctx.addIssue({
-      code: z.ZodIssueCode.custom,
-      path: ["evidence_intent"],
-      message: `${experiment.serving_phase} requires evidence_intent=${expectedEvidenceIntent}`,
-    });
-  }
-  const expectedAssignment = integrityOnly
-    ? "diagnostic_hash_v1"
-    : "matched_pair_complete_randomization_v1";
-  if (experiment.assignment_design !== expectedAssignment) {
-    ctx.addIssue({
-      code: z.ZodIssueCode.custom,
-      path: ["assignment_design"],
-      message: `${experiment.serving_phase} requires assignment_design=${expectedAssignment}`,
-    });
-  }
-  if (experiment.serving_phase === "active_control" && experiment.candidate_allocation_bps !== 5_000) {
-    ctx.addIssue({
-      code: z.ZodIssueCode.custom,
-      path: ["candidate_allocation_bps"],
-      message: "active_control requires candidate_allocation_bps=5000",
-    });
-  }
-  const externalInputKeys = Object.keys(experiment.required_external_inputs);
-  if (integrityOnly && externalInputKeys.length !== 0) {
-    ctx.addIssue({
-      code: z.ZodIssueCode.custom,
-      path: ["required_external_inputs"],
-      message: "integrity-only experiments require the canonical empty external input mapping",
-    });
-  }
-  if (!integrityOnly && externalInputKeys.length !== 3) {
-    ctx.addIssue({
-      code: z.ZodIssueCode.custom,
-      path: ["required_external_inputs"],
-      message: "confirmatory experiments require all three preregistered external input roles",
-    });
-  }
-  const principalFingerprints = experiment.collection_sources.map((source) => source.principal_sha256);
-  if (new Set(principalFingerprints).size !== principalFingerprints.length) {
-    ctx.addIssue({
-      code: z.ZodIssueCode.custom,
-      path: ["collection_sources"],
-      message: "collection sources contain a duplicate principal fingerprint",
-    });
-  }
-  if (stableStringify(principalFingerprints)
-    !== stableStringify(canonicalUtf8Order(principalFingerprints))) {
-    ctx.addIssue({
-      code: z.ZodIssueCode.custom,
-      path: ["collection_sources"],
-      message: "collection sources must use canonical principal fingerprint order",
-    });
-  }
-});
-
-const AdmissionCandidatePolicyProfileRuleSchema = z.object({
-  profile_id: z.string().trim().min(1).max(120),
-  mode: z.enum(["shadow", "active"]).default("active"),
-  scopes: z.array(z.string().trim().min(1).max(512)).max(100).optional(),
-  scope_prefixes: z.array(z.string().trim().min(1).max(512)).max(100).optional(),
-  task_families: z.array(z.string().trim().min(1).max(256)).max(100).optional(),
-  task_signatures: z.array(z.string().trim().min(1).max(512)).max(100).optional(),
-  agent_roles: z.array(z.enum(["agent", "planner", "worker", "verifier", "reviewer"])).max(16).optional(),
-  context_modes: z.array(z.enum(["standard", "full_power", "compact_agent"])).max(16).optional(),
-  guide_modes: z.array(z.enum(["standard", "full_power"])).max(16).optional(),
-  experiment: AdmissionCandidatePolicyExperimentSchema.optional(),
-}).strict().superRefine((rule, ctx) => {
-  const selectorCount = [
-    rule.scopes,
-    rule.scope_prefixes,
-    rule.task_families,
-    rule.task_signatures,
-    rule.agent_roles,
-    rule.context_modes,
-    rule.guide_modes,
-  ].filter((value) => Array.isArray(value) && value.length > 0).length;
-  if (selectorCount === 0) {
-    ctx.addIssue({
-      code: z.ZodIssueCode.custom,
-      message: "profile rule must include at least one selector",
-      path: ["profile_id"],
-    });
-  }
-  if (rule.mode === "shadow" && rule.experiment?.serving_phase === "active_control") {
-    ctx.addIssue({
-      code: z.ZodIssueCode.custom,
-      message: "profile mode=shadow is an authority ceiling and rejects serving_phase=active_control",
-      path: ["experiment", "serving_phase"],
-    });
-  }
-});
-
-const AdmissionCandidatePolicyProfileRulesSchema = z.array(AdmissionCandidatePolicyProfileRuleSchema).max(100)
-  .superRefine((rules, ctx) => {
-    const immutableRevisionConfigs = new Map<string, string>();
-    for (const [index, rule] of rules.entries()) {
-      if (!rule.experiment) continue;
-      const revisionKey = `${rule.experiment.experiment_id}\u0000${rule.experiment.revision}`;
-      // One authority revision freezes exactly one profile/rule digest, not
-      // merely the nested experiment declaration. Reusing it under another
-      // selector or profile would create a configuration that can never match
-      // the persisted revision authority.
-      const canonicalConfig = stableStringify(rule);
-      const prior = immutableRevisionConfigs.get(revisionKey);
-      if (prior !== undefined && prior !== canonicalConfig) {
-        ctx.addIssue({
-          code: z.ZodIssueCode.custom,
-          path: [index, "experiment"],
-          message: `experiment revision configuration drift: ${rule.experiment.experiment_id}@${rule.experiment.revision}`,
-        });
-      } else {
-        immutableRevisionConfigs.set(revisionKey, canonicalConfig);
-      }
-    }
-  });
-
-function sandboxRemoteHostAllowed(hostname: string, allowlist: string[]): boolean {
-  const host = hostname.trim().toLowerCase();
-  if (!host) return false;
-  if (allowlist.length === 0) return true;
-  for (const raw of allowlist) {
-    const rule = raw.trim().toLowerCase();
-    if (!rule) continue;
-    if (rule.startsWith("*.")) {
-      const suffix = rule.slice(2);
-      if (!suffix) continue;
-      if (host === suffix || host.endsWith(`.${suffix}`)) return true;
-      continue;
-    }
-    if (host === rule) return true;
-  }
-  return false;
-}
-
-function normalizeSandboxRemoteEgressCidrs(raw: string): string[] {
-  let parsed: unknown = [];
-  try {
-    const normalized = raw.trim();
-    parsed = normalized.length === 0 ? [] : JSON.parse(normalized);
-  } catch {
-    throw new Error("SANDBOX_REMOTE_EXECUTOR_EGRESS_ALLOWED_CIDRS_JSON must be valid JSON array");
-  }
-  if (!Array.isArray(parsed)) {
-    throw new Error("SANDBOX_REMOTE_EXECUTOR_EGRESS_ALLOWED_CIDRS_JSON must be a JSON array");
-  }
-  const out: string[] = [];
-  for (const item of parsed) {
-    if (typeof item !== "string") {
-      throw new Error("SANDBOX_REMOTE_EXECUTOR_EGRESS_ALLOWED_CIDRS_JSON entries must be strings");
-    }
-    const rawRule = item.trim();
-    if (!rawRule) continue;
-    const slash = rawRule.lastIndexOf("/");
-    if (slash <= 0 || slash >= rawRule.length - 1) {
-      throw new Error(`SANDBOX_REMOTE_EXECUTOR_EGRESS_ALLOWED_CIDRS_JSON invalid CIDR: ${rawRule}`);
-    }
-    const ip = rawRule.slice(0, slash).trim();
-    const prefixRaw = rawRule.slice(slash + 1).trim();
-    const family = isIP(ip);
-    if (family !== 4 && family !== 6) {
-      throw new Error(`SANDBOX_REMOTE_EXECUTOR_EGRESS_ALLOWED_CIDRS_JSON invalid CIDR IP: ${rawRule}`);
-    }
-    const prefix = Number(prefixRaw);
-    const maxPrefix = family === 4 ? 32 : 128;
-    if (!Number.isFinite(prefix) || Math.trunc(prefix) !== prefix || prefix < 0 || prefix > maxPrefix) {
-      throw new Error(`SANDBOX_REMOTE_EXECUTOR_EGRESS_ALLOWED_CIDRS_JSON invalid CIDR prefix: ${rawRule}`);
-    }
-    out.push(`${ip.toLowerCase()}/${prefix}`);
-  }
-  return out;
-}
-
-function parseSandboxAllowedCommandsJson(raw: string): string[] {
-  const input = raw.trim();
-  const candidates: string[] = [];
-  if (input.length === 0) {
-    candidates.push("[]");
-  } else {
-    candidates.push(input);
-    // Accept shell-quoted env-file values, e.g. '["echo"]' or "[\"echo\"]".
-    if (
-      (input.startsWith("'") && input.endsWith("'") && input.length >= 2)
-      || (input.startsWith("\"") && input.endsWith("\"") && input.length >= 2)
-    ) {
-      candidates.push(input.slice(1, -1).trim());
-    }
-  }
-
-  let sawNonArrayJson = false;
-  for (const candidate of candidates) {
-    if (candidate.length === 0) continue;
-    try {
-      const parsed = JSON.parse(candidate);
-      if (!Array.isArray(parsed)) {
-        sawNonArrayJson = true;
-        continue;
-      }
-      return parsed
-        .map((v) => (typeof v === "string" ? v.trim() : ""))
-        .filter((v) => v.length > 0);
-    } catch {
-      // fall through to other candidate forms
-    }
-  }
-
-  // Accept shell-expanded bare list form, e.g. [echo,python3] after `source`.
-  if (input.startsWith("[") && input.endsWith("]")) {
-    const body = input.slice(1, -1).trim();
-    if (body.length === 0) return [];
-    const parts = body.split(",").map((v) => v.trim()).filter((v) => v.length > 0);
-    const safeToken = /^[a-zA-Z0-9._/+:-]+$/;
-    if (parts.every((v) => safeToken.test(v))) {
-      return parts;
-    }
-  }
-
-  if (sawNonArrayJson) {
-    throw new Error("SANDBOX_ALLOWED_COMMANDS_JSON must be a JSON array");
-  }
-  throw new Error("SANDBOX_ALLOWED_COMMANDS_JSON must be a valid JSON array of command names");
-}
 
 const EnvSchema = z.object({
   AIONIS_MODE: RuntimeModeSchema.default("local"),
@@ -401,8 +20,6 @@ const EnvSchema = z.object({
   AIONIS_RUNTIME_PACKAGE_VERSION: z.string().default(""),
   AIONIS_RUNTIME_STARTED_AT: z.string().default(""),
   AIONIS_INSPECT_BEFORE_USE_MODE: InspectBeforeUseModeSchema.default("shadow"),
-  AIONIS_ADMISSION_CANDIDATE_POLICY_MODE: AdmissionCandidatePolicyModeSchema.default("off"),
-  AIONIS_ADMISSION_CANDIDATE_POLICY_PROFILE_RULES_JSON: z.string().default("[]"),
   AIONIS_AUTHORITY_RECEIPT_HMAC_ACTIVE_KEY_ID: z.string().default(""),
   AIONIS_AUTHORITY_RECEIPT_HMAC_KEYS_JSON: z.string().default(""),
   AIONIS_AUTHORITY_RECEIPT_HMAC_SECRET: z.string().default(""),
@@ -427,16 +44,8 @@ const EnvSchema = z.object({
     .pipe(z.enum(["true", "false"]))
     .transform((v) => v === "true"),
   TRUSTED_PROXY_CIDRS: z.string().default(""),
-  LITE_REPLAY_SQLITE_PATH: z.string().default(".tmp/aionis-lite-replay.sqlite"),
   LITE_WRITE_SQLITE_PATH: z.string().default(".tmp/aionis-lite-write.sqlite"),
   LITE_LOCAL_ACTOR_ID: z.string().min(1).default("local-user"),
-  LITE_INSPECTOR_ENABLED: z
-    .string()
-    .optional()
-    .transform((v) => (v ?? "false").toLowerCase())
-    .pipe(z.enum(["true", "false"]))
-    .transform((v) => v === "true"),
-  LITE_INSPECTOR_DIST_PATH: z.string().default(""),
   PORT: z.coerce.number().int().positive().default(3001),
   MEMORY_SCOPE: z.string().min(1).default("default"),
   MEMORY_TENANT_ID: z.string().min(1).default("default"),
@@ -470,10 +79,6 @@ const EnvSchema = z.object({
     .transform((v) => (v ?? "false").toLowerCase())
     .pipe(z.enum(["true", "false"]))
     .transform((v) => v === "true"),
-  EMBEDDING_ENABLED_SURFACES_JSON: z
-    .string()
-    .default("")
-    .transform((v) => parseEmbeddingEnabledSurfacesJson(v)),
   EMBEDDING_DIM: z.coerce.number().int().positive().default(1536),
   LITE_INLINE_EMBEDDING_TIMEOUT_MS: z.coerce.number().int().positive().max(60_000).default(12_000),
   ADMIN_TOKEN: z.string().optional(),
@@ -493,12 +98,6 @@ const EnvSchema = z.object({
   RATE_LIMIT_TTL_MS: z.coerce.number().int().positive().default(10 * 60 * 1000),
   RECALL_RATE_LIMIT_RPS: z.coerce.number().positive().default(10),
   RECALL_RATE_LIMIT_BURST: z.coerce.number().int().positive().default(20),
-  // Upstream-protection limiter for recall_text query embeddings.
-  RECALL_TEXT_EMBED_RATE_LIMIT_RPS: z.coerce.number().positive().default(4),
-  RECALL_TEXT_EMBED_RATE_LIMIT_BURST: z.coerce.number().int().positive().default(8),
-  RECALL_TEXT_EMBED_RATE_LIMIT_MAX_WAIT_MS: z.coerce.number().int().min(0).max(5000).default(600),
-  DEBUG_EMBED_RATE_LIMIT_RPS: z.coerce.number().positive().default(0.2), // ~1 request per 5s
-  DEBUG_EMBED_RATE_LIMIT_BURST: z.coerce.number().int().positive().default(2),
   WRITE_RATE_LIMIT_RPS: z.coerce.number().positive().default(5),
   WRITE_RATE_LIMIT_BURST: z.coerce.number().int().positive().default(10),
   // Optional write-side smoothing: when a write is just over the limit, wait briefly then retry once.
@@ -511,34 +110,9 @@ const EnvSchema = z.object({
     .transform((v) => v === "true"),
   TENANT_RECALL_RATE_LIMIT_RPS: z.coerce.number().positive().default(30),
   TENANT_RECALL_RATE_LIMIT_BURST: z.coerce.number().int().positive().default(60),
-  TENANT_RECALL_TEXT_EMBED_RATE_LIMIT_RPS: z.coerce.number().positive().default(8),
-  TENANT_RECALL_TEXT_EMBED_RATE_LIMIT_BURST: z.coerce.number().int().positive().default(16),
-  TENANT_RECALL_TEXT_EMBED_RATE_LIMIT_MAX_WAIT_MS: z.coerce.number().int().min(0).max(5000).default(800),
-  TENANT_DEBUG_EMBED_RATE_LIMIT_RPS: z.coerce.number().positive().default(1),
-  TENANT_DEBUG_EMBED_RATE_LIMIT_BURST: z.coerce.number().int().positive().default(4),
   TENANT_WRITE_RATE_LIMIT_RPS: z.coerce.number().positive().default(10),
   TENANT_WRITE_RATE_LIMIT_BURST: z.coerce.number().int().positive().default(20),
   TENANT_WRITE_RATE_LIMIT_MAX_WAIT_MS: z.coerce.number().int().min(0).max(5000).default(300),
-  // Query embedding cache for recall_text (reduces upstream provider RPM pressure).
-  RECALL_TEXT_EMBED_CACHE_ENABLED: z
-    .string()
-    .optional()
-    .transform((v) => (v ?? "true").toLowerCase())
-    .pipe(z.enum(["true", "false"]))
-    .transform((v) => v === "true"),
-  RECALL_TEXT_EMBED_CACHE_MAX_KEYS: z.coerce.number().int().positive().max(200000).default(2000),
-  RECALL_TEXT_EMBED_CACHE_TTL_MS: z.coerce.number().int().positive().default(10 * 60 * 1000),
-  RECALL_TEXT_EMBED_BATCH_ENABLED: z
-    .string()
-    .optional()
-    .transform((v) => (v ?? "true").toLowerCase())
-    .pipe(z.enum(["true", "false"]))
-    .transform((v) => v === "true"),
-  RECALL_TEXT_EMBED_BATCH_MAX_SIZE: z.coerce.number().int().positive().max(256).default(24),
-  RECALL_TEXT_EMBED_BATCH_MAX_WAIT_MS: z.coerce.number().int().min(0).max(100).default(8),
-  RECALL_TEXT_EMBED_BATCH_MAX_INFLIGHT: z.coerce.number().int().positive().max(64).default(4),
-  RECALL_TEXT_EMBED_BATCH_QUEUE_MAX: z.coerce.number().int().positive().max(200000).default(12000),
-  RECALL_TEXT_EMBED_BATCH_QUEUE_TIMEOUT_MS: z.coerce.number().int().positive().max(60_000).default(5_000),
   // API inflight gates: coarse server-side backpressure for read/write paths.
   API_RECALL_MAX_INFLIGHT: z.coerce.number().int().positive().max(5000).default(256),
   API_RECALL_QUEUE_MAX: z.coerce.number().int().min(0).max(200000).default(6000),
@@ -546,50 +120,7 @@ const EnvSchema = z.object({
   API_WRITE_MAX_INFLIGHT: z.coerce.number().int().positive().max(5000).default(96),
   API_WRITE_QUEUE_MAX: z.coerce.number().int().min(0).max(200000).default(3000),
   API_WRITE_QUEUE_TIMEOUT_MS: z.coerce.number().int().positive().max(60_000).default(2_000),
-  // Server-side default recall tuning profile used when callers omit recall knobs.
-  MEMORY_RECALL_PROFILE: z.enum(["strict_edges", "quality_first", "lite"]).default("strict_edges"),
-  // Layered recall profile policy (global -> endpoint -> tenant -> tenant+endpoint), JSON object.
-  MEMORY_RECALL_PROFILE_POLICY_JSON: z.string().default("{}"),
-  // Optional class-aware recall selector for text-driven recall endpoints.
-  MEMORY_RECALL_CLASS_AWARE_ENABLED: z
-    .string()
-    .optional()
-    .transform((v) => (v ?? "false").toLowerCase())
-    .pipe(z.enum(["true", "false"]))
-    .transform((v) => v === "true"),
-  // Adaptive profile downgrade on recall queue pressure.
-  MEMORY_RECALL_ADAPTIVE_DOWNGRADE_ENABLED: z
-    .string()
-    .optional()
-    .transform((v) => (v ?? "true").toLowerCase())
-    .pipe(z.enum(["true", "false"]))
-    .transform((v) => v === "true"),
-  MEMORY_RECALL_ADAPTIVE_WAIT_MS: z.coerce.number().int().min(1).max(60_000).default(200),
-  MEMORY_RECALL_ADAPTIVE_TARGET_PROFILE: z.enum(["strict_edges", "quality_first", "lite"]).default("strict_edges"),
-  // Additional queue-pressure hard caps to trim recall tail latency.
-  MEMORY_RECALL_ADAPTIVE_HARD_CAP_ENABLED: z
-    .string()
-    .optional()
-    .transform((v) => (v ?? "true").toLowerCase())
-    .pipe(z.enum(["true", "false"]))
-    .transform((v) => v === "true"),
-  MEMORY_RECALL_ADAPTIVE_HARD_CAP_WAIT_MS: z.coerce.number().int().min(1).max(60_000).default(600),
-  MEMORY_RECALL_ADAPTIVE_HARD_CAP_LIMIT: z.coerce.number().int().positive().max(200).default(16),
-  MEMORY_RECALL_ADAPTIVE_HARD_CAP_NEIGHBORHOOD_HOPS: z.coerce.number().int().min(1).max(2).default(1),
-  MEMORY_RECALL_ADAPTIVE_HARD_CAP_MAX_NODES: z.coerce.number().int().positive().max(200).default(40),
-  MEMORY_RECALL_ADAPTIVE_HARD_CAP_MAX_EDGES: z.coerce.number().int().positive().max(100).default(50),
-  MEMORY_RECALL_ADAPTIVE_HARD_CAP_RANKED_LIMIT: z.coerce.number().int().positive().max(500).default(90),
-  MEMORY_RECALL_ADAPTIVE_HARD_CAP_MIN_EDGE_WEIGHT: z.coerce.number().min(0).max(1).default(0.25),
-  MEMORY_RECALL_ADAPTIVE_HARD_CAP_MIN_EDGE_CONFIDENCE: z.coerce.number().min(0).max(1).default(0.25),
-  // Stage-1 safety net: if ANN recall returns zero seeds, run one exact KNN pass to avoid false-empty recall.
-  MEMORY_RECALL_STAGE1_EXACT_RECOVERY_ON_EMPTY: z
-    .string()
-    .optional()
-    .transform((v) => (v ?? "true").toLowerCase())
-    .pipe(z.enum(["true", "false"]))
-    .transform((v) => v === "true"),
-  // Optional local ANN sidecar. Default off: ANN only generates candidates and never decides admission.
-  RECALL_ENGINE_MODE: RecallEngineModeSchema.default("semantic_scan"),
+  // Optional local ANN sidecar. ANN only generates candidates; SQLite remains authoritative.
   RECALL_ANN_PROVIDER: RecallAnnProviderSchema.default("off"),
   RECALL_ZVEC_PATH: z.string().default(""),
   RECALL_ANN_REBUILD_ON_START: z
@@ -615,10 +146,6 @@ const EnvSchema = z.object({
     .transform((v) => (v ?? "true").toLowerCase())
     .pipe(z.enum(["true", "false"]))
     .transform((v) => v === "true"),
-  // Optional default compaction budget for recall_text context output. 0 disables.
-  MEMORY_RECALL_TEXT_CONTEXT_TOKEN_BUDGET_DEFAULT: z.coerce.number().int().min(0).max(256000).default(0),
-  MEMORY_PLANNING_CONTEXT_OPTIMIZATION_PROFILE_DEFAULT: z.enum(["off", "balanced", "aggressive"]).default("off"),
-  MEMORY_CONTEXT_ASSEMBLE_OPTIMIZATION_PROFILE_DEFAULT: z.enum(["off", "balanced", "aggressive"]).default("off"),
   PII_REDACTION: z
     .string()
     .optional()
@@ -632,202 +159,11 @@ const EnvSchema = z.object({
     .pipe(z.enum(["true", "false"]))
     .transform((v) => v === "true"),
   MAX_TEXT_LEN: z.coerce.number().int().positive().default(8000),
-  SANDBOX_ENABLED: z
-    .string()
-    .optional()
-    .transform((v) => (v ?? "true").toLowerCase())
-    .pipe(z.enum(["true", "false"]))
-    .transform((v) => v === "true"),
-  SANDBOX_ADMIN_ONLY: z
-    .string()
-    .optional()
-    .transform((v) => (v ?? "false").toLowerCase())
-    .pipe(z.enum(["true", "false"]))
-    .transform((v) => v === "true"),
-  SANDBOX_EXECUTOR_MODE: z.enum(["local_process", "http_remote"]).default("local_process"),
-  SANDBOX_EXECUTOR_MAX_CONCURRENCY: z.coerce.number().int().positive().max(16).default(2),
-  SANDBOX_EXECUTOR_TIMEOUT_MS: z.coerce.number().int().positive().max(600000).default(15000),
-  SANDBOX_STDIO_MAX_BYTES: z.coerce.number().int().positive().max(1024 * 1024).default(65536),
-  SANDBOX_ALLOWED_COMMANDS_JSON: z.string().default("[\"echo\"]"),
-  SANDBOX_EXECUTOR_WORKDIR: z.string().default(".tmp/sandbox"),
-  SANDBOX_REMOTE_EXECUTOR_URL: z.string().default(""),
-  SANDBOX_REMOTE_EXECUTOR_AUTH_HEADER: z.string().default("authorization"),
-  SANDBOX_REMOTE_EXECUTOR_AUTH_TOKEN: z.string().default(""),
-  SANDBOX_REMOTE_EXECUTOR_TIMEOUT_MS: z.coerce.number().int().positive().max(600000).default(20000),
-  SANDBOX_REMOTE_EXECUTOR_ALLOWED_HOSTS_JSON: z.string().default("[]"),
-  SANDBOX_REMOTE_EXECUTOR_EGRESS_ALLOWED_CIDRS_JSON: z.string().default("[]"),
-  SANDBOX_REMOTE_EXECUTOR_EGRESS_DENY_PRIVATE_IPS: z
-    .string()
-    .optional()
-    .transform((v) => (v ?? "true").toLowerCase())
-    .pipe(z.enum(["true", "false"]))
-    .transform((v) => v === "true"),
-  SANDBOX_REMOTE_EXECUTOR_MTLS_CERT_PEM: z.string().default(""),
-  SANDBOX_REMOTE_EXECUTOR_MTLS_KEY_PEM: z.string().default(""),
-  SANDBOX_REMOTE_EXECUTOR_MTLS_CA_PEM: z.string().default(""),
-  SANDBOX_REMOTE_EXECUTOR_MTLS_SERVER_NAME: z.string().default(""),
-  SANDBOX_ARTIFACT_OBJECT_STORE_BASE_URI: z.string().default(""),
-  SANDBOX_LOCAL_PROCESS_ALLOW_IN_PROD: z
-    .string()
-    .optional()
-    .transform((v) => (v ?? "false").toLowerCase())
-    .pipe(z.enum(["true", "false"]))
-    .transform((v) => v === "true"),
-  SANDBOX_RUN_HEARTBEAT_INTERVAL_MS: z.coerce.number().int().min(0).max(60000).default(5000),
-  SANDBOX_RUN_STALE_AFTER_MS: z.coerce.number().int().positive().max(86400000).default(120000),
-  SANDBOX_RUN_RECOVERY_POLL_INTERVAL_MS: z.coerce.number().int().min(0).max(300000).default(15000),
-  SANDBOX_RUN_RECOVERY_BATCH_SIZE: z.coerce.number().int().positive().max(10000).default(100),
-  SANDBOX_TENANT_BUDGET_WINDOW_HOURS: z.coerce.number().int().positive().max(168).default(24),
-  SANDBOX_TENANT_BUDGET_POLICY_JSON: z.string().default("{}"),
-  // Guided replay emits structured repair requests; semantic patch synthesis stays outside Runtime.
-  REPLAY_GUIDED_REPAIR_STRATEGY: z
-    .enum(["agent_repair_request"])
-    .default("agent_repair_request"),
-  REPLAY_GUIDED_REPAIR_MAX_ERROR_CHARS: z.coerce.number().int().min(64).max(20000).default(1200),
-  // Replay closed-loop learning projection defaults.
-  REPLAY_LEARNING_PROJECTION_ENABLED: z
-    .string()
-    .optional()
-    .transform((v) => (v ?? "false").toLowerCase())
-    .pipe(z.enum(["true", "false"]))
-    .transform((v) => v === "true"),
-  REPLAY_LEARNING_PROJECTION_MODE: z.enum(["rule_and_episode", "episode_only"]).default("rule_and_episode"),
-  REPLAY_LEARNING_PROJECTION_DELIVERY: z.enum(["sync_inline"]).default("sync_inline"),
-  REPLAY_LEARNING_TARGET_RULE_STATE: z.enum(["draft", "shadow"]).default("draft"),
-  REPLAY_LEARNING_MIN_TOTAL_STEPS: z.coerce.number().int().min(0).max(500).default(1),
-  REPLAY_LEARNING_MIN_SUCCESS_RATIO: z.coerce.number().min(0).max(1).default(1),
-  REPLAY_LEARNING_MAX_MATCHER_BYTES: z.coerce.number().int().positive().max(1024 * 1024).default(16384),
-  REPLAY_LEARNING_MAX_TOOL_PREFER: z.coerce.number().int().positive().max(64).default(8),
-  REPLAY_LEARNING_CONTROL_EVIDENCE_PROMOTE_MEMORY_PROVIDER_ENABLED: z
-    .string()
-    .optional()
-    .transform((v) => (v ?? "false").toLowerCase())
-    .pipe(z.enum(["true", "false"]))
-    .transform((v) => v === "true"),
-  REPLAY_LEARNING_CONTROL_HTTP_MODEL_PROMOTE_MEMORY_PROVIDER_ENABLED: z
-    .string()
-    .optional()
-    .transform((v) => (v ?? "false").toLowerCase())
-    .pipe(z.enum(["true", "false"]))
-    .transform((v) => v === "true"),
-  WORKFLOW_LEARNING_CONTROL_EVIDENCE_PROMOTE_MEMORY_PROVIDER_ENABLED: z
-    .string()
-    .optional()
-    .transform((v) => (v ?? "false").toLowerCase())
-    .pipe(z.enum(["true", "false"]))
-    .transform((v) => v === "true"),
-  WORKFLOW_LEARNING_CONTROL_HTTP_MODEL_PROMOTE_MEMORY_PROVIDER_ENABLED: z
-    .string()
-    .optional()
-    .transform((v) => (v ?? "false").toLowerCase())
-    .pipe(z.enum(["true", "false"]))
-    .transform((v) => v === "true"),
-  TOOLS_LEARNING_CONTROL_EVIDENCE_FORM_PATTERN_PROVIDER_ENABLED: z
-    .string()
-    .optional()
-    .transform((v) => (v ?? "false").toLowerCase())
-    .pipe(z.enum(["true", "false"]))
-    .transform((v) => v === "true"),
-  TOOLS_LEARNING_CONTROL_HTTP_MODEL_FORM_PATTERN_PROVIDER_ENABLED: z
-    .string()
-    .optional()
-    .transform((v) => (v ?? "false").toLowerCase())
-    .pipe(z.enum(["true", "false"]))
-    .transform((v) => v === "true"),
-  MEMORY_LIFECYCLE_RELATION_HTTP_MODEL_PROVIDER_ENABLED: z
-    .string()
-    .optional()
-    .transform((v) => (v ?? "false").toLowerCase())
-    .pipe(z.enum(["true", "false"]))
-    .transform((v) => v === "true"),
-  MEMORY_LIFECYCLE_RELATION_MODEL_MAX_PAIRS: z.coerce.number().int().positive().max(200).default(60),
-  LEARNING_CONTROL_MODEL_CLIENT_TRANSPORT: z
-    .enum(["auto", "openai_chat_completions_v1", "anthropic_messages_v1"])
-    .default("auto"),
-  LEARNING_CONTROL_MODEL_CLIENT_BASE_URL: z.string().default("https://api.openai.com/v1"),
-  LEARNING_CONTROL_MODEL_CLIENT_API_KEY: z.string().default(""),
-  LEARNING_CONTROL_MODEL_CLIENT_MODEL: z.string().default("gpt-4.1-mini"),
-  LEARNING_CONTROL_MODEL_CLIENT_TIMEOUT_MS: z.coerce.number().int().positive().max(60000).default(7000),
-  LEARNING_CONTROL_MODEL_CLIENT_MAX_TOKENS: z.coerce.number().int().positive().max(4000).default(300),
-  LEARNING_CONTROL_MODEL_CLIENT_TEMPERATURE: z.coerce.number().min(0).max(1).default(0.1),
-  LEARNING_CONTROL_MODEL_CLIENT_OPENAI_EXTRA_BODY_JSON: z.string().default(""),
-  EPISODE_GC_TTL_DAYS: z.coerce.number().int().positive().max(3650).default(30),
-  // Shadow validation default controls for replay repair-review flows.
-  REPLAY_SHADOW_VALIDATE_EXECUTE_TIMEOUT_MS: z.coerce.number().int().positive().max(600000).default(15000),
-  REPLAY_SHADOW_VALIDATE_EXECUTE_STOP_ON_FAILURE: z
-    .string()
-    .optional()
-    .transform((v) => (v ?? "true").toLowerCase())
-    .pipe(z.enum(["true", "false"]))
-    .transform((v) => v === "true"),
-  REPLAY_SHADOW_VALIDATE_SANDBOX_TIMEOUT_MS: z.coerce.number().int().positive().max(600000).default(15000),
-  REPLAY_SHADOW_VALIDATE_SANDBOX_STOP_ON_FAILURE: z
-    .string()
-    .optional()
-    .transform((v) => (v ?? "true").toLowerCase())
-    .pipe(z.enum(["true", "false"]))
-    .transform((v) => v === "true"),
-  // Replay repair review auto-promotion global defaults (request-level fields can override these).
-  REPLAY_REPAIR_REVIEW_AUTO_PROMOTE_PROFILE: z.enum(["custom", "strict", "staged", "aggressive"]).default("custom"),
-  REPLAY_REPAIR_REVIEW_AUTO_PROMOTE_DEFAULT: z
-    .string()
-    .optional()
-    .transform((v) => (v ?? "false").toLowerCase())
-    .pipe(z.enum(["true", "false"]))
-    .transform((v) => v === "true"),
-  REPLAY_REPAIR_REVIEW_AUTO_PROMOTE_TARGET_STATUS: z.enum(["draft", "shadow", "active", "disabled"]).default("active"),
-  REPLAY_REPAIR_REVIEW_GATE_REQUIRE_SHADOW_PASS: z
-    .string()
-    .optional()
-    .transform((v) => (v ?? "true").toLowerCase())
-    .pipe(z.enum(["true", "false"]))
-    .transform((v) => v === "true"),
-  REPLAY_REPAIR_REVIEW_GATE_MIN_TOTAL_STEPS: z.coerce.number().int().min(0).default(0),
-  REPLAY_REPAIR_REVIEW_GATE_MAX_FAILED_STEPS: z.coerce.number().int().min(0).default(0),
-  REPLAY_REPAIR_REVIEW_GATE_MAX_BLOCKED_STEPS: z.coerce.number().int().min(0).default(0),
-  REPLAY_REPAIR_REVIEW_GATE_MAX_UNKNOWN_STEPS: z.coerce.number().int().min(0).default(0),
-  REPLAY_REPAIR_REVIEW_GATE_MIN_SUCCESS_RATIO: z.coerce.number().min(0).max(1).default(1),
-  // Optional tenant/route/scope scoped replay auto-promotion policy map.
-  REPLAY_REPAIR_REVIEW_POLICY_JSON: z.string().default("{}"),
-
   OUTBOX_POLL_INTERVAL_MS: z.coerce.number().int().positive().default(1000),
   OUTBOX_BATCH_SIZE: z.coerce.number().int().positive().max(200).default(20),
 });
 
 export type Env = z.infer<typeof EnvSchema>;
-export type AionisAdmissionCandidatePolicyExperiment = z.infer<
-  typeof AdmissionCandidatePolicyExperimentSchema
->;
-export type AionisAdmissionCandidatePolicyProfileRule = z.infer<typeof AdmissionCandidatePolicyProfileRuleSchema>;
-
-export function admissionCandidatePolicyExperimentDeclarationDigest(
-  experiment: AionisAdmissionCandidatePolicyExperiment,
-): string {
-  return sha256Hex(stableStringify(AdmissionCandidatePolicyExperimentSchema.parse(experiment)));
-}
-
-export function admissionCandidatePolicyProfileRuleDigest(
-  rule: AionisAdmissionCandidatePolicyProfileRule,
-): string {
-  return sha256Hex(stableStringify(AdmissionCandidatePolicyProfileRuleSchema.parse(rule)));
-}
-
-export function parseAdmissionCandidatePolicyProfileRules(raw: string): AionisAdmissionCandidatePolicyProfileRule[] {
-  let parsed: unknown;
-  try {
-    const input = raw.trim();
-    parsed = input.length === 0 ? [] : JSON.parse(input);
-  } catch {
-    throw new Error("AIONIS_ADMISSION_CANDIDATE_POLICY_PROFILE_RULES_JSON must be valid JSON array");
-  }
-  const result = AdmissionCandidatePolicyProfileRulesSchema.safeParse(parsed);
-  if (!result.success) {
-    const msg = result.error.issues.map((i) => `${i.path.join(".")}: ${i.message}`).join("\n");
-    throw new Error(`Invalid AIONIS_ADMISSION_CANDIDATE_POLICY_PROFILE_RULES_JSON:\n${msg}`);
-  }
-  return result.data;
-}
-
 function isLoopbackListenHost(host: string): boolean {
   const normalized = host.trim().toLowerCase();
   if (normalized.length === 0) return true;
@@ -893,7 +229,6 @@ export function loadEnv(source: NodeJS.ProcessEnv = process.env): Env {
   }
   const trustedProxyCidrs = parseTrustedProxyCidrs(parsed.data.TRUSTED_PROXY_CIDRS);
   parsed.data.TRUSTED_PROXY_CIDRS = trustedProxyCidrs.join(",");
-  parseAdmissionCandidatePolicyProfileRules(parsed.data.AIONIS_ADMISSION_CANDIDATE_POLICY_PROFILE_RULES_JSON);
   validateEditionPosture(parsed.data);
   if (parsed.data.AIONIS_EDITION === "lite" && parsed.data.APP_ENV === "prod") {
     throw new Error("Lite runtime does not currently support APP_ENV=prod; use APP_ENV=dev/ci.");
@@ -914,199 +249,6 @@ export function loadEnv(source: NodeJS.ProcessEnv = process.env): Env {
   }
   if ((parsed.data.MEMORY_AUTH_MODE === "jwt" || parsed.data.MEMORY_AUTH_MODE === "api_key_or_jwt") && !parsed.data.MEMORY_JWT_HS256_SECRET) {
     throw new Error("MEMORY_JWT_HS256_SECRET is required when MEMORY_AUTH_MODE includes jwt");
-  }
-  {
-    let policy: unknown;
-    try {
-      const raw = parsed.data.MEMORY_RECALL_PROFILE_POLICY_JSON.trim();
-      policy = raw.length === 0 ? {} : JSON.parse(raw);
-    } catch {
-      throw new Error("MEMORY_RECALL_PROFILE_POLICY_JSON must be valid JSON object");
-    }
-    if (!policy || typeof policy !== "object" || Array.isArray(policy)) {
-      throw new Error("MEMORY_RECALL_PROFILE_POLICY_JSON must be a JSON object");
-    }
-    const allowedProfiles = new Set(["strict_edges", "quality_first", "lite"]);
-    const validateProfile = (value: unknown, path: string) => {
-      if (typeof value !== "string" || !allowedProfiles.has(value)) {
-        throw new Error(`${path} must be one of: strict_edges|quality_first|lite`);
-      }
-    };
-    const asRecord = policy as Record<string, unknown>;
-    if (asRecord.endpoint !== undefined) {
-      if (!asRecord.endpoint || typeof asRecord.endpoint !== "object" || Array.isArray(asRecord.endpoint)) {
-        throw new Error("MEMORY_RECALL_PROFILE_POLICY_JSON.endpoint must be an object");
-      }
-      for (const [k, v] of Object.entries(asRecord.endpoint as Record<string, unknown>)) {
-        if (k !== "recall" && k !== "recall_text") {
-          throw new Error(`MEMORY_RECALL_PROFILE_POLICY_JSON.endpoint.${k} is not supported (use recall|recall_text)`);
-        }
-        validateProfile(v, `MEMORY_RECALL_PROFILE_POLICY_JSON.endpoint.${k}`);
-      }
-    }
-    if (asRecord.tenant_default !== undefined) {
-      if (!asRecord.tenant_default || typeof asRecord.tenant_default !== "object" || Array.isArray(asRecord.tenant_default)) {
-        throw new Error("MEMORY_RECALL_PROFILE_POLICY_JSON.tenant_default must be an object");
-      }
-      for (const [k, v] of Object.entries(asRecord.tenant_default as Record<string, unknown>)) {
-        if (k.trim().length === 0) throw new Error("MEMORY_RECALL_PROFILE_POLICY_JSON.tenant_default key must be non-empty");
-        validateProfile(v, `MEMORY_RECALL_PROFILE_POLICY_JSON.tenant_default.${k}`);
-      }
-    }
-    if (asRecord.tenant_endpoint !== undefined) {
-      if (!asRecord.tenant_endpoint || typeof asRecord.tenant_endpoint !== "object" || Array.isArray(asRecord.tenant_endpoint)) {
-        throw new Error("MEMORY_RECALL_PROFILE_POLICY_JSON.tenant_endpoint must be an object");
-      }
-      for (const [tenant, endpointMap] of Object.entries(asRecord.tenant_endpoint as Record<string, unknown>)) {
-        if (tenant.trim().length === 0) throw new Error("MEMORY_RECALL_PROFILE_POLICY_JSON.tenant_endpoint key must be non-empty");
-        if (!endpointMap || typeof endpointMap !== "object" || Array.isArray(endpointMap)) {
-          throw new Error(`MEMORY_RECALL_PROFILE_POLICY_JSON.tenant_endpoint.${tenant} must be an object`);
-        }
-        for (const [endpoint, profile] of Object.entries(endpointMap as Record<string, unknown>)) {
-          if (endpoint !== "recall" && endpoint !== "recall_text") {
-            throw new Error(
-              `MEMORY_RECALL_PROFILE_POLICY_JSON.tenant_endpoint.${tenant}.${endpoint} is not supported (use recall|recall_text)`,
-            );
-          }
-          validateProfile(profile, `MEMORY_RECALL_PROFILE_POLICY_JSON.tenant_endpoint.${tenant}.${endpoint}`);
-        }
-      }
-    }
-  }
-  {
-    let policy: unknown;
-    try {
-      const raw = parsed.data.REPLAY_REPAIR_REVIEW_POLICY_JSON.trim();
-      policy = raw.length === 0 ? {} : JSON.parse(raw);
-    } catch {
-      throw new Error("REPLAY_REPAIR_REVIEW_POLICY_JSON must be valid JSON object");
-    }
-    if (!policy || typeof policy !== "object" || Array.isArray(policy)) {
-      throw new Error("REPLAY_REPAIR_REVIEW_POLICY_JSON must be a JSON object");
-    }
-    const asRecord = policy as Record<string, unknown>;
-    for (const key of Object.keys(asRecord)) {
-      if (key !== "endpoint") {
-        throw new Error(`REPLAY_REPAIR_REVIEW_POLICY_JSON.${key} is not supported in Lite (use endpoint only)`);
-      }
-    }
-    if (asRecord.endpoint !== undefined) {
-      if (!asRecord.endpoint || typeof asRecord.endpoint !== "object" || Array.isArray(asRecord.endpoint)) {
-        throw new Error("REPLAY_REPAIR_REVIEW_POLICY_JSON.endpoint must be an object");
-      }
-      for (const endpoint of Object.keys(asRecord.endpoint as Record<string, unknown>)) {
-        if (endpoint !== "*" && endpoint !== "replay_playbook_repair_review") {
-          throw new Error(
-            `REPLAY_REPAIR_REVIEW_POLICY_JSON.endpoint.${endpoint} is not supported in Lite (use *|replay_playbook_repair_review)`,
-          );
-        }
-      }
-    }
-  }
-  {
-    const normalized = parseSandboxAllowedCommandsJson(parsed.data.SANDBOX_ALLOWED_COMMANDS_JSON);
-    if (
-      parsed.data.SANDBOX_ENABLED
-      && (parsed.data.SANDBOX_EXECUTOR_MODE === "local_process" || parsed.data.SANDBOX_EXECUTOR_MODE === "http_remote")
-      && normalized.length === 0
-    ) {
-      throw new Error("SANDBOX_ALLOWED_COMMANDS_JSON must include at least one command when local_process/http_remote sandbox is enabled");
-    }
-    // Normalize to stable JSON so downstream parsers see a consistent shape.
-    parsed.data.SANDBOX_ALLOWED_COMMANDS_JSON = JSON.stringify(normalized);
-  }
-  {
-    const mode = parsed.data.SANDBOX_EXECUTOR_MODE;
-    const remoteUrl = parsed.data.SANDBOX_REMOTE_EXECUTOR_URL.trim();
-    let allowedHosts: string[] = [];
-    const allowedCidrs = normalizeSandboxRemoteEgressCidrs(parsed.data.SANDBOX_REMOTE_EXECUTOR_EGRESS_ALLOWED_CIDRS_JSON);
-    const mtlsCert = parsed.data.SANDBOX_REMOTE_EXECUTOR_MTLS_CERT_PEM.trim();
-    const mtlsKey = parsed.data.SANDBOX_REMOTE_EXECUTOR_MTLS_KEY_PEM.trim();
-    const mtlsCa = parsed.data.SANDBOX_REMOTE_EXECUTOR_MTLS_CA_PEM.trim();
-    const mtlsServerName = parsed.data.SANDBOX_REMOTE_EXECUTOR_MTLS_SERVER_NAME.trim();
-    const mtlsEnabled = mtlsCert.length > 0 || mtlsKey.length > 0 || mtlsCa.length > 0 || mtlsServerName.length > 0;
-    if (parsed.data.SANDBOX_ENABLED && mode === "http_remote" && remoteUrl.length === 0) {
-      throw new Error("SANDBOX_REMOTE_EXECUTOR_URL is required when SANDBOX_EXECUTOR_MODE=http_remote and SANDBOX_ENABLED=true");
-    }
-    try {
-      const raw = parsed.data.SANDBOX_REMOTE_EXECUTOR_ALLOWED_HOSTS_JSON.trim();
-      const parsedHosts = raw.length === 0 ? [] : JSON.parse(raw);
-      if (!Array.isArray(parsedHosts)) {
-        throw new Error("SANDBOX_REMOTE_EXECUTOR_ALLOWED_HOSTS_JSON must be a JSON array of host rules");
-      }
-      allowedHosts = parsedHosts
-        .map((v) => (typeof v === "string" ? v.trim().toLowerCase() : ""))
-        .filter((v) => v.length > 0);
-    } catch (err: any) {
-      if (String(err?.message ?? "").includes("JSON array of host rules")) throw err;
-      throw new Error("SANDBOX_REMOTE_EXECUTOR_ALLOWED_HOSTS_JSON must be valid JSON array");
-    }
-    if (remoteUrl.length > 0) {
-      let parsedUrl: URL;
-      try {
-        parsedUrl = new URL(remoteUrl);
-      } catch {
-        throw new Error("SANDBOX_REMOTE_EXECUTOR_URL must be a valid URL");
-      }
-      if (parsedUrl.protocol !== "http:" && parsedUrl.protocol !== "https:") {
-        throw new Error("SANDBOX_REMOTE_EXECUTOR_URL must use http or https scheme");
-      }
-      if (!sandboxRemoteHostAllowed(parsedUrl.hostname, allowedHosts)) {
-        throw new Error("SANDBOX_REMOTE_EXECUTOR_URL host is not in SANDBOX_REMOTE_EXECUTOR_ALLOWED_HOSTS_JSON");
-      }
-      if (mtlsEnabled && parsedUrl.protocol !== "https:") {
-        throw new Error("SANDBOX_REMOTE_EXECUTOR_URL must use https when SANDBOX remote mTLS is configured");
-      }
-    }
-    if (parsed.data.SANDBOX_REMOTE_EXECUTOR_AUTH_HEADER.trim().length === 0) {
-      throw new Error("SANDBOX_REMOTE_EXECUTOR_AUTH_HEADER must be non-empty");
-    }
-    if ((mtlsCert.length > 0 || mtlsKey.length > 0) && (mtlsCert.length === 0 || mtlsKey.length === 0)) {
-      throw new Error("SANDBOX_REMOTE_EXECUTOR_MTLS_CERT_PEM and SANDBOX_REMOTE_EXECUTOR_MTLS_KEY_PEM must be set together");
-    }
-    if (allowedCidrs.length === 0 && !parsed.data.SANDBOX_REMOTE_EXECUTOR_EGRESS_DENY_PRIVATE_IPS && parsed.data.SANDBOX_ENABLED && mode === "http_remote") {
-      throw new Error(
-        "SANDBOX_REMOTE_EXECUTOR_EGRESS_DENY_PRIVATE_IPS=false requires SANDBOX_REMOTE_EXECUTOR_EGRESS_ALLOWED_CIDRS_JSON to be non-empty when sandbox http_remote is enabled",
-      );
-    }
-    if (parsed.data.SANDBOX_RUN_HEARTBEAT_INTERVAL_MS > 0 && parsed.data.SANDBOX_RUN_HEARTBEAT_INTERVAL_MS >= parsed.data.SANDBOX_RUN_STALE_AFTER_MS) {
-      throw new Error("SANDBOX_RUN_HEARTBEAT_INTERVAL_MS must be less than SANDBOX_RUN_STALE_AFTER_MS");
-    }
-  }
-  {
-    const artifactBase = parsed.data.SANDBOX_ARTIFACT_OBJECT_STORE_BASE_URI.trim();
-    if (artifactBase.length > 0 && !/^[a-z][a-z0-9+.-]*:\/\//i.test(artifactBase)) {
-      throw new Error("SANDBOX_ARTIFACT_OBJECT_STORE_BASE_URI must be an absolute URI (for example s3://bucket/prefix)");
-    }
-  }
-  {
-    let policyRaw: unknown;
-    try {
-      const raw = parsed.data.SANDBOX_TENANT_BUDGET_POLICY_JSON.trim();
-      policyRaw = raw.length === 0 ? {} : JSON.parse(raw);
-    } catch {
-      throw new Error("SANDBOX_TENANT_BUDGET_POLICY_JSON must be valid JSON object");
-    }
-    if (!policyRaw || typeof policyRaw !== "object" || Array.isArray(policyRaw)) {
-      throw new Error("SANDBOX_TENANT_BUDGET_POLICY_JSON must be a JSON object");
-    }
-    for (const [tenantId, limitsRaw] of Object.entries(policyRaw as Record<string, unknown>)) {
-      if (tenantId.trim().length === 0) {
-        throw new Error("SANDBOX_TENANT_BUDGET_POLICY_JSON contains empty tenant key");
-      }
-      if (!limitsRaw || typeof limitsRaw !== "object" || Array.isArray(limitsRaw)) {
-        throw new Error(`SANDBOX_TENANT_BUDGET_POLICY_JSON.${tenantId} must be an object`);
-      }
-      const limits = limitsRaw as Record<string, unknown>;
-      for (const key of ["daily_run_cap", "daily_timeout_cap", "daily_failure_cap"]) {
-        const value = limits[key];
-        if (value === undefined || value === null) continue;
-        const n = Number(value);
-        if (!Number.isFinite(n) || n < 0 || Math.trunc(n) !== n) {
-          throw new Error(`SANDBOX_TENANT_BUDGET_POLICY_JSON.${tenantId}.${key} must be a non-negative integer`);
-        }
-      }
-    }
   }
   if (parsed.data.APP_ENV === "prod") {
     if (parsed.data.TRUST_PROXY && trustedProxyCidrs.length === 0) {
@@ -1145,50 +287,6 @@ export function loadEnv(source: NodeJS.ProcessEnv = process.env): Env {
       }
       if (Buffer.byteLength(parsed.data.MEMORY_JWT_HS256_SECRET, "utf8") < 32) {
         throw new Error("MEMORY_JWT_HS256_SECRET must be at least 32 bytes when APP_ENV=prod and auth uses jwt");
-      }
-    }
-    if (parsed.data.SANDBOX_ENABLED && parsed.data.SANDBOX_EXECUTOR_MODE === "local_process" && !parsed.data.SANDBOX_LOCAL_PROCESS_ALLOW_IN_PROD) {
-      throw new Error("SANDBOX local_process executor is blocked in APP_ENV=prod unless SANDBOX_LOCAL_PROCESS_ALLOW_IN_PROD=true");
-    }
-    if (parsed.data.SANDBOX_ENABLED && parsed.data.SANDBOX_EXECUTOR_MODE === "http_remote") {
-      const remoteUrl = parsed.data.SANDBOX_REMOTE_EXECUTOR_URL.trim();
-      const rawAllowlist = parsed.data.SANDBOX_REMOTE_EXECUTOR_ALLOWED_HOSTS_JSON.trim();
-      const mtlsCert = parsed.data.SANDBOX_REMOTE_EXECUTOR_MTLS_CERT_PEM.trim();
-      const mtlsKey = parsed.data.SANDBOX_REMOTE_EXECUTOR_MTLS_KEY_PEM.trim();
-      const allowedCidrs = normalizeSandboxRemoteEgressCidrs(parsed.data.SANDBOX_REMOTE_EXECUTOR_EGRESS_ALLOWED_CIDRS_JSON);
-      let allowlist: string[] = [];
-      try {
-        allowlist = (rawAllowlist.length === 0 ? [] : JSON.parse(rawAllowlist))
-          .map((v: unknown) => (typeof v === "string" ? v.trim().toLowerCase() : ""))
-          .filter((v: string) => v.length > 0);
-      } catch {
-        throw new Error("SANDBOX_REMOTE_EXECUTOR_ALLOWED_HOSTS_JSON must be valid JSON array");
-      }
-      if (remoteUrl.length === 0) {
-        throw new Error("SANDBOX_REMOTE_EXECUTOR_URL is required when SANDBOX_EXECUTOR_MODE=http_remote and APP_ENV=prod");
-      }
-      if (allowlist.length === 0) {
-        throw new Error("SANDBOX_REMOTE_EXECUTOR_ALLOWED_HOSTS_JSON must be non-empty in APP_ENV=prod when SANDBOX_EXECUTOR_MODE=http_remote");
-      }
-      let parsedUrl: URL;
-      try {
-        parsedUrl = new URL(remoteUrl);
-      } catch {
-        throw new Error("SANDBOX_REMOTE_EXECUTOR_URL must be a valid URL");
-      }
-      if (parsedUrl.protocol !== "https:") {
-        throw new Error("SANDBOX_REMOTE_EXECUTOR_URL must use https in APP_ENV=prod");
-      }
-      if (!sandboxRemoteHostAllowed(parsedUrl.hostname, allowlist)) {
-        throw new Error("SANDBOX_REMOTE_EXECUTOR_URL host is not in SANDBOX_REMOTE_EXECUTOR_ALLOWED_HOSTS_JSON");
-      }
-      if ((mtlsCert.length > 0 || mtlsKey.length > 0) && (mtlsCert.length === 0 || mtlsKey.length === 0)) {
-        throw new Error("SANDBOX_REMOTE_EXECUTOR_MTLS_CERT_PEM and SANDBOX_REMOTE_EXECUTOR_MTLS_KEY_PEM must be set together");
-      }
-      if (!parsed.data.SANDBOX_REMOTE_EXECUTOR_EGRESS_DENY_PRIVATE_IPS && allowedCidrs.length === 0) {
-        throw new Error(
-          "SANDBOX_REMOTE_EXECUTOR_EGRESS_DENY_PRIVATE_IPS=false requires SANDBOX_REMOTE_EXECUTOR_EGRESS_ALLOWED_CIDRS_JSON in APP_ENV=prod",
-        );
       }
     }
     validateAuthorityReceiptKeyringPosture(parsed.data);

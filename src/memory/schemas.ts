@@ -16,7 +16,7 @@ import {
 } from "../execution/verification.js";
 import { ContractTrustSchema, OutcomeContractGateSchema } from "./contract-trust.js";
 import { ExecutionContractV1Schema } from "./execution-contract.js";
-import { AionisGuidePacketSchema, AionisLearningPacketSchema, AionisMemoryPacketSchema } from "./product-output-contract.js";
+export * from "./execution-skill.js";
 
 export const UUID = z.string().uuid();
 
@@ -116,20 +116,6 @@ export const MemoryWriteRequest = z
     force_reembed: z.boolean().optional(),
     execution_tree_disabled: z.boolean().optional(),
     execution_tree_default_disabled: z.boolean().optional(),
-    distill: z
-      .object({
-        enabled: z.boolean().default(true),
-        sources: z.array(z.enum(["input_text", "event_nodes", "evidence_nodes"])).min(1).max(3).default([
-          "input_text",
-          "event_nodes",
-          "evidence_nodes",
-        ]),
-        max_evidence_nodes: z.number().int().positive().max(20).default(4),
-        max_fact_nodes: z.number().int().positive().max(20).default(6),
-        min_sentence_chars: z.number().int().min(12).max(500).default(24),
-        attach_edges: z.boolean().default(true),
-      })
-      .optional(),
     nodes: z.array(WriteNode).default([]),
     edges: z.array(WriteEdge).default([]),
   })
@@ -3713,64 +3699,6 @@ export const AssemblySummaryContractSchema = z.object({
 }).passthrough();
 
 export type AssemblySummaryContract = z.infer<typeof AssemblySummaryContractSchema>;
-
-export const ContextOperatorProjectionSchema = z.object({
-  delegation_learning: DelegationLearningProjectionSchema.optional(),
-  action_intelligence_pre_action_gate: ActionIntelligenceRuntimeGateSchema.optional(),
-  runtime_entropy_profile: RuntimeEntropyProfileV1Schema.optional(),
-  runtime_entropy_controls: RuntimeEntropyControlsV1Schema.optional(),
-  action_retrieval_gate: ActionRetrievalGateSummarySchema.optional(),
-  adaptive_guidance: AdaptiveGuidanceOverlayV1Schema.optional(),
-  experience_adaptation_trace: ExecutionExperienceAdaptationTraceV1Schema.optional(),
-  continuity_signal_v1: RuntimeContinuitySignalSchema.optional(),
-  edit_boundary_v1: RuntimeEditBoundaryRecommendationSchema.optional(),
-  action_hints: z.array(z.object({
-    summary_version: z.literal("context_operator_action_hint_v1"),
-    action: ActionRetrievalGateActionSchema,
-    priority: z.enum(["required", "recommended"]),
-    contract_trust: ContractTrustSchema,
-    execution_contract_v1: ExecutionContractV1Schema.nullable().default(null),
-    instruction: z.string().nullable(),
-    selected_tool: z.string().nullable(),
-    file_path: z.string().nullable(),
-    task_family: z.string().nullable(),
-    workflow_signature: z.string().nullable(),
-    policy_memory_id: z.string().nullable(),
-    tool_route: z.string().nullable(),
-    tool_method: z.enum(["POST"]).nullable(),
-    example_call: z.string().nullable(),
-    preferred_rehydration_anchor_id: z.string().nullable(),
-  }).passthrough()).optional(),
-}).passthrough();
-
-export type ContextOperatorProjection = z.infer<typeof ContextOperatorProjectionSchema>;
-
-const PlannerPacketRouteContractBaseSchema = z.object({
-  recall: z.object({
-    aionis_memory_packet: AionisMemoryPacketSchema,
-  }).passthrough(),
-  planner_packet: PlannerPacketTextSurfaceSchema,
-  pattern_signals: z.array(PlannerPacketEntrySchema),
-  workflow_signals: z.array(PlannerPacketEntrySchema),
-  execution_kernel: ExecutionKernelPacketSummarySchema,
-  execution_summary: ExecutionSummaryV1Schema,
-  aionis_guide_packet: AionisGuidePacketSchema,
-  aionis_learning_packet: AionisLearningPacketSchema,
-}).passthrough();
-
-export const PlanningContextRouteContractSchema = PlannerPacketRouteContractBaseSchema.extend({
-  planning_summary: PlanningSummaryContractSchema,
-  operator_projection: ContextOperatorProjectionSchema.optional(),
-});
-
-export type PlanningContextRouteContract = z.infer<typeof PlanningContextRouteContractSchema>;
-
-export const ContextAssembleRouteContractSchema = PlannerPacketRouteContractBaseSchema.extend({
-  assembly_summary: AssemblySummaryContractSchema,
-  operator_projection: ContextOperatorProjectionSchema.optional(),
-});
-
-export type ContextAssembleRouteContract = z.infer<typeof ContextAssembleRouteContractSchema>;
 
 export const DecisionPatternSummaryContractSchema = z.object({
   used_trusted_pattern_anchor_ids: z.array(z.string()),

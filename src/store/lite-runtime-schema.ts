@@ -1,12 +1,10 @@
 import type { SqliteDatabase } from "./sqlite.js";
 import {
-  LITE_LEARNING_LEDGER_REQUIRED_COLUMNS,
-  LITE_LEARNING_LEDGER_REQUIRED_CONSTRAINTS,
-  LITE_LEARNING_LEDGER_REQUIRED_INDEXES,
-  LITE_LEARNING_LEDGER_REQUIRED_TRIGGERS,
-} from "./lite-learning-episode-ledger.js";
-import { LITE_LEARNING_LEDGER_V3_REQUIRED_TRIGGERS } from
-  "./lite-learning-schema-migration.js";
+  LITE_RUNTIME_AUTHORITY_IDENTITY_COLUMNS,
+  LITE_RUNTIME_AUTHORITY_IDENTITY_TABLE_SQL,
+  LITE_TENANT_SCOPE_ENCODING_ANCHOR_COLUMNS,
+  LITE_TENANT_SCOPE_ENCODING_ANCHOR_TABLE_SQL,
+} from "./lite-runtime-identity.js";
 import {
   LITE_MEMORY_COMMIT_SCOPE_REVISION_INDEX_SQL,
   LITE_MEMORY_SCOPE_HEAD_TABLE_SQL,
@@ -20,10 +18,34 @@ import {
   LITE_RUNTIME_AUTHORITY_ADOPTION_MANIFEST_TABLE_SQL,
   LITE_RUNTIME_AUTHORITY_ADOPTION_TRIGGERS,
 } from "./lite-runtime-authority-adoption-contract.js";
+import {
+  LITE_EXECUTION_EPISODE_V7_REQUIRED_COLUMNS,
+  LITE_EXECUTION_EPISODE_V7_REQUIRED_CONSTRAINTS,
+  LITE_EXECUTION_EPISODE_V7_REQUIRED_INDEXES,
+  LITE_EXECUTION_EPISODE_V7_REQUIRED_TABLE_NAMES,
+  LITE_EXECUTION_EPISODE_V7_REQUIRED_TRIGGERS,
+} from "./lite-execution-episode-schema.js";
+import {
+  LITE_EXECUTION_VERIFIER_LAUNCH_V8_REQUIRED_COLUMNS,
+  LITE_EXECUTION_VERIFIER_LAUNCH_V8_REQUIRED_CONSTRAINTS,
+  LITE_EXECUTION_VERIFIER_LAUNCH_V8_REQUIRED_INDEXES,
+  LITE_EXECUTION_VERIFIER_LAUNCH_V8_REQUIRED_TABLE_NAMES,
+  LITE_EXECUTION_VERIFIER_LAUNCH_V8_REQUIRED_TRIGGERS,
+} from "./lite-execution-verifier-launch-schema.js";
+import {
+  LITE_EXECUTION_SEMANTIC_EVENTS_V9_REQUIRED_COLUMNS,
+  LITE_EXECUTION_SEMANTIC_EVENTS_V9_REQUIRED_CONSTRAINTS,
+} from "./lite-execution-semantic-event-schema.js";
+import {
+  LITE_EXECUTION_SESSION_V10_REQUIRED_COLUMNS,
+  LITE_EXECUTION_SESSION_V10_REQUIRED_CONSTRAINTS,
+  LITE_EXECUTION_SESSION_V10_REQUIRED_INDEXES,
+  LITE_EXECUTION_SESSION_V10_REQUIRED_TRIGGERS,
+} from "./lite-execution-session-schema.js";
 import { normalizeSqliteSchemaSql } from "./sqlite-schema-sql.js";
 
 export const LITE_RUNTIME_WRITE_SCHEMA_COMPONENT = "write_projection";
-export const LITE_RUNTIME_WRITE_SCHEMA_VERSION = 6;
+export const LITE_RUNTIME_WRITE_SCHEMA_VERSION = 11;
 
 export type LiteRuntimeSchemaClassification =
   | "uninitialized"
@@ -32,6 +54,11 @@ export type LiteRuntimeSchemaClassification =
   | "supported_previous_v3"
   | "supported_previous_v4"
   | "supported_previous_v5"
+  | "supported_previous_v6"
+  | "supported_previous_v7"
+  | "supported_previous_v8"
+  | "supported_previous_v9"
+  | "supported_previous_v10"
   | "current"
   | "incompatible";
 
@@ -392,122 +419,10 @@ export const WRITE_SCHEMA_V2: LiteRuntimeWriteSchemaContract = {
   triggers: {},
 };
 
-const V3_MEASUREMENT_COLUMNS = [
-  "measurement_id",
-  "tenant_id",
-  "scope",
-  "source",
-  "measurement_digest",
-  "effect_report_json",
-  "eligible_for_skill_export",
-  "evidence_status",
-  "runtime_evidence_ids_json",
-  "eligibility_reasons_json",
-  "created_by",
-  "created_at",
-  "baseline_episode_id",
-  "after_episode_id",
-  "record_sha256",
-] as const;
-
-const V3_SKILL_REVIEW_COLUMNS = [
-  "candidate_id",
-  "tenant_id",
-  "scope",
-  "review_status",
-  "skill_name",
-  "label",
-  "export_ready",
-  "promotion_status",
-  "reason",
-  "source_ids_json",
-  "source_trace_ids_json",
-  "source_signal_ids_json",
-  "applies_when_json",
-  "does_not_apply_when_json",
-  "procedure_steps_json",
-  "target_files_json",
-  "acceptance_checks_json",
-  "failure_counterexamples_json",
-  "evidence_refs_json",
-  "candidate_json",
-  "measurement_id",
-  "measurement_digest",
-  "candidate_digest",
-  "eligible_for_promotion",
-  "row_version",
-  "reviewer_id",
-  "review_reason",
-  "created_at",
-  "updated_at",
-  "reviewed_at",
-] as const;
-
-const V3_LEARNING_CONSTRAINTS = Object.fromEntries(
-  Object.entries(LITE_LEARNING_LEDGER_REQUIRED_CONSTRAINTS).map(([table, requirement]) => [
-    table,
-    {
-      primaryKey: requirement.primaryKey,
-      uniqueKeys: requirement.uniqueKeys,
-      sql: requirement.createTableSql,
-    } satisfies RequiredTableConstraint,
-  ]),
-);
-
-export const WRITE_SCHEMA_V3: LiteRuntimeWriteSchemaContract = {
-  columns: {
-    ...WRITE_SCHEMA_V2.columns,
-    ...LITE_LEARNING_LEDGER_REQUIRED_COLUMNS,
-    lite_product_measurements: V3_MEASUREMENT_COLUMNS,
-    lite_skill_candidate_reviews: V3_SKILL_REVIEW_COLUMNS,
-  },
-  constraints: {
-    ...WRITE_SCHEMA_V2.constraints,
-    ...V3_LEARNING_CONSTRAINTS,
-    lite_product_measurements: { primaryKey: ["measurement_id"] },
-    lite_skill_candidate_reviews: { primaryKey: ["candidate_id"] },
-  },
-  indexes: {
-    ...WRITE_SCHEMA_V2.indexes,
-    ...LITE_LEARNING_LEDGER_REQUIRED_INDEXES,
-    idx_lite_product_measurements_scope_digest: {
-      table: "lite_product_measurements",
-      columns: [
-        { name: "tenant_id" },
-        { name: "scope" },
-        { name: "measurement_id" },
-        { name: "measurement_digest" },
-      ],
-      unique: true,
-    },
-    idx_lite_skill_candidate_reviews_scope_status: {
-      table: "lite_skill_candidate_reviews",
-      columns: [
-        { name: "tenant_id" },
-        { name: "scope" },
-        { name: "review_status" },
-        { name: "updated_at", descending: true },
-      ],
-    },
-    idx_lite_skill_candidate_reviews_scope_updated: {
-      table: "lite_skill_candidate_reviews",
-      columns: [
-        { name: "tenant_id" },
-        { name: "scope" },
-        { name: "updated_at", descending: true },
-      ],
-    },
-  },
-  triggers: LITE_LEARNING_LEDGER_V3_REQUIRED_TRIGGERS,
-};
-
-// Schema v4 is a deliberately narrow contract revision: all v3 tables,
-// constraints, and indexes remain unchanged while the active-lease trigger
-// gains the explicit formal-serving versus fail-control split.
-export const WRITE_SCHEMA_V4: LiteRuntimeWriteSchemaContract = {
-  ...WRITE_SCHEMA_V3,
-  triggers: LITE_LEARNING_LEDGER_REQUIRED_TRIGGERS,
-};
+// Historical v3/v4 added experiment tables. They are intentionally outside
+// the product schema now; existing databases may retain them as unowned data.
+export const WRITE_SCHEMA_V3: LiteRuntimeWriteSchemaContract = WRITE_SCHEMA_V2;
+export const WRITE_SCHEMA_V4: LiteRuntimeWriteSchemaContract = WRITE_SCHEMA_V2;
 
 // Schema v5 makes commit order explicit without rewriting or pretending to
 // authenticate historical v1 commits. Migrated rows remain digest_version=1
@@ -617,6 +532,190 @@ export const WRITE_SCHEMA_V6: LiteRuntimeWriteSchemaContract = {
   },
 };
 
+const V7_EXECUTION_EPISODE_CONSTRAINTS = Object.fromEntries(
+  Object.entries(LITE_EXECUTION_EPISODE_V7_REQUIRED_CONSTRAINTS).map(
+    ([table, requirement]) => [
+      table,
+      {
+        primaryKey: requirement.primaryKey,
+        uniqueKeys: requirement.uniqueKeys,
+        sql: requirement.sql,
+      } satisfies RequiredTableConstraint,
+    ],
+  ),
+);
+
+// Schema v7 adds the generic, verifier-bound execution episode truth stream
+// and tenant-scoped content-addressed artifacts. Existing learning events
+// remain specialized projections and are linked by immutable IDs.
+export const WRITE_SCHEMA_V7: LiteRuntimeWriteSchemaContract = {
+  columns: {
+    ...WRITE_SCHEMA_V6.columns,
+    ...LITE_EXECUTION_EPISODE_V7_REQUIRED_COLUMNS,
+  },
+  constraints: {
+    ...WRITE_SCHEMA_V6.constraints,
+    ...V7_EXECUTION_EPISODE_CONSTRAINTS,
+  },
+  indexes: {
+    ...WRITE_SCHEMA_V6.indexes,
+    ...LITE_EXECUTION_EPISODE_V7_REQUIRED_INDEXES,
+  },
+  triggers: {
+    ...WRITE_SCHEMA_V6.triggers,
+    ...LITE_EXECUTION_EPISODE_V7_REQUIRED_TRIGGERS,
+  },
+};
+
+const V8_VERIFIER_LAUNCH_CONSTRAINTS = Object.fromEntries(
+  Object.entries(
+    LITE_EXECUTION_VERIFIER_LAUNCH_V8_REQUIRED_CONSTRAINTS,
+  ).map(([table, requirement]) => [
+    table,
+    {
+      primaryKey: requirement.primaryKey,
+      uniqueKeys: requirement.uniqueKeys,
+      sql: requirement.sql,
+    } satisfies RequiredTableConstraint,
+  ]),
+);
+
+// Schema v8 makes every real verifier launch attempt durable before process
+// execution and gives completed or interrupted attempts one immutable terminal.
+export const WRITE_SCHEMA_V8: LiteRuntimeWriteSchemaContract = {
+  columns: {
+    ...WRITE_SCHEMA_V7.columns,
+    ...LITE_EXECUTION_VERIFIER_LAUNCH_V8_REQUIRED_COLUMNS,
+  },
+  constraints: {
+    ...WRITE_SCHEMA_V7.constraints,
+    ...V8_VERIFIER_LAUNCH_CONSTRAINTS,
+  },
+  indexes: {
+    ...WRITE_SCHEMA_V7.indexes,
+    ...LITE_EXECUTION_VERIFIER_LAUNCH_V8_REQUIRED_INDEXES,
+  },
+  triggers: {
+    ...WRITE_SCHEMA_V7.triggers,
+    ...LITE_EXECUTION_VERIFIER_LAUNCH_V8_REQUIRED_TRIGGERS,
+  },
+};
+
+const V9_SEMANTIC_EVENT_CONSTRAINTS = Object.fromEntries(
+  Object.entries(
+    LITE_EXECUTION_SEMANTIC_EVENTS_V9_REQUIRED_CONSTRAINTS,
+  ).map(([table, requirement]) => [
+    table,
+    {
+      primaryKey: requirement.primaryKey,
+      uniqueKeys: requirement.uniqueKeys,
+      sql: requirement.sql,
+    } satisfies RequiredTableConstraint,
+  ]),
+);
+
+// Schema v9 extends the authoritative episode hash-chain with evidence-bound
+// observation, decision, progress, and planned-action semantics. No parallel
+// semantic log is introduced.
+export const WRITE_SCHEMA_V9: LiteRuntimeWriteSchemaContract = {
+  columns: {
+    ...WRITE_SCHEMA_V8.columns,
+    ...LITE_EXECUTION_SEMANTIC_EVENTS_V9_REQUIRED_COLUMNS,
+  },
+  constraints: {
+    ...WRITE_SCHEMA_V8.constraints,
+    ...V9_SEMANTIC_EVENT_CONSTRAINTS,
+  },
+  indexes: WRITE_SCHEMA_V8.indexes,
+  triggers: WRITE_SCHEMA_V8.triggers,
+};
+
+const V10_EXECUTION_SESSION_CONSTRAINTS = Object.fromEntries(
+  Object.entries(
+    LITE_EXECUTION_SESSION_V10_REQUIRED_CONSTRAINTS,
+  ).map(([table, requirement]) => [
+    table,
+    {
+      primaryKey: requirement.primaryKey,
+      uniqueKeys: requirement.uniqueKeys,
+      sql: requirement.sql,
+    } satisfies RequiredTableConstraint,
+  ]),
+);
+
+// Schema v10 adds one durable, CAS-governed session/continuation lease over
+// the existing authoritative episode and CurrentExecutionState streams.
+export const WRITE_SCHEMA_V10: LiteRuntimeWriteSchemaContract = {
+  columns: {
+    ...WRITE_SCHEMA_V9.columns,
+    ...LITE_EXECUTION_SESSION_V10_REQUIRED_COLUMNS,
+  },
+  constraints: {
+    ...WRITE_SCHEMA_V9.constraints,
+    ...V10_EXECUTION_SESSION_CONSTRAINTS,
+  },
+  indexes: {
+    ...WRITE_SCHEMA_V9.indexes,
+    ...LITE_EXECUTION_SESSION_V10_REQUIRED_INDEXES,
+  },
+  triggers: {
+    ...WRITE_SCHEMA_V9.triggers,
+    ...LITE_EXECUTION_SESSION_V10_REQUIRED_TRIGGERS,
+  },
+};
+
+const V11_OBSOLETE_PRODUCT_TABLES = new Set([
+  "lite_execution_learning_links",
+]);
+
+function withoutObsoleteProductTables<T>(
+  values: Readonly<Record<string, T>>,
+): Record<string, T> {
+  return Object.fromEntries(
+    Object.entries(values).filter(
+      ([name]) => !V11_OBSOLETE_PRODUCT_TABLES.has(name),
+    ),
+  );
+}
+
+function withoutObsoleteProductTableObjects<T extends { table: string }>(
+  values: Readonly<Record<string, T>>,
+): Record<string, T> {
+  return Object.fromEntries(
+    Object.entries(values).filter(
+      ([, requirement]) =>
+        !V11_OBSOLETE_PRODUCT_TABLES.has(requirement.table),
+    ),
+  );
+}
+
+// Schema v11 removes old experiment/measurement linkage from the product
+// contract and gives Runtime identity plus tenant-scope encoding their own
+// storage.
+export const WRITE_SCHEMA_V11: LiteRuntimeWriteSchemaContract = {
+  columns: {
+    ...withoutObsoleteProductTables(WRITE_SCHEMA_V10.columns),
+    lite_runtime_authority_identity:
+      LITE_RUNTIME_AUTHORITY_IDENTITY_COLUMNS,
+    lite_tenant_scope_encoding_anchor:
+      LITE_TENANT_SCOPE_ENCODING_ANCHOR_COLUMNS,
+  },
+  constraints: {
+    ...withoutObsoleteProductTables(WRITE_SCHEMA_V10.constraints),
+    lite_runtime_authority_identity: {
+      primaryKey: ["singleton"],
+      uniqueKeys: [["database_instance_id"]],
+      sql: LITE_RUNTIME_AUTHORITY_IDENTITY_TABLE_SQL,
+    },
+    lite_tenant_scope_encoding_anchor: {
+      primaryKey: ["singleton"],
+      sql: LITE_TENANT_SCOPE_ENCODING_ANCHOR_TABLE_SQL,
+    },
+  },
+  indexes: withoutObsoleteProductTableObjects(WRITE_SCHEMA_V10.indexes),
+  triggers: withoutObsoleteProductTableObjects(WRITE_SCHEMA_V10.triggers),
+};
+
 const ACTIVE_WRITE_SCHEMA_TARGET: LiteRuntimeSchemaInspectionTarget = {
   currentVersion: LITE_RUNTIME_WRITE_SCHEMA_VERSION,
   contracts: {
@@ -625,8 +724,13 @@ const ACTIVE_WRITE_SCHEMA_TARGET: LiteRuntimeSchemaInspectionTarget = {
     4: WRITE_SCHEMA_V4,
     5: WRITE_SCHEMA_V5,
     6: WRITE_SCHEMA_V6,
+    7: WRITE_SCHEMA_V7,
+    8: WRITE_SCHEMA_V8,
+    9: WRITE_SCHEMA_V9,
+    10: WRITE_SCHEMA_V10,
+    11: WRITE_SCHEMA_V11,
   },
-  supportedPreviousVersions: [2, 3, 4, 5],
+  supportedPreviousVersions: [2, 3, 4, 5, 6, 7, 8, 9, 10],
 };
 
 function userTables(db: SqliteDatabase): Set<string> {
@@ -973,22 +1077,6 @@ export function inspectLiteRuntimeSchemaAgainstTarget(
     ? collectTriggerProblems(db, tables, detectedContract.triggers)
     : [];
 
-  const v3MeasurementLinkColumnsPresent = tables.has("lite_product_measurements")
-    && V3_MEASUREMENT_COLUMNS.slice(-3).some(
-      (column) => tableColumns(db, "lite_product_measurements").has(column),
-    );
-  const v3OnlyObjectsPresent = (detectedVersion ?? 0) < 3
-    && target.currentVersion >= 3
-    && (
-      Object.keys(LITE_LEARNING_LEDGER_REQUIRED_COLUMNS).some((table) => tables.has(table))
-      || v3MeasurementLinkColumnsPresent
-    );
-  if (v3OnlyObjectsPresent) {
-    problems.push(
-      "schema metadata is older than v3 but v3-only authority tables already exist or v3-only measurement columns are present",
-    );
-  }
-
   const v6OnlyObjectsPresent = (detectedVersion ?? 0) < 6
     && target.currentVersion >= 6
     && (tables.has(LITE_RUNTIME_AUTHORITY_ADOPTION_MANIFEST_TABLE)
@@ -996,6 +1084,39 @@ export function inspectLiteRuntimeSchemaAgainstTarget(
   if (v6OnlyObjectsPresent) {
     problems.push(
       "schema metadata is older than v6 but v6 authority-adoption objects already exist",
+    );
+  }
+
+  const v7OnlyObjectsPresent = (detectedVersion ?? 0) < 7
+    && target.currentVersion >= 7
+    && LITE_EXECUTION_EPISODE_V7_REQUIRED_TABLE_NAMES.some(
+      (table) => tables.has(table),
+    );
+  if (v7OnlyObjectsPresent) {
+    problems.push(
+      "schema metadata is older than v7 but v7 execution-episode objects already exist",
+    );
+  }
+
+  const v8OnlyObjectsPresent = (detectedVersion ?? 0) < 8
+    && target.currentVersion >= 8
+    && LITE_EXECUTION_VERIFIER_LAUNCH_V8_REQUIRED_TABLE_NAMES.some(
+      (table) => tables.has(table),
+    );
+  if (v8OnlyObjectsPresent) {
+    problems.push(
+      "schema metadata is older than v8 but v8 verifier-launch objects already exist",
+    );
+  }
+
+  const v10OnlyObjectsPresent = (detectedVersion ?? 0) < 10
+    && target.currentVersion >= 10
+    && Object.keys(LITE_EXECUTION_SESSION_V10_REQUIRED_COLUMNS).some(
+      (table) => tables.has(table),
+    );
+  if (v10OnlyObjectsPresent) {
+    problems.push(
+      "schema metadata is older than v10 but v10 execution-session objects already exist",
     );
   }
 
@@ -1048,15 +1169,25 @@ export function inspectLiteRuntimeSchemaAgainstTarget(
       ? "uninitialized"
       : detectedVersion === target.currentVersion
         ? "current"
-        : detectedVersion === 5 && target.supportedPreviousVersions.includes(5)
-          ? "supported_previous_v5"
-          : detectedVersion === 4 && target.supportedPreviousVersions.includes(4)
-            ? "supported_previous_v4"
-            : detectedVersion === 3 && target.supportedPreviousVersions.includes(3)
-              ? "supported_previous_v3"
-              : detectedVersion === 2 && target.supportedPreviousVersions.includes(2)
-                ? "supported_previous_v2"
-                : "legacy_v0_3_4";
+        : detectedVersion === 10 && target.supportedPreviousVersions.includes(10)
+          ? "supported_previous_v10"
+          : detectedVersion === 9 && target.supportedPreviousVersions.includes(9)
+          ? "supported_previous_v9"
+          : detectedVersion === 8 && target.supportedPreviousVersions.includes(8)
+            ? "supported_previous_v8"
+          : detectedVersion === 7 && target.supportedPreviousVersions.includes(7)
+            ? "supported_previous_v7"
+            : detectedVersion === 6 && target.supportedPreviousVersions.includes(6)
+            ? "supported_previous_v6"
+            : detectedVersion === 5 && target.supportedPreviousVersions.includes(5)
+              ? "supported_previous_v5"
+              : detectedVersion === 4 && target.supportedPreviousVersions.includes(4)
+                ? "supported_previous_v4"
+                : detectedVersion === 3 && target.supportedPreviousVersions.includes(3)
+                  ? "supported_previous_v3"
+                  : detectedVersion === 2 && target.supportedPreviousVersions.includes(2)
+                    ? "supported_previous_v2"
+                    : "legacy_v0_3_4";
 
   return {
     contract_version: "aionis_lite_runtime_schema_report_v1",
@@ -1069,6 +1200,11 @@ export function inspectLiteRuntimeSchemaAgainstTarget(
       || classification === "supported_previous_v3"
       || classification === "supported_previous_v4"
       || classification === "supported_previous_v5"
+      || classification === "supported_previous_v6"
+      || classification === "supported_previous_v7"
+      || classification === "supported_previous_v8"
+      || classification === "supported_previous_v9"
+      || classification === "supported_previous_v10"
       || classification === "uninitialized",
     user_table_count: tables.size,
     missing_tables: [...selectedMissing.missingTables].sort(),

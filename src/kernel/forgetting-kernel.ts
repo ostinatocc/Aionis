@@ -1,4 +1,4 @@
-import { nextColderTier, normalizeMemoryTier, type MemoryTierName } from "../memory/evolution-operators.js";
+import { nextColderTier, normalizeMemoryTier, type MemoryTierName } from "../memory/memory-tier.js";
 import { resolveNodePriorityProfile } from "../memory/importance-dynamics.js";
 import {
   resolveNodeAnchorPayloadRefs,

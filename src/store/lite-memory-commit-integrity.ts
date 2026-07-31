@@ -14,11 +14,6 @@ import {
 } from "./sqlite.js";
 import { stableUuid } from "../util/uuid.js";
 import {
-  LEARNING_CONTROL_OPERATION_OUTCOME_AUTHORITY_KIND,
-  LEARNING_CONTROL_OPERATION_OUTCOME_EVIDENCE_CONTRACT,
-  LEARNING_CONTROL_OPERATION_OUTCOME_EVIDENCE_FIELDS,
-} from "../memory/learning-episode-ledger.js";
-import {
   canonicalAuthorityAdoptionBindingSetSha256,
   canonicalAuthorityAdoptionIdentity,
   canonicalAuthorityAdoptionRowSha256,
@@ -69,9 +64,6 @@ export type LiteMemoryCommitAuthorityFindingCode =
   | "lite_memory_commit_authority_adoption_manifest_invalid"
   | "lite_memory_commit_authority_adoption_binding_invalid"
   | "lite_memory_commit_authority_adoption_binding_unmatched"
-  | "lite_memory_commit_authority_learning_control_outcome_contract_invalid"
-  | "lite_memory_commit_authority_learning_control_outcome_observation_mismatch"
-  | "lite_memory_commit_authority_learning_control_outcome_missing_invalid"
   | "lite_memory_commit_authority_target_missing"
   | "lite_memory_commit_authority_target_scope_mismatch"
   | "lite_memory_commit_authority_target_not_authoritative";
@@ -239,14 +231,6 @@ type RevisionBeforeStats = {
   invalidCount: number;
 };
 
-type PendingMissingObservation = Readonly<{
-  key: string;
-  scope: string;
-  memoryId: string;
-  commitId: string;
-  revision: number;
-}>;
-
 type TerminalTableContract = {
   identityKeys: readonly string[];
   rowKeys: readonly string[];
@@ -291,29 +275,15 @@ const TERMINAL_TABLE_CONTRACTS: Readonly<Record<string, TerminalTableContract>> 
   },
 };
 
-// These operation rows are governed by their product/learning receipt
+// These operation rows are governed by their product receipt
 // verifiers rather than by the memory commit that carries their domain result.
 // Keeping the registry closed prevents an arbitrary operation_kind from
 // disappearing outside both authority systems. The report exposes their count
 // so callers cannot mistake delegated receipt proof for commit-exact closure.
 const DELEGATED_WRITE_OPERATION_KINDS = new Set([
-  "handoff_store_v1",
-  "learning_evidence_ingest_v1",
-  "learning_experiment_close_v1",
-  "learning_experiment_provision_v1",
-  "learning_external_preclaim_hold_v1",
-  "learning_external_run_claim_v1",
-  "learning_external_run_reservation_v1",
-  "learning_external_session_termination_v1",
-  "learning_external_supervisor_binding_v1",
-  "learning_external_ticket_consumption_v1",
-  "learning_gate_authority_v1",
   "product_feedback_v1",
   "product_guide_v1",
-  "product_measure_receipt_authority_v1",
-  "product_measure_v1",
   "product_observe_v1",
-  "unused_exposure_learning_control_v1",
 ]);
 
 function isDelegatedOperationTerminalRow(actual: Record<string, unknown>): boolean {
@@ -873,173 +843,6 @@ function consumeAuthorityAdoptionBinding(args: {
   return true;
 }
 
-function validateLearningControlOutcomeObservations(args: {
-  parsed: Record<string, unknown>;
-  row: JoinedCommitRow & { revision: number };
-  priorClaims: Map<string, TerminalMutationClaim>;
-  terminalClaims: Map<string, TerminalMutationClaim>;
-  trustedLegacyCommitIds: ReadonlySet<string>;
-  legacyBoundary: LegacyBoundary | null;
-  adoption: AuthorityAdoptionState;
-  pendingMissing: PendingMissingObservation[];
-  stats: RevisionBeforeStats;
-  addFinding(value: LiteMemoryCommitAuthorityFinding): void;
-}): void {
-  if (args.parsed.contract !== "aionis_applied_authority_mutation_v2"
-    || args.parsed.authority_kind !== LEARNING_CONTROL_OPERATION_OUTCOME_AUTHORITY_KIND) return;
-  const failContract = (causeCode: string): void => {
-    args.stats.invalidCount += 1;
-    args.addFinding(finding({
-      code: "lite_memory_commit_authority_learning_control_outcome_contract_invalid",
-      scope: args.row.scope,
-      commitId: args.row.id,
-      revision: args.row.revision,
-      causeCode,
-    }));
-  };
-  if (!Array.isArray(args.parsed.mutations) || args.parsed.mutations.length !== 1) {
-    failContract("mutation_count");
-    return;
-  }
-  const mutation = args.parsed.mutations[0];
-  if (!isRecord(mutation)
-    || mutation.table !== "lite_runtime_write_operations"
-    || mutation.operation !== "insert"
-    || mutation.before !== null
-    || !isRecord(mutation.requested)) {
-    failContract("mutation_shape");
-    return;
-  }
-  const evidence = mutation.requested;
-  if (!exactRecordKeys(evidence, LEARNING_CONTROL_OPERATION_OUTCOME_EVIDENCE_FIELDS)
-    || evidence.contract_version !== LEARNING_CONTROL_OPERATION_OUTCOME_EVIDENCE_CONTRACT
-    || evidence.scope !== args.row.scope
-    || evidence.domain_result_commit_id !== args.row.parent_commit_id
-    || evidence.domain_result_revision !== args.row.revision - 1
-    || !Array.isArray(evidence.requested_node_ids)
-    || evidence.requested_node_ids.some((value) => typeof value !== "string" || value.length === 0)
-    || !Array.isArray(evidence.observations)) {
-    failContract("evidence_shape");
-    return;
-  }
-  const requested = evidence.requested_node_ids as string[];
-  if (stableStringify(requested) !== stableStringify(canonicalUtf8Strings(requested))
-    || evidence.observations.length !== requested.length) {
-    failContract("observation_partition");
-    return;
-  }
-  const nodeContract = TERMINAL_TABLE_CONTRACTS.lite_memory_nodes;
-  for (const [index, memoryId] of requested.entries()) {
-    args.stats.checkCount += 1;
-    const value = evidence.observations[index];
-    if (!isRecord(value)
-      || !exactRecordKeys(value, ["memory_id", "state"])
-      || value.memory_id !== memoryId) {
-      failContract(`observation_shape:${memoryId}`);
-      return;
-    }
-    const identity = { scope: args.row.scope, id: memoryId };
-    const key = terminalClaimKey({ table: "lite_memory_nodes", identity });
-    const prior = args.priorClaims.get(key) ?? null;
-    if (value.state === null) {
-      if (prior) {
-        args.stats.invalidCount += 1;
-        args.addFinding(finding({
-          code: "lite_memory_commit_authority_learning_control_outcome_missing_invalid",
-          scope: args.row.scope,
-          commitId: args.row.id,
-          revision: args.row.revision,
-          causeCode: memoryId,
-        }));
-      } else {
-        args.pendingMissing.push({
-          key,
-          scope: args.row.scope,
-          memoryId,
-          commitId: args.row.id,
-          revision: args.row.revision,
-        });
-      }
-      continue;
-    }
-    if (!isRecord(value.state)
-      || !exactRecordKeys(value.state, nodeContract.rowKeys)
-      || value.state.scope !== args.row.scope
-      || value.state.id !== memoryId
-      || typeof value.state.commit_id !== "string"
-      || value.state.commit_id.length === 0
-      || value.state.commit_id === "$self"
-      || typeof value.state.created_at !== "string"
-      || value.state.created_at > args.row.created_at
-      || !validNodeEmbeddingProjectionTuple(value.state)) {
-      args.stats.invalidCount += 1;
-      args.addFinding(finding({
-        code: "lite_memory_commit_authority_learning_control_outcome_observation_mismatch",
-        scope: args.row.scope,
-        commitId: args.row.id,
-        revision: args.row.revision,
-        causeCode: memoryId,
-      }));
-      continue;
-    }
-    if (prior) {
-      const matched = priorAfterMatchesBefore({ prior, before: value.state });
-      if (matched.ok) {
-        args.stats.verifiedCount += 1;
-        if (matched.projectionTransition) args.stats.projectionTransitionCount += 1;
-      } else {
-        args.stats.invalidCount += 1;
-        args.addFinding(finding({
-          code: "lite_memory_commit_authority_learning_control_outcome_observation_mismatch",
-          scope: args.row.scope,
-          commitId: args.row.id,
-          revision: args.row.revision,
-          causeCode: `${memoryId}:${matched.mismatchKey ?? "unknown"}`,
-        }));
-      }
-      continue;
-    }
-    const legacyOrigin = args.trustedLegacyCommitIds.has(
-      `${args.row.scope}\0${String(value.state.commit_id)}`,
-    ) && args.legacyBoundary !== null
-      && args.row.legacy_anchor_commit_id === args.legacyBoundary.id;
-    const legacyState = legacyOrigin && (!args.adoption.enabled
-      || consumeAuthorityAdoptionBinding({
-        adoption: args.adoption,
-        table: "lite_memory_nodes",
-        identity,
-        row: value.state,
-        expectedKind: LITE_RUNTIME_AUTHORITY_ADOPTION_KIND_LEGACY,
-      }));
-    if (!legacyState) {
-      args.stats.invalidCount += 1;
-      args.addFinding(finding({
-        code: "lite_memory_commit_authority_learning_control_outcome_observation_mismatch",
-        scope: args.row.scope,
-        commitId: args.row.id,
-        revision: args.row.revision,
-        causeCode: `${memoryId}:unproved_baseline`,
-      }));
-      continue;
-    }
-    const baseline: TerminalMutationClaim = {
-      table: "lite_memory_nodes",
-      identity,
-      after: value.state,
-      scope: args.row.scope,
-      commitId: args.row.id,
-      revision: args.row.revision,
-    };
-    args.priorClaims.set(key, baseline);
-    args.terminalClaims.set(key, baseline);
-    args.stats.verifiedCount += 1;
-    args.stats.legacyOpaqueBaselineCount += 1;
-    if (args.adoption.enabled) {
-      args.stats.adoptionBaselineProjectionExceptionCount += 1;
-    }
-  }
-}
-
 function applyRevisionBeforeTransition(args: {
   transition: V2MutationTransition;
   priorClaims: Map<string, TerminalMutationClaim>;
@@ -1224,8 +1027,6 @@ function verifyTerminalClaims(args: {
   trustedLegacyCommitIds: ReadonlySet<string>;
   legacyBoundaryByScope: ReadonlyMap<string, LegacyBoundary>;
   adoption: AuthorityAdoptionState;
-  needsCurrentNodeKeys: boolean;
-  nodeAbsenceRepresentative: PendingMissingObservation | null;
   addFinding(value: LiteMemoryCommitAuthorityFinding): void;
 }): {
   rowCount: number;
@@ -1235,8 +1036,6 @@ function verifyTerminalClaims(args: {
   delegatedOperationRowCount: number;
   adoptedRowCount: number;
   unclaimedRowCount: number;
-  currentNodeKeys: ReadonlySet<string>;
-  nodeAbsenceProofAvailable: boolean;
 } {
   let rowCount = 0;
   let verifiedCount = 0;
@@ -1253,8 +1052,6 @@ function verifyTerminalClaims(args: {
   }
   const terminalTableState = new Map<string, "valid" | "invalid">();
   const seenClaimKeys = new Set<string>();
-  const currentNodeKeys = new Set<string>();
-  let nodeAbsenceProofAvailable = false;
 
   // The database-side half is a fixed full-surface pass: every present
   // authoritative table is streamed once, including tables without claims.
@@ -1263,11 +1060,9 @@ function verifyTerminalClaims(args: {
   for (const [table, contract] of Object.entries(TERMINAL_TABLE_CONTRACTS)) {
     const claims = claimsByTable.get(table);
     const representative = claims?.values().next().value as TerminalMutationClaim | undefined;
-    const absenceRepresentative = representative ?? (table === "lite_memory_nodes"
-      ? args.nodeAbsenceRepresentative
-      : null);
+    const absenceRepresentative = representative;
     if (!tableExists(args.db, table)) {
-      if (!claims && (table !== "lite_memory_nodes" || !args.needsCurrentNodeKeys)) continue;
+      if (!claims) continue;
       terminalTableState.set(table, "invalid");
       if (absenceRepresentative) {
         args.addFinding(finding({
@@ -1302,7 +1097,6 @@ function verifyTerminalClaims(args: {
       rowCount += 1;
       const identity = Object.fromEntries(contract.identityKeys.map((key) => [key, actual[key]]));
       const claimKey = terminalClaimKey({ table, identity });
-      if (table === "lite_memory_nodes") currentNodeKeys.add(claimKey);
       const claim = claims?.get(claimKey);
       if (!claim) {
         const legacyEligible = isLegacyOpaqueTerminalRow({
@@ -1360,9 +1154,6 @@ function verifyTerminalClaims(args: {
       if (verified.verified) verifiedCount += 1;
       if (verified.projectionException) projectionExceptionCount += 1;
     }
-    if (table === "lite_memory_nodes" && args.needsCurrentNodeKeys) {
-      nodeAbsenceProofAvailable = true;
-    }
   }
 
   // Canonical v2 parsing normally rejects these before they become claims, but
@@ -1400,8 +1191,6 @@ function verifyTerminalClaims(args: {
     delegatedOperationRowCount,
     adoptedRowCount,
     unclaimedRowCount,
-    currentNodeKeys,
-    nodeAbsenceProofAvailable,
   };
 }
 
@@ -1485,34 +1274,6 @@ export function collectLiteRuntimeAuthorityAdoptionCandidatesV5(
       row,
       parentHash: row.parent_commit_id === null ? "" : row.parent_commit_hash ?? "",
     });
-    if (parsed.contract === "aionis_applied_authority_mutation_v2"
-      && parsed.authority_kind === LEARNING_CONTROL_OPERATION_OUTCOME_AUTHORITY_KIND
-      && Array.isArray(parsed.mutations)) {
-      const mutation = parsed.mutations[0];
-      if (isRecord(mutation) && isRecord(mutation.requested)
-        && Array.isArray(mutation.requested.observations)) {
-        for (const observation of mutation.requested.observations) {
-          if (!isRecord(observation) || !isRecord(observation.state)
-            || typeof observation.memory_id !== "string") continue;
-          const identity = { scope: row.scope, id: observation.memory_id };
-          const key = terminalClaimKey({ table: "lite_memory_nodes", identity });
-          if (priorClaimKeys.has(key)) continue;
-          const stateCommitId = observation.state.commit_id;
-          if (typeof stateCommitId === "string"
-            && trustedLegacyCommitIds.has(`${row.scope}\0${stateCommitId}`)) {
-            addCandidate({
-              scope: row.scope,
-              authority_table: "lite_memory_nodes",
-              identity,
-              row: observation.state,
-              adoption_kind: LITE_RUNTIME_AUTHORITY_ADOPTION_KIND_LEGACY,
-            });
-            priorClaimKeys.add(key);
-            terminalClaimKeys.add(key);
-          }
-        }
-      }
-    }
     if (!validRevision(row.revision)) continue;
     for (const transition of extractV2MutationTransitions({
       parsed,
@@ -1721,8 +1482,6 @@ export function inspectLiteMemoryCommitAuthority(
   const terminals = new Map<string, V2Terminal>();
   const terminalClaims = new Map<string, TerminalMutationClaim>();
   const priorClaims = new Map<string, TerminalMutationClaim>();
-  const firstNodeTransitions = new Map<string, V2MutationTransition>();
-  const pendingMissingObservations: PendingMissingObservation[] = [];
   const revisionBeforeStats: RevisionBeforeStats = {
     checkCount: 0,
     verifiedCount: 0,
@@ -1780,27 +1539,11 @@ export function inspectLiteMemoryCommitAuthority(
         parentHash: row.parent_commit_id === null ? "" : row.parent_commit_hash ?? "",
       });
       if (validRevision(row.revision)) {
-        validateLearningControlOutcomeObservations({
-          parsed,
-          row: row as JoinedCommitRow & { revision: number },
-          priorClaims,
-          terminalClaims,
-          trustedLegacyCommitIds,
-          legacyBoundary: boundary,
-          adoption,
-          pendingMissing: pendingMissingObservations,
-          stats: revisionBeforeStats,
-          addFinding,
-        });
         const transitions = extractV2MutationTransitions({
           parsed,
           row: row as JoinedCommitRow & { revision: number },
         });
         for (const transition of transitions) {
-          if (transition.table === "lite_memory_nodes") {
-            const key = terminalClaimKey(transition);
-            if (!firstNodeTransitions.has(key)) firstNodeTransitions.set(key, transition);
-          }
           applyRevisionBeforeTransition({
             transition,
             priorClaims,
@@ -1900,31 +1643,8 @@ export function inspectLiteMemoryCommitAuthority(
     trustedLegacyCommitIds,
     legacyBoundaryByScope,
     adoption,
-    needsCurrentNodeKeys: pendingMissingObservations.length > 0,
-    nodeAbsenceRepresentative: pendingMissingObservations[0] ?? null,
     addFinding,
   });
-  for (const observation of pendingMissingObservations) {
-    const firstTransition = firstNodeTransitions.get(observation.key) ?? null;
-    const laterInsert = firstTransition !== null
-      && firstTransition.revision > observation.revision
-      && firstTransition.operation === "insert";
-    const absentAtTerminalWithoutAnyTransition = terminalVerification.nodeAbsenceProofAvailable
-      && firstTransition === null
-      && !terminalVerification.currentNodeKeys.has(observation.key);
-    if (laterInsert || absentAtTerminalWithoutAnyTransition) {
-      revisionBeforeStats.verifiedCount += 1;
-      continue;
-    }
-    revisionBeforeStats.invalidCount += 1;
-    addFinding(finding({
-      code: "lite_memory_commit_authority_learning_control_outcome_missing_invalid",
-      scope: observation.scope,
-      commitId: observation.commitId,
-      revision: observation.revision,
-      causeCode: observation.memoryId,
-    }));
-  }
   if (adoption.enabled) {
     for (const [key, binding] of adoption.bindings) {
       if (adoption.usedBindingKeys.has(key)) continue;

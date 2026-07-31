@@ -1,5 +1,5 @@
 // Runtime reference SDK implementation.
-// Only named Runtime-owned regions are generated into the standalone SDK.
+// This file is the canonical source for the standalone SDK.
 
 // <aionis-runtime-owned:public-contracts>
 
@@ -7,28 +7,18 @@ import { createHash } from "node:crypto";
 
 export type AionisJsonObject = Record<string, unknown>;
 
-export type AionisGuideMode = "standard" | "full_power";
-export type AionisGuideContextMode = AionisGuideMode | "compact_agent";
-export type AionisTaskContextProfile =
-  | "general"
-  | "coding_verifier"
-  | "document_integrity"
-  | "long_qa"
-  | "multi_agent_handoff"
-  | "loop_engineering";
 export type AionisFeedbackOutcome = "positive" | "negative" | "neutral";
 export type AionisFeedbackUsedSurface = "use_now" | "inspect_before_use" | "do_not_use" | "explicit_host_assertion";
 export type AionisFeedbackStatus = "passed" | "failed" | "not_run" | "unknown";
 export type AionisToolStatus = "succeeded" | "failed" | "not_run" | "unknown";
 export type AionisRehydrateMode = "summary_only" | "partial" | "full" | "differential";
-export type AionisForgetTarget = "pattern" | "archive" | "payload" | "memory";
+export type AionisForgetTarget = "archive" | "payload" | "memory";
 export type AionisMemoryLane = "private" | "shared";
 export type AionisRememberKind = "fact" | "preference" | "project_context" | "procedure" | "event" | "evidence";
 export type AionisRememberLifecycleState = "active" | "candidate" | "contested" | "suppressed" | "demoted" | "archived";
 export type AionisRememberTier = "hot" | "warm" | "cold" | "archive";
 export type AionisExecutionAgentRole = "agent" | "planner" | "worker" | "verifier" | "reviewer";
 export type AionisExecutionOutcomeStatus = "succeeded" | "failed" | "blocked" | "interrupted" | "unknown";
-export type AionisHandoffKind = "patch_handoff" | "review_handoff" | "task_handoff";
 export type AionisCommandPostureKind =
   | "must_not"
   | "should_continue"
@@ -65,530 +55,17 @@ export type AionisCommandPosture = {
   };
 };
 
-export type AionisRouteContractSource = "target_files" | "should_continue" | "inspect_first" | "must_not";
-export type AionisRouteContractTarget = {
-  target: string;
-  source_memory_id?: string;
-  source: AionisRouteContractSource;
-  reason?: string;
-};
-export type AionisRouteContractActiveTarget = AionisRouteContractTarget & {
-  artifact_status: "unknown" | "may_be_absent";
-  missing_policy: "restore_or_create_if_task_consistent_or_rehydrate";
-};
-export type AionisRouteContractMissingActiveAction = "create" | "restore" | "rehydrate" | "report_conflict";
-export type AionisRouteContractPendingArtifact = AionisRouteContractTarget & {
-  status: "unknown_until_host_observation";
-  when: "if_active_target_is_missing";
-  allowed_actions: AionisRouteContractMissingActiveAction[];
-  preferred_action_order: AionisRouteContractMissingActiveAction[];
-  terminal_inspect_allowed: false;
-  executable_evidence_policy: "route_safe_but_patch_may_require_rehydrate";
-  after_rehydrate_policy: "continue_allowed_action_if_task_consistent";
-  report_conflict_requires: "rehydrate_unavailable_or_evidence_conflict";
-};
-export type AionisRouteContractEvidenceSource = AionisRouteContractTarget & {
-  evidence_use: "reference_only";
-  direction_policy: "must_not_be_primary_route";
-};
-export type AionisRouteContractBlockedRoute = AionisRouteContractTarget & {
-  direction_policy: "blocked_route";
-  evidence_use: "counter_evidence_only";
-};
-export type AionisRouteContractActionPolicy = {
-  missing_active_target_preferred_order: AionisRouteContractMissingActiveAction[];
-  terminal_inspect_allowed: false;
-  reference_fallback_requires: "explicit_raw_evidence_or_operator_confirmation";
-  executable_evidence_policy: "route_safe_but_patch_may_require_rehydrate";
-  after_rehydrate_policy: "continue_allowed_action_if_task_consistent";
-  report_conflict_requires: "rehydrate_unavailable_or_evidence_conflict";
-};
-export type AionisRouteContract = {
-  active_targets: AionisRouteContractActiveTarget[];
-  pending_artifacts: AionisRouteContractPendingArtifact[];
-  reference_only_targets: AionisRouteContractTarget[];
-  blocked_direction_targets: AionisRouteContractTarget[];
-  evidence_sources: AionisRouteContractEvidenceSource[];
-  blocked_routes: AionisRouteContractBlockedRoute[];
-  conflict_policy: "do_not_treat_missing_active_target_as_superseded";
-  fallback_policy: "do_not_promote_reference_or_blocked_targets";
-  action_policy: AionisRouteContractActionPolicy;
-};
-
 export type AionisRehydrateHint = {
   memory_id: string;
   reason?: string;
   required: boolean;
 };
 
-export type AionisMemoryDecisionSummary = {
-  memory_id: string;
-  agent_surface: "use_now" | "inspect_before_use" | "do_not_use" | "rehydrate" | "not_agent_facing";
-  decision_kind: "used" | "downgraded" | "blocked" | "rehydrate" | "not_agent_facing";
-  actionable: boolean;
-  reason_codes: string[];
-};
-
-export type AionisMemoryUseReceipt = {
-  contract_version: "aionis_memory_use_receipt_v1";
-  intended_use: "memory_use_audit";
-  agent_prompt_included: false;
-  runtime_mutation: false;
-  guide_trace_id: string | null;
-  history_used: boolean;
-  actionable_history_used: boolean;
-  prompt_char_count: number;
-  exposed_memory_ids: string[];
-  use_now_memory_ids: string[];
-  inspect_before_use_memory_ids: string[];
-  do_not_use_memory_ids: string[];
-  rehydrate_memory_ids: string[];
-  attributed_memory_ids: string[];
-  unattributed_recalled_memory_ids: string[];
-  read_only_signal_memory_ids: string[];
-  decision_summaries: AionisMemoryDecisionSummary[];
-  risk_flags: string[];
-  summary: string;
-};
-
-export type AionisMemoryAdmissionRecordEntry = {
-  memory_id: string;
-  title: string | null;
-  memory_origin?: "aionis" | "external";
-  source_backend?: string;
-  domain: "general" | "execution";
-  memory_type:
-    | "fact"
-    | "preference"
-    | "project_context"
-    | "procedure"
-    | "event"
-    | "evidence"
-    | "rule"
-    | "execution_memory"
-    | "unknown";
-  lifecycle_state:
-    | "active"
-    | "candidate"
-    | "contested"
-    | "suppressed"
-    | "demoted"
-    | "archived"
-    | "rehydration_candidate"
-    | "unknown";
-  authority: "none" | "advisory" | "trusted" | "blocked";
-  admission_action: "use_now" | "inspect_before_use" | "do_not_use" | "rehydrate" | "not_agent_facing";
-  decision_kind: "used" | "downgraded" | "blocked" | "rehydrate" | "not_agent_facing";
-  actionable: boolean;
-  prompt_included: boolean;
-  agent_used: boolean;
-  feedback_outcome: AionisFeedbackOutcome | null;
-  attribution_strength:
-    | "none"
-    | "observed_feedback_only"
-    | "positive_attribution"
-    | "weak_below_threshold"
-    | "repeated_weak_threshold_met"
-    | "strong_signal_threshold_met"
-    | null;
-  reason_codes: string[];
-  evidence_ids: string[];
-};
-
-export type AionisMemoryAdmissionRecord = {
-  contract_version: "aionis_memory_admission_record_v1";
-  intended_use: "memory_admission_audit_dataset";
-  source: "memory_decision_trace" | "external_candidate_admission";
-  agent_prompt_included: false;
-  runtime_mutation: false;
-  tenant_id: string;
-  scope: string;
-  guide_trace_id: string | null;
-  prompt_char_count: number;
-  history_used: boolean;
-  actionable_history_used: boolean;
-  candidate_memory_count: number;
-  prompt_included_memory_count: number;
-  agent_used_memory_count: number;
-  entries: AionisMemoryAdmissionRecordEntry[];
-  shadow_policy_report?: AionisMemoryAdmissionShadowPolicyReport;
-  summary: string;
-};
-
-export type AionisExternalMemoryAuthority = {
-  source_trust?: "trusted" | "known" | "untrusted" | "unknown";
-  scope?: "user" | "project" | "team" | "org" | "global" | "unknown";
-  evidence_requirement?: "none" | "inspect_before_use" | "rehydrate_before_use" | "blocked";
-};
-
-export type AionisExternalMemoryLifecycleHint =
-  | "current"
-  | "procedure"
-  | "failed"
-  | "stale"
-  | "contested"
-  | "suppressed"
-  | "archived"
-  | "unknown";
-
-export type AionisExternalMemoryCandidate = {
-  external_memory_id: string;
-  source_backend: string;
-  text: string;
-  metadata?: AionisJsonObject;
-  authority?: AionisExternalMemoryAuthority;
-  lifecycle_hint?: AionisExternalMemoryLifecycleHint;
-  evidence_refs?: string[];
-};
-
-export type AionisMemoryAdmissionGatewayMode = "standard" | "strict" | "firewall";
-
-export type AionisMemoryAdmissionRequest = AionisJsonObject & {
-  query_text: string;
-  run_id?: string;
-  mode?: AionisMemoryAdmissionGatewayMode;
-  context_mode?: "standard" | "compact_agent";
-  candidates: AionisExternalMemoryCandidate[];
-  include_records?: boolean;
-};
-
-export type AionisMemoryFirewallSummary = {
-  contract_version: "aionis_memory_firewall_summary_v1";
-  intended_use: "memory_firewall_audit";
-  mode: "firewall";
-  candidate_count: number;
-  direct_use_count: number;
-  inspect_count: number;
-  blocked_count: number;
-  rehydrate_count: number;
-  unsafe_candidate_count: number;
-  unsafe_direct_use_count: number;
-  runtime_mutation: false;
-  agent_prompt_included: false;
-  risk_flags: string[];
-  claims: Array<{
-    claim: string;
-    status: "pass" | "warn" | "fail";
-    evidence: string;
-  }>;
-  summary: string;
-};
-
-export type AionisMemoryAdmissionGatewayResponse = AionisJsonObject & {
-  contract_version: "aionis_memory_admission_gateway_result_v1";
-  tenant_id: string;
-  scope: string;
-  run_id: string | null;
-  mode: AionisMemoryAdmissionGatewayMode;
-  agent_context: AionisJsonObject;
-  memory_use_receipt: AionisMemoryUseReceipt;
-  memory_admission_records?: AionisMemoryAdmissionRecord;
-  memory_firewall?: AionisMemoryFirewallSummary;
-  admission_summary: AionisJsonObject;
-  source_map: AionisJsonObject;
-};
-
-export type AionisMem0SearchResultRow = AionisJsonObject & {
-  id?: string;
-  memory?: unknown;
-  text?: unknown;
-  data?: unknown;
-  content?: unknown;
-  score?: number;
-  metadata?: AionisJsonObject;
-};
-
-export type AionisMem0SearchResultsInput = {
-  results?: AionisMem0SearchResultRow[];
-} | AionisMem0SearchResultRow[];
-
-export type AionisMem0CandidateMapperOptions = {
-  source_backend?: string;
-  id_prefix?: string;
-  default_authority?: AionisExternalMemoryAuthority;
-  default_lifecycle_hint?: AionisExternalMemoryLifecycleHint;
-};
-
-export type AionisGovernMem0SearchResultsInput = AionisJsonObject & {
-  query_text: string;
-  run_id?: string;
-  mode?: AionisMemoryAdmissionGatewayMode;
-  context_mode?: "standard" | "compact_agent";
-  include_records?: boolean;
-  mem0_results: AionisMem0SearchResultsInput;
-  mapper?: AionisMem0CandidateMapperOptions;
-};
-
-export type AionisAgentFlightRecorderReport = AionisJsonObject & {
-  contract_version: "aionis_agent_flight_recorder_report_v1";
-  intended_use: "incident_replay_audit";
-  agent_prompt_included: false;
-  runtime_mutation: false;
-  guide_trace_id: string | null;
-  run_id: string | null;
-  decision_time: string;
-  agent_view: AionisJsonObject & {
-    prompt_text_included: false;
-    exposed_memory_ids: string[];
-    use_now_memory_ids: string[];
-    inspect_before_use_memory_ids: string[];
-    do_not_use_memory_ids: string[];
-    rehydrate_memory_ids: string[];
-  };
-  blocked_or_suppressed: AionisJsonObject[];
-  attribution: AionisJsonObject & {
-    present: boolean;
-    outcome: AionisFeedbackOutcome | null;
-    used_memory_ids: string[];
-    attributed_memory_ids: string[];
-    unattributed_memory_ids: string[];
-    supported_memory_ids: string[];
-    contradicted_memory_ids: string[];
-  };
-  replay_sources: AionisJsonObject;
-  claims: AionisJsonObject[];
-  source_map: AionisJsonObject;
-  summary: string;
-};
-
-export type AionisAgentFlightRecorderRequest = AionisJsonObject & {
-  guide_trace_id?: string;
-  run_id?: string;
-  product_trace?: AionisJsonObject;
-  agent_context?: AionisJsonObject;
-  memory_decision_trace?: AionisJsonObject;
-  memory_use_receipt?: AionisJsonObject;
-  memory_admission_record?: AionisJsonObject;
-  operator_snapshot?: AionisJsonObject;
-  feedback_result?: AionisJsonObject;
-  decision_time?: string;
-};
-
-export type AionisAgentFlightRecorderResponse = AionisJsonObject & {
-  contract_version: "aionis_agent_flight_recorder_result_v1";
-  tenant_id: string;
-  scope: string;
-  agent_flight_recorder: AionisAgentFlightRecorderReport;
-  source_map: AionisJsonObject;
-};
-
-export type AionisMemoryAdmissionDatasetOutcomeLabel =
-  | "positive_use"
-  | "negative_use"
-  | "neutral_use"
-  | "unused_exposed"
-  | "blocked_or_suppressed"
-  | "rehydrate_requested"
-  | "not_agent_facing"
-  | "unknown";
-
-export type AionisMemoryAdmissionClosedLoopEffectState =
-  | "no_prior"
-  | "supported"
-  | "contradicted"
-  | "mixed"
-  | "rehydrate_requested";
-
-export type AionisMemoryAdmissionShadowPolicyId = "candidate_project_context_closed_loop_inspect";
-
-export type AionisMemoryAdmissionShadowPolicyDecision = {
-  memory_id: string;
-  title: string | null;
-  recorded_action: AionisMemoryAdmissionRecordEntry["admission_action"];
-  shadow_action: AionisMemoryAdmissionRecordEntry["admission_action"];
-  would_change_action: boolean;
-  memory_origin: AionisMemoryAdmissionRecordEntry["memory_origin"];
-  source_backend: string;
-  memory_type: AionisMemoryAdmissionRecordEntry["memory_type"];
-  closed_loop_effect_state: AionisMemoryAdmissionClosedLoopEffectState;
-  repeated_negative_posture: boolean;
-  prior_state_available: boolean;
-  used_fields: string[];
-  reason_codes: string[];
-};
-
-export type AionisMemoryAdmissionShadowPolicyReport = {
-  contract_version: "aionis_memory_admission_shadow_policy_report_v1";
-  intended_use: "admission_policy_shadow_audit";
-  policy_id: AionisMemoryAdmissionShadowPolicyId;
-  policy_version: string;
-  mode: "shadow_only";
-  source: "memory_admission_record" | "memory_decision_trace" | "external_candidate_admission";
-  agent_prompt_included: false;
-  runtime_mutation: false;
-  hard_boundary_policy: "preserve_recorded_non_use_now";
-  decision_count: number;
-  changed_count: number;
-  would_downgrade_use_now_count: number;
-  hard_boundary_upgrade_count: number;
-  direct_use_recorded_count: number;
-  direct_use_shadow_count: number;
-  policy_changed_memory_ids: string[];
-  downgraded_memory_ids: string[];
-  hard_boundary_preserved_memory_ids: string[];
-  decisions: AionisMemoryAdmissionShadowPolicyDecision[];
-  summary: string;
-};
-
-export type AionisMemoryAdmissionDatasetRow = {
-  contract_version: "aionis_memory_admission_dataset_row_v1";
-  intended_use: "memory_admission_policy_training_or_audit";
-  source: "memory_admission_record";
-  agent_prompt_included: false;
-  runtime_mutation: false;
-  policy_id: string;
-  policy_version: string;
-  policy_mode: string;
-  runtime_version: string | null;
-  tenant_id: string | null;
-  scope: string | null;
-  guide_trace_id: string | null;
-  run_id: string | null;
-  task_id: string | null;
-  task_signature: string | null;
-  row_index: number;
-  memory_id: string;
-  title: string | null;
-  memory_origin: AionisMemoryAdmissionRecordEntry["memory_origin"];
-  source_backend: string | null;
-  domain: AionisMemoryAdmissionRecordEntry["domain"];
-  memory_type: AionisMemoryAdmissionRecordEntry["memory_type"];
-  lifecycle_state: AionisMemoryAdmissionRecordEntry["lifecycle_state"];
-  authority: AionisMemoryAdmissionRecordEntry["authority"];
-  admission_action: AionisMemoryAdmissionRecordEntry["admission_action"];
-  decision_kind: AionisMemoryAdmissionRecordEntry["decision_kind"];
-  actionable: boolean;
-  prompt_included: boolean;
-  agent_used: boolean;
-  feedback_outcome: AionisFeedbackOutcome | null;
-  attribution_strength: AionisMemoryAdmissionRecordEntry["attribution_strength"];
-  outcome_label: AionisMemoryAdmissionDatasetOutcomeLabel;
-  reason_codes: string[];
-  evidence_ids: string[];
-  prompt_char_count: number;
-  history_used: boolean;
-  actionable_history_used: boolean;
-  prior_supported_use_count: number;
-  prior_contradicted_use_count: number;
-  prior_rehydrate_requested_count: number;
-  closed_loop_effect_state: AionisMemoryAdmissionClosedLoopEffectState;
-  repeated_negative_posture: boolean;
-};
-
-export type AionisMemoryAdmissionDatasetExportOptions = {
-  run_id?: string | null;
-  task_id?: string | null;
-  task_signature?: string | null;
-  policy_id?: string | null;
-  policy_version?: string | null;
-  policy_mode?: string | null;
-  runtime_version?: string | null;
-};
-
-export const AIONIS_ADMISSION_POLICY_ID = "AIONIS_ADMISSION_POLICY_V1";
-export const AIONIS_ADMISSION_POLICY_VERSION = "2026-06-17";
-export const AIONIS_ADMISSION_POLICY_MODE = "deterministic_admission";
-
-export type AionisExecutionContextBudgetProfile = "compact" | "balanced" | "high_recall";
-export type AionisAgentPromptFormat = "contract" | "runtime_compact";
-
-export const AIONIS_EXECUTION_AGENT_CONTEXT_PROMPT_CONTRACT = {
-  contract_version: "aionis_execution_agent_context_v1",
-  header: "AIONIS_EXECUTION_AGENT_CONTEXT v1",
-  authority_boundary: "Treat this as the SDK-compiled execution-memory contract. Runtime remains the authority for memory admission.",
-  execution_contract_rules: [
-    "Follow active targets and should_continue memories as the current execution route.",
-    "If an active target is missing, treat it as pending work to create or restore when task-consistent; do not fall back to blocked or reference-only paths because they exist.",
-    "Reference-only targets may be read for evidence, but they are not valid primary routes without explicit host confirmation.",
-    "Blocked, must_not, stale, failed, or retired routes are counter-evidence only.",
-    "If compact evidence is insufficient for a precise edit, request rehydrate instead of guessing.",
-  ],
-  sections: {
-    task: "TASK",
-    execution_contract: "EXECUTION CONTRACT",
-    active_targets: "ACTIVE_TARGETS",
-    missing_active_targets: "MISSING_ACTIVE_TARGETS",
-    pending_artifacts: "PENDING_ARTIFACTS",
-    should_continue: "SHOULD_CONTINUE",
-    inspect_before_use: "INSPECT_BEFORE_USE",
-    do_not_use: "DO_NOT_USE",
-    reference_only_targets: "REFERENCE_ONLY_TARGETS",
-    blocked_direction_targets: "BLOCKED_DIRECTION_TARGETS",
-    rehydrate_requests: "REHYDRATE_REQUESTS",
-  },
-} as const;
-
-export type AionisExecutionFilePresence = {
-  target: string;
-  exists: boolean;
-  reason?: string;
-};
-
-export type AionisExecutionRepoState = {
-  existing_files?: string[];
-  missing_files?: string[];
-  files?: AionisExecutionFilePresence[];
-};
-
-export type AionisAgentPromptTaskInput = {
-  task_id?: string;
-  run_id?: string;
-  task_signature?: string;
-  query_text?: string;
-  goal?: string;
-};
-
-export type AionisExecutionContextTask = AionisAgentPromptTaskInput;
-
 export type AionisGuideExecutionContextInput = AionisJsonObject & {
   task_id?: string;
   task_signature?: string;
   task_family?: string;
   workflow_signature?: string;
-};
-
-export type AionisExecutionAgentContextCompileInput = {
-  guide: unknown;
-  task?: string | AionisAgentPromptTaskInput;
-  repo_state?: AionisExecutionRepoState;
-  budget_profile?: AionisExecutionContextBudgetProfile;
-  max_prompt_chars?: number;
-  prompt_format?: AionisAgentPromptFormat;
-  additional_instructions?: string[];
-};
-
-export type AionisExecutionContextWarning = {
-  code:
-    | "missing_active_target"
-    | "blocked_route_present"
-    | "reference_only_target_present"
-    | "rehydrate_recommended";
-  message: string;
-  targets?: string[];
-  memory_ids?: string[];
-};
-
-export type AionisCompiledExecutionAgentContext = {
-  contract_version: "aionis_execution_agent_context_v1";
-  prompt_format: AionisAgentPromptFormat;
-  budget_profile: AionisExecutionContextBudgetProfile;
-  agent_prompt: string;
-  base_prompt: string;
-  prompt_char_count: number;
-  route_contract: AionisRouteContract | null;
-  command_posture: AionisCommandPosture[];
-  memory_use_receipt: AionisMemoryUseReceipt;
-  memory_admission_record: AionisMemoryAdmissionRecord;
-  rehydrate_requests: AionisRehydrateHint[];
-  use_now_memory_ids: string[];
-  inspect_before_use_memory_ids: string[];
-  do_not_use_memory_ids: string[];
-  active_targets: string[];
-  missing_active_targets: string[];
-  pending_artifacts: string[];
-  reference_only_targets: string[];
-  blocked_direction_targets: string[];
-  execution_warnings: AionisExecutionContextWarning[];
 };
 
 export type AionisMemoryResolveType =
@@ -629,25 +106,16 @@ export type AionisResolvedAgentEvidence = {
 };
 
 export type AionisGuideAgentContextOptions = {
-  task?: AionisExecutionAgentContextCompileInput["task"];
-  repo_state?: AionisExecutionAgentContextCompileInput["repo_state"];
-  budget_profile?: AionisExecutionContextBudgetProfile;
-  max_prompt_chars?: number;
-  prompt_format?: AionisAgentPromptFormat;
-  include_resolved_evidence_in_prompt?: boolean;
   evidence_limit?: number;
-  evidence_char_budget?: number;
   include_inspect_before_use?: boolean;
   include_rehydrate?: boolean;
   resolve_types?: AionisMemoryResolveType[];
   on_resolve_error?: "include_placeholder" | "skip" | "throw";
-  additional_instructions?: string[];
 };
 
 export type AionisGuideAgentContextResult<TGuide = unknown> = {
   contract_version: "aionis_sdk_agent_context_with_evidence_v1";
   guide: TGuide;
-  compiled_context: AionisCompiledExecutionAgentContext;
   agent_context: unknown | null;
   agent_prompt: string;
   resolved_evidence: AionisResolvedAgentEvidence[];
@@ -667,7 +135,6 @@ export type AionisClientOptions = {
   tenant_id?: string;
   scope?: string;
   headers?: Record<string, string>;
-  default_guide_mode?: AionisGuideMode | null;
   fetchImpl?: typeof fetch;
 };
 
@@ -677,9 +144,7 @@ export type AionisRequestOptions = {
   headers?: Record<string, string>;
 };
 
-export type AionisGuideRequestOptions = AionisRequestOptions & {
-  guide_mode?: AionisGuideMode | null;
-};
+export type AionisGuideRequestOptions = AionisRequestOptions;
 
 export type AionisHostTaskEnvelopeV1 = {
   contract_version: "host_task_envelope_v1";
@@ -791,42 +256,39 @@ export class AionisGuideFeedbackError extends Error {
   }
 }
 
+export type AionisExecutionSessionLeaseContextV1 = {
+  contract_version: "execution_session_lease_context_v1";
+  session_key: string;
+  continuation_id: string;
+  holder_id: string;
+  lease_id: string;
+  lease_revision: number;
+  lease_operation_id: string;
+  lease_ttl_ms?: number;
+};
+
 export type AionisGuideRequest = AionisJsonObject & {
   operation_id?: string;
+  episode_id?: string;
+  expected_current_state_snapshot_id?: string;
+  tenant_id?: string;
+  scope?: string;
   host_task_envelope_v1?: AionisHostTaskEnvelopeV1;
   query_text: string;
-  mode?: AionisGuideMode;
-  context_mode?: AionisGuideContextMode;
-  task_context_profile?: AionisTaskContextProfile;
   agent_role?: AionisExecutionAgentRole;
+  context?: AionisJsonObject;
   run_id?: string;
   consumer_agent_id?: string;
   consumer_team_id?: string;
-  tool_candidates?: string[];
-  tool_strict?: boolean;
-  include_shadow?: boolean;
-  rules_limit?: number;
   context_char_budget?: number;
-  context_compaction_profile?: "balanced" | "aggressive";
-};
-
-export type AionisToolSelectionReceipt = {
-  contract_version: "aionis_tool_selection_receipt_v1";
-  decision_id: string;
-  decision_uri: string;
-  run_id: string;
-  selected_tool: string | null;
-  candidates: string[];
-  context_sha256?: string;
-  policy_sha256: string;
-  rule_evaluation_sha256?: string;
-  source_rule_ids: string[];
-  created_at: string;
+  execution_state_v1?: AionisJsonObject;
+  execution_packet_v1?: AionisJsonObject;
+  include_packets?: boolean;
+  session_lease_v1?: AionisExecutionSessionLeaseContextV1;
 };
 
 export type AionisGuideResult<TGuide extends AionisJsonObject = AionisJsonObject> = TGuide & {
   operation_id?: string;
-  tool_selection?: AionisToolSelectionReceipt;
   feedback_attribution_v1?: AionisGuideFeedbackAttributionV1;
 };
 
@@ -841,8 +303,6 @@ export type AionisObserveResult = AionisJsonObject & {
   scope: string;
   observed: AionisJsonObject & {
     memory_written: boolean;
-    handoff_stored: boolean;
-    claim_count?: number;
     general_memory_count: number;
     execution_memory_count: number;
     auto_text_memory_count: number;
@@ -853,6 +313,404 @@ export type AionisObserveResult = AionisJsonObject & {
     embedding: "scheduled" | "not_requested";
     ann_sync: "scheduled" | "not_requested";
   };
+};
+
+export type AionisExecutionEpisodeBudgetV1 = {
+  max_steps: number;
+  max_tokens: number;
+  max_cost_micros?: number;
+  deadline_ms?: number;
+};
+
+export type AionisExecutionEpisodeSubjectStateSpecV2 =
+  | {
+    contract_version: "workspace_subject_state_spec_v2";
+    additional_state_roots: string[];
+  }
+  | {
+    contract_version: "structured_artifact_subject_state_spec_v1";
+    format: "json";
+    capture_scope: "entire_artifact";
+  }
+  | {
+    contract_version: "sqlite_database_subject_state_spec_v1";
+    capture_scope: "entire_database";
+  };
+
+export type AionisExecutionEpisodeRequiredVerifierV1 = {
+  contract_version: "execution_episode_required_verifier_v1";
+  verifier_id: string;
+  verifier_definition_sha256: string;
+};
+
+export type AionisExecutionSubjectV1 = {
+  contract_version: "execution_subject_v1";
+  subject_id: string;
+  kind: string;
+  adapter_id: string;
+  adapter_version: string;
+  identity_sha256: string;
+  capability_descriptor_ref: string;
+  capability_descriptor_sha256: string;
+};
+
+export type AionisStateSnapshotV2 = {
+  contract_version: "state_snapshot_v2";
+  snapshot_id: string;
+  subject: AionisExecutionSubjectV1;
+  captured_at: string;
+  algorithm_id: string;
+  algorithm_version: string;
+  environment_sha256: string;
+  content_ref: string;
+  content_sha256: string;
+  content_media_type: string;
+  content_encoding: string;
+  capture_authority: "runtime_adapter" | "signed_host_adapter";
+  attestation_ref: string | null;
+};
+
+export type AionisExecutionEpisodeHandleV2 = {
+  contract_version: "aionis_execution_episode_handle_v2";
+  episode_id: string;
+  tenant_id: string;
+  scope: string;
+  task_id: string;
+  task_envelope_digest: string;
+  run_id: string;
+  workspace_root: string;
+  workspace_root_sha256: string;
+  subject: AionisExecutionSubjectV1;
+  current_state_snapshot_id: string;
+  current_state: AionisStateSnapshotV2;
+  required_verifier: AionisExecutionEpisodeRequiredVerifierV1;
+  closed: boolean;
+};
+
+export type AionisAgentSessionHandleV1 = {
+  contract_version: "aionis_agent_session_handle_v1";
+  session_key: string;
+  continuation_id: string;
+  holder_id: string;
+  lease_id: string;
+  lease_revision: number;
+  lease_status: "active" | "released" | "expired";
+  lease_expires_at: string | null;
+  episode: AionisExecutionEpisodeHandleV2;
+};
+
+export type AionisBeginAgentSessionInput =
+  Omit<AionisBeginEpisodeInput, "operation_id"> & {
+    operation_id: string;
+    session_key: string;
+    continuation_id: string;
+    holder_id: string;
+    lease_ttl_ms?: number;
+  };
+
+export type AionisResumeAgentSessionInput = {
+  operation_id: string;
+  session_key: string;
+  holder_id: string;
+  workspace_root: string;
+  lease_ttl_ms?: number;
+  tenant_id?: string;
+  scope?: string;
+};
+
+export type AionisAgentSessionLeaseOperationInput = {
+  handle: AionisAgentSessionHandleV1;
+  operation_id: string;
+  lease_ttl_ms?: number;
+};
+
+export type AionisAgentSessionHandoffInput =
+  AionisAgentSessionLeaseOperationInput & {
+    to_holder_id: string;
+    evidence_refs?: string[];
+  };
+
+export type AionisAgentSessionOperationResult<T = unknown> = {
+  handle: AionisAgentSessionHandleV1;
+  response: T;
+};
+
+export type AionisAgentSessionTurnInput = {
+  operation_id: string;
+  observation: string;
+  authority: AionisSemanticEventAuthorityV1;
+  evidence_kind: AionisSemanticEvidenceKindV1;
+  evidence: string | Uint8Array | AionisJsonObject;
+  evidence_media_type?: string;
+  evidence_encoding?: string;
+  guide: Omit<AionisGuideRequest, "operation_id">;
+  lease_ttl_ms?: number;
+};
+
+export type AionisAgentSessionTurnResult<TGuide = unknown> = {
+  observation: unknown;
+  context: AionisGuideAgentContextResult<TGuide>;
+};
+
+export type AionisAgentSessionAroundActionInput<TResult> = {
+  operation_id: string;
+  action_kind: string;
+  tool_name?: string;
+  request: string | Uint8Array | AionisJsonObject;
+  execute: () => Promise<TResult>;
+  serialize_result?: (
+    result: TResult,
+  ) => string | Uint8Array | AionisJsonObject;
+  lease_ttl_ms?: number;
+};
+
+export type AionisAgentSessionAroundActionResult<TResult, TReceipt> = {
+  result: TResult;
+  receipt: TReceipt;
+};
+
+export type AionisAgentSessionFinishInput =
+  Omit<
+    AionisCloseEpisodeInput,
+    | "handle"
+    | "operation_id"
+    | "session_lease_v1"
+    | "verifier_receipt_id"
+  > & {
+    verifier_operation_id: string;
+    close_operation_id: string;
+    recovery_mode?: "automatic" | "manual";
+    recovery_operation_id?: string;
+    lease_ttl_ms?: number;
+  };
+
+export type AionisAgentSessionVerifierStatus =
+  | "passed"
+  | "failed"
+  | "infrastructure_error"
+  | "inconclusive"
+  | "unknown";
+
+export type AionisAgentSessionRecoveryResult<TRecovery = unknown> =
+  Readonly<{
+    contract_version: "aionis_agent_session_recovery_result_v1";
+    status: "restored";
+    operation_id: string;
+    failed_snapshot_id: string;
+    failed_verifier_receipt_id: string;
+    restored_snapshot_id: string;
+    accepted_verifier_receipt_id: string;
+    response: TRecovery;
+  }>;
+
+export type AionisAgentSessionFinishResult<
+  TVerifier = unknown,
+  TClose = unknown,
+  TRecovery = unknown,
+> =
+  | Readonly<{
+    contract_version: "aionis_agent_session_finish_result_v1";
+    status: "completed";
+    verifier_status: "passed";
+    verifier: TVerifier;
+    close: TClose;
+    continuation: null;
+  }>
+  | Readonly<{
+    contract_version: "aionis_agent_session_finish_result_v1";
+    status: "continue";
+    verifier_status: Exclude<
+      AionisAgentSessionVerifierStatus,
+      "passed"
+    >;
+    verifier: TVerifier;
+    close: null;
+    continuation: Readonly<{
+      reason:
+        | "verifier_failed"
+        | "verifier_infrastructure_error"
+        | "verifier_inconclusive"
+        | "verifier_outcome_unavailable"
+        | "verified_branch_restored";
+      current_state_snapshot_id: string;
+      verifier_receipt_id: string | null;
+      recovery:
+        AionisAgentSessionRecoveryResult<TRecovery> | null;
+    }>;
+  }>
+  | Readonly<{
+    contract_version: "aionis_agent_session_finish_result_v1";
+    status: "terminated";
+    verifier_status: AionisAgentSessionVerifierStatus;
+    verifier: TVerifier;
+    close: TClose;
+    continuation: null;
+  }>;
+
+export type AionisBeginEpisodeInput = {
+  operation_id: string;
+  task_envelope_v1: AionisHostTaskEnvelopeV1;
+  source_task: string | Uint8Array;
+  run_id: string;
+  model_id: string;
+  model_config: unknown;
+  budget: AionisExecutionEpisodeBudgetV1;
+  workspace_root: string;
+  subject_state_spec_v2?: AionisExecutionEpisodeSubjectStateSpecV2;
+  required_verifier_id: string;
+  tenant_id?: string;
+  scope?: string;
+};
+
+export type AionisResumeEpisodeInput = {
+  episode_id: string;
+  workspace_root: string;
+  tenant_id?: string;
+  scope?: string;
+};
+
+export type AionisRecordEpisodeActionInput = {
+  handle: AionisExecutionEpisodeHandleV2;
+  operation_id: string;
+  expected_current_state_snapshot_id?: string;
+  action_kind: string;
+  tool_name?: string;
+  request: string | Uint8Array | AionisJsonObject;
+  result: string | Uint8Array | AionisJsonObject;
+  session_lease_v1?: AionisExecutionSessionLeaseContextV1;
+};
+
+export type AionisRestoreEpisodeSnapshotInput = {
+  handle: AionisExecutionEpisodeHandleV2;
+  operation_id: string;
+  target_snapshot_id: string;
+  expected_current_state_snapshot_id?: string;
+  session_lease_v1?: AionisExecutionSessionLeaseContextV1;
+};
+
+export type AionisSemanticEventAuthorityV1 =
+  | {
+    kind: "host_declared";
+    actor_id: string;
+  }
+  | {
+    kind: "model_derived";
+    actor_id: string;
+    model_id: string;
+    derivation_sha256: string;
+    uncertainty: number;
+  };
+
+export type AionisSemanticEvidenceKindV1 =
+  | "feature_vector"
+  | "prompt"
+  | "tool_request"
+  | "tool_result"
+  | "manifest";
+
+export type AionisDecisiveEvidenceExcerptInputV1 = {
+  source_ref: string;
+  excerpt: string;
+};
+
+type AionisRecordEpisodeSemanticInputBase = {
+  handle: AionisExecutionEpisodeHandleV2;
+  operation_id: string;
+  expected_current_state_snapshot_id?: string;
+  authority: AionisSemanticEventAuthorityV1;
+  evidence_kind: AionisSemanticEvidenceKindV1;
+  evidence: string | Uint8Array | AionisJsonObject;
+  evidence_media_type?: string;
+  evidence_encoding?: string;
+  decisive_evidence?: AionisDecisiveEvidenceExcerptInputV1[];
+  session_lease_v1?: AionisExecutionSessionLeaseContextV1;
+};
+
+export type AionisRecordEpisodeObservationInput =
+  AionisRecordEpisodeSemanticInputBase & {
+    observation: string;
+  };
+
+export type AionisRecordEpisodeDecisionInput =
+  AionisRecordEpisodeSemanticInputBase & {
+    decision: string;
+    reasons: string[];
+    alternatives_rejected: string[];
+  };
+
+export type AionisRecordEpisodeProgressInput =
+  AionisRecordEpisodeSemanticInputBase & {
+    item_id: string;
+    state: "completed" | "failed" | "unresolved" | "blocked";
+    statement: string;
+  };
+
+export type AionisRecordEpisodePlannedActionInput =
+  AionisRecordEpisodeSemanticInputBase & {
+    action_id: string;
+    intent: string;
+    justification: string;
+    preconditions: string[];
+  };
+
+export type AionisGuideEpisodeInput = {
+  handle: AionisExecutionEpisodeHandleV2;
+  operation_id: string;
+  guide: AionisGuideRequest;
+};
+
+export type AionisRecordEpisodeMutationInput = {
+  handle: AionisExecutionEpisodeHandleV2;
+  operation_id: string;
+  expected_current_state_snapshot_id?: string;
+  mutation_kind: string;
+  details?: AionisJsonObject;
+  session_lease_v1?: AionisExecutionSessionLeaseContextV1;
+};
+
+export type AionisRunEpisodeVerifierInput = {
+  handle: AionisExecutionEpisodeHandleV2;
+  operation_id: string;
+  expected_current_state_snapshot_id?: string;
+  session_lease_v1?: AionisExecutionSessionLeaseContextV1;
+};
+
+export type AionisExecutionEpisodeTermination =
+  | "completed"
+  | "agent_error"
+  | "timeout"
+  | "cancelled"
+  | "missing_verifier";
+
+export type AionisExecutionCostInputV1 = {
+  provider: string;
+  model: string;
+  input_tokens: number;
+  output_tokens: number;
+  cached_input_tokens?: number;
+  token_usage_authority: "provider_total" | "signed_host_receipt";
+  usage_receipt: string | Uint8Array | AionisJsonObject;
+  usage_receipt_media_type?: string;
+  usage_receipt_encoding?: string;
+  monetary_cost_micros?: number;
+  currency?: string;
+  producer_id: string;
+};
+
+export type AionisCloseEpisodeInput = {
+  handle: AionisExecutionEpisodeHandleV2;
+  operation_id: string;
+  expected_current_state_snapshot_id?: string;
+  termination: AionisExecutionEpisodeTermination;
+  verifier_receipt_id?: string;
+  outcome_details?: string[];
+  cost?: AionisExecutionCostInputV1;
+  session_lease_v1?: AionisExecutionSessionLeaseContextV1;
+};
+
+export type AionisExecutionEpisodeOperationResult<T = unknown> = {
+  handle: AionisExecutionEpisodeHandleV2;
+  response: T;
 };
 
 export type AionisRememberRequest = AionisJsonObject & {
@@ -897,29 +755,7 @@ export type AionisMemoryFeedbackRequest = AionisJsonObject & {
   target?: "memory";
 };
 
-export type AionisToolSelectionFeedbackRequest = AionisJsonObject & {
-  feedback_kind: "tool_selection";
-  operation_id?: string;
-  guide_trace_id: string;
-  decision_id: string;
-  run_id: string;
-  selected_tool: string;
-  candidates: string[];
-  outcome: AionisFeedbackOutcome;
-  context: AionisJsonObject;
-  actor?: string;
-  consumer_agent_id?: string;
-  consumer_team_id?: string;
-  include_shadow?: boolean;
-  rules_limit?: number;
-  target?: "tool" | "all";
-  note?: string;
-  input_text?: string;
-  input_sha256?: string;
-  learning_control_review?: AionisJsonObject;
-};
-
-export type AionisFeedbackRequest = AionisMemoryFeedbackRequest | AionisToolSelectionFeedbackRequest;
+export type AionisFeedbackRequest = AionisMemoryFeedbackRequest;
 
 export type AionisRehydrateRequest = AionisJsonObject & {
   reason: string;
@@ -942,204 +778,6 @@ export type AionisProductTask = {
   workflow_signature?: string;
 };
 
-export type AionisTrainingCandidateLabel =
-  | "positive"
-  | "negative"
-  | "neutral"
-  | "blocked"
-  | "insufficient_evidence";
-
-export type AionisTrainingCandidateType =
-  | "handoff_distillation"
-  | "transfer_judge"
-  | "workflow_selector"
-  | "forgetting_suppression"
-  | "authority_judgment"
-  | "trace_derived_skill";
-
-export type AionisTraceDerivedSkillCandidate = {
-  contract_version: "aionis_trace_derived_skill_candidate_v1";
-  skill_name: string;
-  source_trace_ids: string[];
-  source_signal_ids: string[];
-  applies_when: string[];
-  does_not_apply_when: string[];
-  procedure_steps: string[];
-  target_files: string[];
-  acceptance_checks: string[];
-  failure_counterexamples: string[];
-  evidence_refs: string[];
-  authority_state: "candidate";
-  promotion_status: "candidate_only" | "needs_feedback_attribution" | "promotion_ready";
-  export_policy: {
-    agent_prompt_included: false;
-    runtime_mutation: false;
-    required_gate: "admission_and_promotion_gate";
-  };
-};
-
-export type AionisGenericTrainingCandidate = {
-  candidate_type: Exclude<AionisTrainingCandidateType, "trace_derived_skill">;
-  source_ids: string[];
-  label: AionisTrainingCandidateLabel;
-  export_ready: boolean;
-  reason: string;
-};
-
-export type AionisTraceDerivedSkillTrainingCandidate = {
-  candidate_type: "trace_derived_skill";
-  source_ids: string[];
-  label: AionisTrainingCandidateLabel;
-  export_ready: boolean;
-  reason: string;
-  trace_derived_skill: AionisTraceDerivedSkillCandidate;
-};
-
-export type AionisTrainingCandidate =
-  | AionisGenericTrainingCandidate
-  | AionisTraceDerivedSkillTrainingCandidate;
-
-export type AionisTraceDerivedSkillReviewItem = {
-  candidate_type: "trace_derived_skill";
-  review_action: "review_for_promotion";
-  skill_name: string;
-  label: AionisTrainingCandidateLabel;
-  export_ready: boolean;
-  promotion_status: AionisTraceDerivedSkillCandidate["promotion_status"];
-  reason: string;
-  source_ids: string[];
-  source_trace_ids: string[];
-  source_signal_ids: string[];
-  applies_when: string[];
-  does_not_apply_when: string[];
-  procedure_steps: string[];
-  target_files: string[];
-  acceptance_checks: string[];
-  failure_counterexamples: string[];
-  evidence_refs: string[];
-  safety: {
-    authority_state: "candidate";
-    agent_prompt_included: false;
-    runtime_mutation: false;
-    required_gate: "admission_and_promotion_gate";
-  };
-  candidate: AionisTraceDerivedSkillTrainingCandidate;
-};
-
-export type AionisProcedureMemoryDraftV1 = {
-  contract_version: "aionis_procedure_memory_draft_v1";
-  source_candidate_id: string;
-  source: "trace_derived_skill";
-  memory_kind: "procedure";
-  authority_state: "reviewed_candidate";
-  skill_name: string;
-  title: string;
-  summary: string;
-  source_trace_ids: string[];
-  source_signal_ids: string[];
-  applies_when: string[];
-  does_not_apply_when: string[];
-  procedure_steps: string[];
-  target_files: string[];
-  acceptance_checks: string[];
-  failure_counterexamples: string[];
-  evidence_refs: string[];
-  review: {
-    review_status: "promoted";
-    reviewer_id: string | null;
-    review_reason: string | null;
-    reviewed_at: string | null;
-    candidate_reason: string;
-    label: AionisTrainingCandidateLabel;
-    promotion_status: "promotion_ready";
-    export_ready: true;
-  };
-  write_policy: {
-    requires_observe_commit: true;
-    agent_prompt_included: false;
-    runtime_mutation: false;
-    required_gate: "observe_commit_and_admission_gate";
-  };
-};
-
-export type AionisSkillCandidateMaterializeResult = AionisJsonObject & {
-  contract_version: "aionis_skill_candidate_materialize_result_v1";
-  tenant_id: string;
-  scope: string;
-  candidate_id: string;
-  draft: AionisProcedureMemoryDraftV1;
-  recommended_observe_payload: AionisJsonObject;
-  safety: {
-    agent_prompt_included: false;
-    memory_runtime_mutation: false;
-    requires_observe_commit: true;
-    required_gate: "observe_commit_and_admission_gate";
-  };
-};
-
-export type AionisEffectReport = AionisJsonObject & {
-  contract_version: "aionis_effect_report_v1";
-  tenant_id: string;
-  scope: string;
-  task: {
-    task_id?: string | null;
-    run_id?: string | null;
-    task_signature?: string | null;
-    task_family?: string | null;
-  };
-  comparison: {
-    mode: "baseline_vs_aionis" | "observe_only_vs_active" | "single_run_history_impact";
-    baseline_run_id?: string | null;
-    aionis_run_id?: string | null;
-    sufficient_evidence: boolean;
-  };
-  history_impact: {
-    changed_future_behavior: boolean;
-    impact_direction: "positive" | "negative" | "neutral" | "insufficient_evidence";
-    changed_fields: string[];
-    explanation: string;
-  };
-  training_candidates: AionisTrainingCandidate[];
-  evidence: {
-    evidence_ids: string[];
-    replay_run_ids: string[];
-    signal_summary_ids: string[];
-    promotion_quality_summary_ids: string[];
-  };
-};
-
-export type AionisMeasureResult = AionisJsonObject & {
-  contract_version: "aionis_measure_result_v1";
-  operation_id?: string;
-  tenant_id: string;
-  scope: string;
-  measurement_id: string;
-  measurement_digest: string;
-  measurement_persisted: boolean;
-  evidence_assessment: {
-    status: "sufficient" | "insufficient";
-    sufficient_evidence: boolean;
-    eligible_for_skill_export: boolean;
-    provenance: "runtime_verified" | "manual_unverified" | "unverified_product_trace";
-    runtime_evidence_ids: string[];
-    reasons: string[];
-    client_claims_ignored: {
-      sufficient_evidence: boolean | null;
-      evidence_id_count: number;
-    };
-  };
-  measurement_input: {
-    source: string;
-    baseline: AionisJsonObject;
-    aionis: AionisJsonObject;
-  };
-  effect_report: AionisEffectReport;
-  memory_decision_trace?: AionisJsonObject;
-  memory_decision_audit?: AionisJsonObject;
-  kernel_report?: AionisJsonObject;
-  source_map: AionisJsonObject;
-};
-
 export type AionisFeedbackFromGuideInput = {
   guide: unknown;
   operation_id?: string;
@@ -1153,207 +791,6 @@ export type AionisFeedbackFromGuideInput = {
   verifier_status?: AionisFeedbackStatus;
   tool_status?: AionisToolStatus;
   runtime_signal_refs?: string[];
-};
-
-export type AionisMeasureFromGuideLoopInput = {
-  operation_id?: string;
-  task: AionisProductTask;
-  after_guide: unknown;
-  before_guide?: unknown;
-  feedback_result?: unknown;
-  sufficient_evidence?: boolean;
-  evidence_ids?: string[];
-  tenant_id?: string;
-  scope?: string;
-  product_trace?: AionisJsonObject;
-};
-
-export type AionisSnapshotFromGuideLoopInput = {
-  run_id: string;
-  task_signature: string;
-  task_family?: string;
-  guide: unknown;
-  measure_result: unknown;
-  include_markdown?: boolean;
-  tenant_id?: string;
-  scope?: string;
-  extra?: AionisJsonObject;
-};
-
-export type AionisExecutionRunRef = {
-  run_id: string;
-  task_id?: string;
-  task_signature: string;
-  task_family?: string;
-  workflow_signature?: string;
-};
-
-export type AionisExecutionAgentRef = {
-  agent_id?: string;
-  team_id?: string;
-  role?: AionisExecutionAgentRole;
-};
-
-export type AionisExecutionBaseInput = AionisExecutionRunRef & AionisExecutionAgentRef & {
-  operation_id?: string;
-  tenant_id?: string;
-  scope?: string;
-  memory_lane?: AionisMemoryLane;
-  auto_embed?: boolean;
-};
-
-export type AionisExecutionStepInput = AionisExecutionBaseInput & {
-  title: string;
-  summary: string;
-  outcome?: AionisExecutionOutcomeStatus;
-  target_files?: string[];
-  workflow_steps?: string[];
-  tool_set?: string[];
-  acceptance_checks?: string[];
-  continuation_hint?: string;
-  resume_hint?: string;
-  reuse_hint?: string;
-  salience?: number;
-  importance?: number;
-  confidence?: number;
-  raw_ref?: string;
-  evidence_ref?: string;
-  evidence?: AionisJsonObject[];
-  artifacts?: AionisJsonObject[];
-  verification?: AionisJsonObject;
-  slots?: AionisJsonObject;
-  input_text?: string;
-  execution?: AionisJsonObject;
-};
-
-export type AionisPlanAssetDecision = {
-  decision_id: string;
-  statement: string;
-  rationale?: string;
-  alternatives_rejected?: string[];
-  target_files?: string[];
-};
-
-export type AionisPlanAssetFailedBranch = {
-  branch_id: string;
-  statement: string;
-  reason: string;
-  target_files?: string[];
-};
-
-export type AionisPlanAsset = {
-  plan_id?: string;
-  title: string;
-  summary: string;
-  artifact_ref?: string;
-  decisions: AionisPlanAssetDecision[];
-  acceptance_checks: string[];
-  execution_boundaries: string[];
-  failed_branches?: AionisPlanAssetFailedBranch[];
-};
-
-export type AionisPlanAssetPlanner = {
-  agent_id: string;
-  team_id?: string;
-  model?: string;
-};
-
-export type AionisPlanAssetObserveInput = AionisExecutionRunRef & {
-  tenant_id?: string;
-  scope?: string;
-  memory_lane?: AionisMemoryLane;
-  auto_embed?: boolean;
-  planner: AionisPlanAssetPlanner;
-  plan: AionisPlanAsset;
-};
-
-export type AionisExecutionHandoffInput = AionisExecutionStepInput & {
-  handoff_kind?: AionisHandoffKind;
-  anchor?: string;
-  file_path?: string;
-  repo_root?: string;
-  symbol?: string;
-  handoff_text?: string;
-  risk?: string;
-  tags?: string[];
-  next_action?: string;
-  must_change?: string[];
-  must_remove?: string[];
-  must_keep?: string[];
-  execution_state_v1?: AionisJsonObject;
-  execution_packet_v1?: AionisJsonObject;
-  control_profile_v1?: AionisJsonObject;
-  execution_transitions_v1?: unknown[];
-  execution_tree_disabled?: boolean;
-  execution_tree_default_disabled?: boolean;
-  execution_tree_v1?: AionisJsonObject;
-  execution_tree_operations_v1?: unknown[];
-  trajectory?: AionisJsonObject;
-  trajectory_hints?: AionisJsonObject;
-  handoff?: AionisJsonObject;
-};
-
-export type AionisExecutionGuideForRoleInput = AionisExecutionRunRef & AionisExecutionAgentRef & {
-  operation_id?: string;
-  host_task_envelope_v1?: AionisHostTaskEnvelopeV1;
-  tenant_id?: string;
-  scope?: string;
-  query_text: string;
-  context?: AionisGuideExecutionContextInput;
-  execution_tree_v1?: AionisJsonObject | null;
-  tool_candidates?: string[];
-  limit?: number;
-  include_packets?: boolean;
-  mode?: AionisGuideMode;
-  context_mode?: AionisGuideContextMode;
-  task_context_profile?: AionisTaskContextProfile;
-  context_char_budget?: number;
-  context_token_budget?: number;
-  context_compaction_profile?: "balanced" | "aggressive";
-  context_optimization_profile?: "balanced" | "aggressive";
-  guide?: AionisJsonObject;
-};
-
-export type AionisExecutionOutcomeInput = AionisExecutionStepInput & {
-  guide?: unknown;
-  /** @deprecated Pass the complete source guide; guide_trace_id alone cannot authorize feedback. */
-  guide_trace_id?: string;
-  feedback_operation_id?: string;
-  host_use_receipt_v1?: AionisHostUseReceiptV1;
-  used_memory_ids?: string[];
-  feedback?: boolean;
-  feedback_outcome?: AionisFeedbackOutcome;
-  used_surface?: AionisFeedbackUsedSurface;
-  verifier_status?: AionisFeedbackStatus;
-  tool_status?: AionisToolStatus;
-  runtime_signal_refs?: string[];
-  feedback_reason?: string;
-};
-
-export type AionisExecutionMeasureRunInput = AionisExecutionRunRef & {
-  operation_id?: string;
-  tenant_id?: string;
-  scope?: string;
-  before_guide?: unknown;
-  after_guide: unknown;
-  feedback_result?: unknown;
-  sufficient_evidence?: boolean;
-  evidence_ids?: string[];
-  product_trace?: AionisJsonObject;
-};
-
-export type AionisExecutionSnapshotRunInput = AionisExecutionRunRef & {
-  tenant_id?: string;
-  scope?: string;
-  guide: unknown;
-  measure_result: unknown;
-  include_markdown?: boolean;
-  extra?: AionisJsonObject;
-};
-
-export type AionisExecutionOutcomeResult<TObserve = unknown, TFeedback = unknown> = {
-  observe: TObserve;
-  feedback: TFeedback | null;
 };
 
 // </aionis-runtime-owned:public-contracts>
@@ -1400,140 +837,14 @@ function asRecord(value: unknown): Record<string, unknown> | null {
   return value && typeof value === "object" && !Array.isArray(value) ? value as Record<string, unknown> : null;
 }
 
+function coerceString(value: unknown): string | null {
+  return typeof value === "string" && value.length > 0
+    ? value
+    : null;
+}
+
 function stringArray(value: unknown): string[] {
   return Array.isArray(value) ? value.filter((entry): entry is string => typeof entry === "string") : [];
-}
-
-function coerceString(value: unknown): string | null {
-  if (typeof value === "string" && value.trim().length > 0) return value;
-  if (typeof value === "number" || typeof value === "boolean") return String(value);
-  return null;
-}
-
-function stableTextHash(value: string): string {
-  let hash = 0x811c9dc5;
-  for (let index = 0; index < value.length; index += 1) {
-    hash ^= value.charCodeAt(index);
-    hash = Math.imul(hash, 0x01000193);
-  }
-  return (hash >>> 0).toString(16).padStart(8, "0");
-}
-
-function parseStringArray(value: unknown): string[] {
-  if (Array.isArray(value)) return stringArray(value);
-  if (typeof value === "string") {
-    const trimmed = value.trim();
-    if (!trimmed) return [];
-    try {
-      const parsed = JSON.parse(trimmed) as unknown;
-      if (Array.isArray(parsed)) return stringArray(parsed);
-    } catch {
-      return trimmed.split(",").map((entry) => entry.trim()).filter(Boolean);
-    }
-  }
-  return [];
-}
-
-function mem0Rows(input: AionisMem0SearchResultsInput): AionisMem0SearchResultRow[] {
-  if (Array.isArray(input)) return input;
-  const results = asRecord(input)?.results;
-  return Array.isArray(results) ? results.filter((entry): entry is AionisMem0SearchResultRow => Boolean(asRecord(entry))) : [];
-}
-
-function mem0RowText(row: AionisMem0SearchResultRow): string {
-  for (const key of ["memory", "text", "data", "content"] as const) {
-    const value = row[key];
-    if (typeof value === "string" && value.trim().length > 0) return value;
-    if (value !== undefined && value !== null && typeof value === "object") return JSON.stringify(value);
-  }
-  return JSON.stringify(row);
-}
-
-function externalMemoryAuthorityFromMetadata(
-  metadata: Record<string, unknown>,
-  fallback?: AionisExternalMemoryAuthority,
-): AionisExternalMemoryAuthority {
-  const embedded = asRecord(metadata.authority);
-  const sourceTrust = metadata.authority_source_trust ?? metadata.source_trust ?? embedded?.source_trust ?? fallback?.source_trust;
-  const scope = metadata.authority_scope ?? metadata.scope ?? embedded?.scope ?? fallback?.scope;
-  const evidence = metadata.authority_evidence_requirement
-    ?? metadata.evidence_requirement
-    ?? embedded?.evidence_requirement
-    ?? fallback?.evidence_requirement;
-  return {
-    source_trust: sourceTrust === "trusted" || sourceTrust === "known" || sourceTrust === "untrusted" || sourceTrust === "unknown"
-      ? sourceTrust
-      : "unknown",
-    scope: scope === "user" || scope === "project" || scope === "team" || scope === "org" || scope === "global" || scope === "unknown"
-      ? scope
-      : "unknown",
-    evidence_requirement: evidence === "none"
-      || evidence === "inspect_before_use"
-      || evidence === "rehydrate_before_use"
-      || evidence === "blocked"
-      ? evidence
-      : "inspect_before_use",
-  };
-}
-
-function externalMemoryLifecycleFromMetadata(
-  metadata: Record<string, unknown>,
-  fallback?: AionisExternalMemoryLifecycleHint,
-): AionisExternalMemoryLifecycleHint {
-  const value = metadata.lifecycle_hint ?? metadata.lifecycle_state ?? metadata.status ?? fallback;
-  return value === "current"
-    || value === "procedure"
-    || value === "failed"
-    || value === "stale"
-    || value === "contested"
-    || value === "suppressed"
-    || value === "archived"
-    || value === "unknown"
-    ? value
-    : "unknown";
-}
-
-function mem0ExternalMemoryId(row: AionisMem0SearchResultRow, metadata: Record<string, unknown>, index: number, prefix: string): string {
-  const explicit = coerceString(metadata.external_memory_id)
-    ?? coerceString(metadata.memory_id)
-    ?? coerceString(row.id)
-    ?? coerceString(metadata.id);
-  if (explicit) return explicit.startsWith(`${prefix}:`) || explicit.includes(":") ? explicit : `${prefix}:${explicit}`;
-  return `${prefix}:result-${index + 1}-${stableTextHash(mem0RowText(row)).slice(0, 10)}`;
-}
-
-export function mem0SearchResultsToAionisCandidates(
-  input: AionisMem0SearchResultsInput,
-  options: AionisMem0CandidateMapperOptions = {},
-): AionisExternalMemoryCandidate[] {
-  const sourceBackend = options.source_backend ?? "mem0";
-  const idPrefix = options.id_prefix ?? sourceBackend;
-  return mem0Rows(input).map((row, index) => {
-    const metadata = asRecord(row.metadata) ?? {};
-    const text = mem0RowText(row);
-    const targetFiles = [
-      ...parseStringArray(metadata.target_files),
-      ...parseStringArray(metadata.target_files_json),
-    ];
-    const evidenceRefs = [
-      ...parseStringArray(metadata.evidence_refs),
-      ...parseStringArray(metadata.evidence_refs_json),
-    ];
-    return {
-      external_memory_id: mem0ExternalMemoryId(row, metadata, index, idPrefix),
-      source_backend: sourceBackend,
-      text,
-      metadata: stripUndefined({
-        ...metadata,
-        ...(targetFiles.length > 0 ? { target_files: Array.from(new Set(targetFiles)) } : {}),
-        ...(typeof row.score === "number" ? { mem0_score: row.score } : {}),
-        ...(row.id !== undefined ? { mem0_row_id: row.id } : {}),
-      }),
-      authority: externalMemoryAuthorityFromMetadata(metadata, options.default_authority),
-      lifecycle_hint: externalMemoryLifecycleFromMetadata(metadata, options.default_lifecycle_hint),
-      evidence_refs: evidenceRefs,
-    };
-  });
 }
 
 function rehydrateHintMemoryIds(value: unknown): string[] {
@@ -1611,116 +922,6 @@ function commandPostureArray(value: unknown): AionisCommandPosture[] {
   });
 }
 
-function isRouteContractSource(value: unknown): value is AionisRouteContractSource {
-  return value === "target_files"
-    || value === "should_continue"
-    || value === "inspect_first"
-    || value === "must_not";
-}
-
-function routeContractTargetArray(value: unknown): AionisRouteContractTarget[] {
-  if (!Array.isArray(value)) return [];
-  return value.flatMap((entry) => {
-    const record = asRecord(entry);
-    if (!record || typeof record.target !== "string" || record.target.length === 0 || !isRouteContractSource(record.source)) {
-      return [];
-    }
-    const sourceMemoryId = typeof record.source_memory_id === "string" && record.source_memory_id.length > 0
-      ? record.source_memory_id
-      : undefined;
-    const reason = typeof record.reason === "string" && record.reason.length > 0 ? record.reason : undefined;
-    return [{
-      target: record.target,
-      ...(sourceMemoryId ? { source_memory_id: sourceMemoryId } : {}),
-      source: record.source,
-      ...(reason ? { reason } : {}),
-    }];
-  });
-}
-
-function routeContractActiveTargetArray(value: unknown): AionisRouteContractActiveTarget[] {
-  const records = Array.isArray(value) ? value : [];
-  return routeContractTargetArray(records).map((entry, index) => {
-    const record = asRecord(records[index]);
-    return {
-      ...entry,
-      artifact_status: record?.artifact_status === "may_be_absent" ? "may_be_absent" : "unknown",
-      missing_policy: "restore_or_create_if_task_consistent_or_rehydrate",
-    };
-  });
-}
-
-function routeContractPendingArtifactArray(value: unknown): AionisRouteContractPendingArtifact[] {
-  const records = Array.isArray(value) ? value : [];
-  return routeContractTargetArray(records).map((entry, index) => {
-    const record = asRecord(records[index]);
-    const actions = stringArray(record?.allowed_actions).filter((action): action is AionisRouteContractMissingActiveAction =>
-      action === "create" || action === "restore" || action === "rehydrate" || action === "report_conflict"
-    );
-    const preferred = stringArray(record?.preferred_action_order).filter((action): action is AionisRouteContractMissingActiveAction =>
-      action === "create" || action === "restore" || action === "rehydrate" || action === "report_conflict"
-    );
-    return {
-      ...entry,
-      status: "unknown_until_host_observation",
-      when: "if_active_target_is_missing",
-      allowed_actions: actions.length > 0 ? actions : ["create", "restore", "rehydrate", "report_conflict"],
-      preferred_action_order: preferred.length > 0 ? preferred : ["create", "restore", "rehydrate", "report_conflict"],
-      terminal_inspect_allowed: false,
-      executable_evidence_policy: "route_safe_but_patch_may_require_rehydrate",
-      after_rehydrate_policy: "continue_allowed_action_if_task_consistent",
-      report_conflict_requires: "rehydrate_unavailable_or_evidence_conflict",
-    };
-  });
-}
-
-function routeContractEvidenceSourceArray(value: unknown): AionisRouteContractEvidenceSource[] {
-  return routeContractTargetArray(value).map((entry) => ({
-    ...entry,
-    evidence_use: "reference_only",
-    direction_policy: "must_not_be_primary_route",
-  }));
-}
-
-function routeContractBlockedRouteArray(value: unknown): AionisRouteContractBlockedRoute[] {
-  return routeContractTargetArray(value).map((entry) => ({
-    ...entry,
-    direction_policy: "blocked_route",
-    evidence_use: "counter_evidence_only",
-  }));
-}
-
-function routeContractActionPolicy(value: unknown): AionisRouteContractActionPolicy {
-  const record = asRecord(value);
-  const preferred = stringArray(record?.missing_active_target_preferred_order).filter((action): action is AionisRouteContractMissingActiveAction =>
-    action === "create" || action === "restore" || action === "rehydrate" || action === "report_conflict"
-  );
-  return {
-    missing_active_target_preferred_order: preferred.length > 0 ? preferred : ["create", "restore", "rehydrate", "report_conflict"],
-    terminal_inspect_allowed: false,
-    reference_fallback_requires: "explicit_raw_evidence_or_operator_confirmation",
-    executable_evidence_policy: "route_safe_but_patch_may_require_rehydrate",
-    after_rehydrate_policy: "continue_allowed_action_if_task_consistent",
-    report_conflict_requires: "rehydrate_unavailable_or_evidence_conflict",
-  };
-}
-
-function routeContractMemoryIds(value: unknown): string[] {
-  const contract = asRecord(value);
-  if (!contract) return [];
-  const rows = [
-    ...routeContractTargetArray(contract.active_targets),
-    ...routeContractTargetArray(contract.pending_artifacts),
-    ...routeContractTargetArray(contract.reference_only_targets),
-    ...routeContractTargetArray(contract.blocked_direction_targets),
-    ...routeContractTargetArray(contract.evidence_sources),
-    ...routeContractTargetArray(contract.blocked_routes),
-  ];
-  return rows
-    .map((entry) => entry.source_memory_id)
-    .filter((entry): entry is string => typeof entry === "string" && entry.length > 0);
-}
-
 function uniqueStrings(values: string[]): string[] {
   return Array.from(new Set(values.filter((entry) => entry.length > 0)));
 }
@@ -1728,282 +929,6 @@ function uniqueStrings(values: string[]): string[] {
 function guideTraceId(value: unknown): string | null {
   const entry = asRecord(value)?.guide_trace_id;
   return typeof entry === "string" && entry.length > 0 ? entry : null;
-}
-
-function nonEmptyString(value: unknown): string | null {
-  return typeof value === "string" && value.trim().length > 0 ? value.trim() : null;
-}
-
-function guideTenantId(value: unknown): string {
-  const guideRecord = asRecord(value);
-  const agentContext = asRecord(guideRecord?.agent_context);
-  const trace = asRecord(guideRecord?.memory_decision_trace);
-  return nonEmptyString(guideRecord?.tenant_id)
-    ?? nonEmptyString(agentContext?.tenant_id)
-    ?? nonEmptyString(trace?.tenant_id)
-    ?? "default";
-}
-
-function guideScope(value: unknown): string {
-  const guideRecord = asRecord(value);
-  const agentContext = asRecord(guideRecord?.agent_context);
-  const trace = asRecord(guideRecord?.memory_decision_trace);
-  return nonEmptyString(guideRecord?.scope)
-    ?? nonEmptyString(agentContext?.scope)
-    ?? nonEmptyString(trace?.scope)
-    ?? "default";
-}
-
-function safeAgentPromptFromGuide(guide: unknown): string {
-  try {
-    return agentPromptFromGuide(guide);
-  } catch {
-    return "";
-  }
-}
-
-function receiptFromGuideTrace(guide: unknown): AionisMemoryUseReceipt | null {
-  const guideRecord = asRecord(guide);
-  const candidates = [
-    asRecord(asRecord(guideRecord?.memory_decision_trace)?.memory_use_receipt),
-    asRecord(guideRecord?.memory_use_receipt),
-    asRecord(asRecord(guideRecord?.agent_context)?.memory_use_receipt),
-  ];
-  const receipt = candidates.find((entry) => entry?.contract_version === "aionis_memory_use_receipt_v1");
-  return receipt ? receipt as unknown as AionisMemoryUseReceipt : null;
-}
-
-function admissionRecordFromGuideTrace(guide: unknown): AionisMemoryAdmissionRecord | null {
-  const guideRecord = asRecord(guide);
-  const candidates = [
-    asRecord(asRecord(guideRecord?.memory_decision_trace)?.admission_record),
-    asRecord(guideRecord?.memory_admission_record),
-    asRecord(asRecord(guideRecord?.agent_context)?.memory_admission_record),
-  ];
-  const record = candidates.find((entry) => entry?.contract_version === "aionis_memory_admission_record_v1");
-  if (!record) return null;
-  return {
-    ...(record as unknown as AionisMemoryAdmissionRecord),
-    tenant_id: nonEmptyString(record.tenant_id) ?? guideTenantId(guide),
-    scope: nonEmptyString(record.scope) ?? guideScope(guide),
-  };
-}
-
-function decisionSummariesFromSurfaces(input: {
-  useNow: string[];
-  inspect: string[];
-  doNotUse: string[];
-  rehydrate: string[];
-}): AionisMemoryDecisionSummary[] {
-  const rows: AionisMemoryDecisionSummary[] = [];
-  const seen = new Set<string>();
-  const push = (entry: AionisMemoryDecisionSummary) => {
-    if (seen.has(entry.memory_id)) return;
-    seen.add(entry.memory_id);
-    rows.push(entry);
-  };
-  for (const memoryId of input.useNow) {
-    push({
-      memory_id: memoryId,
-      agent_surface: "use_now",
-      decision_kind: "used",
-      actionable: true,
-      reason_codes: ["agent_context.use_now_memory_ids"],
-    });
-  }
-  for (const memoryId of input.inspect) {
-    push({
-      memory_id: memoryId,
-      agent_surface: "inspect_before_use",
-      decision_kind: "downgraded",
-      actionable: false,
-      reason_codes: ["agent_context.inspect_before_use_memory_ids"],
-    });
-  }
-  for (const memoryId of input.doNotUse) {
-    push({
-      memory_id: memoryId,
-      agent_surface: "do_not_use",
-      decision_kind: "blocked",
-      actionable: false,
-      reason_codes: ["agent_context.do_not_use_memory_ids"],
-    });
-  }
-  for (const memoryId of input.rehydrate) {
-    push({
-      memory_id: memoryId,
-      agent_surface: "rehydrate",
-      decision_kind: "rehydrate",
-      actionable: false,
-      reason_codes: ["agent_context.rehydrate_hints"],
-    });
-  }
-  return rows;
-}
-
-function generatedMemoryUseReceipt(guide: unknown): AionisMemoryUseReceipt {
-  const context = asRecord(agentContextFromGuide(guide));
-  const useNow = uniqueStrings(stringArray(context?.use_now_memory_ids));
-  const inspect = uniqueStrings(stringArray(context?.inspect_before_use_memory_ids));
-  const doNotUse = uniqueStrings(stringArray(context?.do_not_use_memory_ids));
-  const rehydrate = uniqueStrings(rehydrateHintMemoryIds(context?.rehydrate_hints));
-  const exposed = uniqueStrings([
-    ...stringArray(context?.memory_ids),
-    ...useNow,
-    ...inspect,
-    ...doNotUse,
-    ...rehydrate,
-    ...commandPostureArray(context?.command_posture).map((entry) => entry.memory_id),
-    ...routeContractMemoryIds(context?.route_contract),
-  ]);
-  const prompt = safeAgentPromptFromGuide(guide);
-  return {
-    contract_version: "aionis_memory_use_receipt_v1",
-    intended_use: "memory_use_audit",
-    agent_prompt_included: false,
-    runtime_mutation: false,
-    guide_trace_id: guideTraceId(guide),
-    history_used: exposed.length > 0,
-    actionable_history_used: useNow.length > 0,
-    prompt_char_count: prompt.length,
-    exposed_memory_ids: exposed,
-    use_now_memory_ids: useNow,
-    inspect_before_use_memory_ids: inspect,
-    do_not_use_memory_ids: doNotUse,
-    rehydrate_memory_ids: rehydrate,
-    attributed_memory_ids: [],
-    unattributed_recalled_memory_ids: [],
-    read_only_signal_memory_ids: uniqueStrings([...inspect, ...doNotUse, ...rehydrate]),
-    decision_summaries: decisionSummariesFromSurfaces({ useNow, inspect, doNotUse, rehydrate }),
-    risk_flags: stringArray(asRecord(context?.risk)?.reasons),
-    summary: useNow.length > 0
-      ? "Aionis exposed adjudicated actionable execution memory."
-      : exposed.length > 0
-        ? "Aionis exposed adjudicated non-actionable memory surfaces."
-        : "Aionis did not expose reusable memory for this guide.",
-  };
-}
-
-function targetList<T extends { target: string }>(rows: T[]): string[] {
-  return uniqueStrings(rows.map((entry) => entry.target));
-}
-
-function repoPresenceMap(state?: AionisExecutionRepoState): Map<string, boolean> {
-  const out = new Map<string, boolean>();
-  for (const target of state?.existing_files ?? []) out.set(target, true);
-  for (const target of state?.missing_files ?? []) out.set(target, false);
-  for (const entry of state?.files ?? []) out.set(entry.target, entry.exists);
-  return out;
-}
-
-function truncateText(text: string, maxChars: number): string {
-  if (maxChars <= 0) return "";
-  if (text.length <= maxChars) return text;
-  const marker = "\n...[truncated by Aionis SDK context budget]...";
-  if (maxChars <= marker.length) return marker.slice(0, maxChars);
-  return `${text.slice(0, maxChars - marker.length).trimEnd()}${marker}`;
-}
-
-function defaultExecutionPromptBudget(profile: AionisExecutionContextBudgetProfile): number {
-  switch (profile) {
-    case "compact": return 6_000;
-    case "high_recall": return 24_000;
-    case "balanced": return 12_000;
-  }
-}
-
-function executionEvidenceBudget(profile: AionisExecutionContextBudgetProfile): { items: number; chars: number } {
-  switch (profile) {
-    case "compact": return { items: 2, chars: 160 };
-    case "high_recall": return { items: 8, chars: 260 };
-    case "balanced": return { items: 4, chars: 220 };
-  }
-}
-
-type CommandPostureEvidenceField = "workflow_steps" | "acceptance_checks" | "verification_summary" | "artifact_hints";
-
-function commandPostureEvidenceValues(
-  entry: AionisCommandPosture,
-  field: CommandPostureEvidenceField,
-): string[] {
-  switch (field) {
-    case "workflow_steps": return entry.workflow_steps ?? [];
-    case "acceptance_checks": return entry.acceptance_checks ?? [];
-    case "verification_summary": return entry.verification_summary ?? [];
-    case "artifact_hints": return entry.artifact_hints ?? [];
-  }
-}
-
-function commandPostureEvidenceBullets(args: {
-  commandPosture: AionisCommandPosture[];
-  field: CommandPostureEvidenceField;
-  postures: Set<AionisCommandPostureKind>;
-  limit: number;
-  maxChars: number;
-}): string[] {
-  const lines: string[] = [];
-  const seen = new Set<string>();
-  for (const entry of args.commandPosture) {
-    if (!args.postures.has(entry.posture)) continue;
-    for (const value of commandPostureEvidenceValues(entry, args.field)) {
-      const text = value.replace(/\s+/g, " ").trim();
-      if (!text || seen.has(text)) continue;
-      seen.add(text);
-      lines.push(`- ${truncateText(text, args.maxChars)}`);
-      if (lines.length >= args.limit) return lines;
-    }
-  }
-  return lines;
-}
-
-function agentContextTextBullets(args: {
-  guide: unknown;
-  field: "use_now" | "inspect_before_use" | "do_not_use";
-  limit: number;
-  maxChars: number;
-}): string[] {
-  if (args.limit <= 0 || args.maxChars <= 0) return [];
-  const context = asRecord(agentContextFromGuide(args.guide));
-  const values = stringArray(context?.[args.field]);
-  const lines: string[] = [];
-  const seen = new Set<string>();
-  for (const value of values) {
-    const text = value.replace(/\s+/g, " ").trim();
-    if (/^Recovered state:\s+no prior execution history changed this packet\.?$/i.test(text)) continue;
-    if (!text || seen.has(text)) continue;
-    seen.add(text);
-    lines.push(`- ${truncateText(text, args.maxChars)}`);
-    if (lines.length >= args.limit) return lines;
-  }
-  return lines;
-}
-
-function optionalPromptSection(title: string, lines: string[]): string[] {
-  return lines.length > 0 ? ["", title, ...lines] : [];
-}
-
-function taskLines(task: string | AionisExecutionContextTask | undefined): string[] {
-  if (!task) return [];
-  if (typeof task === "string") return [`- ${task}`];
-  return [
-    task.task_signature ? `- task_signature: ${task.task_signature}` : "",
-    task.run_id ? `- run_id: ${task.run_id}` : "",
-    task.query_text ? `- query: ${task.query_text}` : "",
-    task.goal ? `- goal: ${task.goal}` : "",
-  ].filter((entry) => entry.length > 0);
-}
-
-function bulletLines(values: string[], empty: string): string[] {
-  return values.length > 0 ? values.map((entry) => `- ${entry}`) : [`- ${empty}`];
-}
-
-function postureLines(rows: AionisCommandPosture[], posture: AionisCommandPostureKind, empty: string): string[] {
-  const filtered = rows.filter((entry) => entry.posture === posture);
-  if (filtered.length === 0) return [`- ${empty}`];
-  return filtered.map((entry) => {
-    const targets = entry.target_files.length > 0 ? ` targets=${entry.target_files.join(", ")}` : "";
-    return `- ${entry.memory_id}: ${entry.instruction} (${entry.reason})${targets}`;
-  });
 }
 
 function rehydrateRequestsFromGuide(guide: unknown): AionisRehydrateHint[] {
@@ -2099,163 +1024,6 @@ function rememberBody(body: AionisRememberRequest): AionisJsonObject {
   });
 }
 
-function requiredString(value: string | undefined, message: string): string {
-  const trimmed = value?.trim();
-  if (!trimmed) throw new Error(message);
-  return trimmed;
-}
-
-function executionMemoryLane(input: { memory_lane?: AionisMemoryLane; team_id?: string }): AionisMemoryLane {
-  if (input.memory_lane) return input.memory_lane;
-  return input.team_id?.trim() ? "shared" : "private";
-}
-
-function executionResultSummary(input: AionisExecutionStepInput): AionisJsonObject | undefined {
-  if (!input.outcome || input.outcome === "unknown") return undefined;
-  return stripUndefined({
-    status: input.outcome === "succeeded" ? "passed" : input.outcome,
-    summary: input.summary,
-    evidence_refs: input.evidence_ref ? [input.evidence_ref] : undefined,
-  });
-}
-
-function executionFeedbackOutcome(input: AionisExecutionOutcomeInput): AionisFeedbackOutcome {
-  if (input.feedback_outcome) return input.feedback_outcome;
-  if (input.outcome === "succeeded") return "positive";
-  if (input.outcome === "failed" || input.outcome === "blocked" || input.outcome === "interrupted") return "negative";
-  return "neutral";
-}
-
-function executionVerifierStatus(input: AionisExecutionOutcomeInput): AionisFeedbackStatus {
-  if (input.verifier_status) return input.verifier_status;
-  if (input.outcome === "succeeded") return "passed";
-  if (input.outcome === "failed" || input.outcome === "blocked" || input.outcome === "interrupted") return "failed";
-  return "unknown";
-}
-
-function executionToolStatus(input: AionisExecutionOutcomeInput): AionisToolStatus {
-  if (input.tool_status) return input.tool_status;
-  if (input.outcome === "succeeded") return "succeeded";
-  if (input.outcome === "failed" || input.outcome === "blocked" || input.outcome === "interrupted") return "failed";
-  return "unknown";
-}
-
-function executionAgentId(input: AionisExecutionAgentRef): string {
-  return requiredString(input.agent_id, "Aionis execution helper requires agent_id.");
-}
-
-function executionRole(input: AionisExecutionAgentRef): AionisExecutionAgentRole {
-  return input.role ?? "agent";
-}
-
-function executionScopeOptions(input: { tenant_id?: string; scope?: string }): AionisRequestOptions {
-  return stripUndefined({
-    tenant_id: input.tenant_id,
-    scope: input.scope,
-  }) as AionisRequestOptions;
-}
-
-function executionObserveBase(input: AionisExecutionBaseInput): AionisJsonObject {
-  const memoryLane = executionMemoryLane(input);
-  if (memoryLane === "shared" && !input.team_id?.trim()) {
-    throw new Error("Aionis shared execution memory requires team_id. Use memory_lane: \"private\" for single-agent memory.");
-  }
-  const agentId = executionAgentId(input);
-  return stripUndefined({
-    operation_id: input.operation_id,
-    auto_embed: input.auto_embed ?? true,
-    memory_lane: memoryLane,
-    producer_agent_id: agentId,
-    owner_agent_id: memoryLane === "private" ? agentId : undefined,
-    owner_team_id: input.team_id,
-  });
-}
-
-function executionPayload(input: AionisExecutionStepInput): AionisJsonObject {
-  const result = executionResultSummary(input);
-  return stripUndefined({
-    run_id: input.run_id,
-    task_id: input.task_id,
-    task_family: input.task_family,
-    task_signature: input.task_signature,
-    workflow_signature: input.workflow_signature,
-    title: input.title,
-    summary: input.summary,
-    outcome: input.outcome ?? "unknown",
-    target_files: input.target_files,
-    workflow_steps: input.workflow_steps,
-    tool_set: input.tool_set,
-    acceptance_checks: input.acceptance_checks,
-    continuation_hint: input.continuation_hint,
-    resume_hint: input.resume_hint,
-    reuse_hint: input.reuse_hint,
-    salience: input.salience,
-    importance: input.importance,
-    confidence: input.confidence,
-    raw_ref: input.raw_ref,
-    evidence_ref: input.evidence_ref,
-    evidence: input.evidence,
-    artifacts: input.artifacts,
-    verification: input.verification,
-    slots: stripUndefined({
-      task_signature: input.task_signature,
-      ...(result ? { execution_result_summary: result } : {}),
-      ...(input.slots ?? {}),
-    }),
-    ...(input.execution ?? {}),
-  });
-}
-
-function executionHandoffPayload(input: AionisExecutionHandoffInput): AionisJsonObject {
-  const agentId = executionAgentId(input);
-  const memoryLane = executionMemoryLane(input);
-  const anchor = input.anchor ?? `${input.task_signature}:${input.run_id}:${agentId}`;
-  const handoffKind = input.handoff_kind ?? "task_handoff";
-  return stripUndefined({
-    memory_lane: memoryLane,
-    actor: agentId,
-    producer_agent_id: agentId,
-    owner_agent_id: memoryLane === "private" ? agentId : undefined,
-    owner_team_id: input.team_id,
-    anchor,
-    handoff_kind: handoffKind,
-    file_path: input.file_path,
-    repo_root: input.repo_root,
-    symbol: input.symbol,
-    task_family: input.task_family,
-    task_signature: input.task_signature,
-    workflow_signature: input.workflow_signature,
-    title: input.title,
-    summary: input.summary,
-    handoff_text: input.handoff_text ?? input.continuation_hint ?? input.summary,
-    salience: input.salience,
-    importance: input.importance,
-    confidence: input.confidence,
-    risk: input.risk,
-    acceptance_checks: input.acceptance_checks,
-    tags: input.tags,
-    target_files: input.target_files,
-    next_action: input.next_action ?? input.continuation_hint,
-    must_change: input.must_change,
-    must_remove: input.must_remove,
-    must_keep: input.must_keep,
-    execution_result_summary: executionResultSummary(input),
-    execution_artifacts: input.artifacts,
-    execution_evidence: input.evidence,
-    execution_state_v1: input.execution_state_v1,
-    execution_packet_v1: input.execution_packet_v1,
-    control_profile_v1: input.control_profile_v1,
-    execution_transitions_v1: input.execution_transitions_v1,
-    execution_tree_disabled: input.execution_tree_disabled,
-    execution_tree_default_disabled: input.execution_tree_default_disabled,
-    execution_tree_v1: input.execution_tree_v1,
-    execution_tree_operations_v1: input.execution_tree_operations_v1,
-    trajectory: input.trajectory,
-    trajectory_hints: input.trajectory_hints,
-    ...(input.handoff ?? {}),
-  });
-}
-
 async function readResponseBody(response: Response): Promise<unknown> {
   const text = await response.text();
   if (!text) return null;
@@ -2264,6 +1032,37 @@ async function readResponseBody(response: Response): Promise<unknown> {
   } catch {
     return text;
   }
+}
+
+const AIONIS_REPLAY_SAFE_POST_PATHS = new Set([
+  "/v1/observe",
+  "/v1/guide",
+  "/v1/feedback",
+]);
+
+const AIONIS_RETRYABLE_TRANSPORT_CODES = new Set([
+  "ECONNRESET",
+  "EPIPE",
+  "UND_ERR_SOCKET",
+]);
+
+function isRetryableAionisTransportError(error: unknown): boolean {
+  let current: unknown = error;
+  for (let depth = 0; depth < 4 && current !== null; depth += 1) {
+    if (typeof current !== "object") return false;
+    const candidate = current as {
+      code?: unknown;
+      cause?: unknown;
+    };
+    if (
+      typeof candidate.code === "string"
+      && AIONIS_RETRYABLE_TRANSPORT_CODES.has(candidate.code)
+    ) {
+      return true;
+    }
+    current = candidate.cause;
+  }
+  return false;
 }
 
 const AIONIS_MEMORY_ID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
@@ -2294,15 +1093,16 @@ function resolveEvidenceIds(guide: unknown, options: AionisGuideAgentContextOpti
   memory_id: string;
   surface: AionisResolvedAgentEvidenceSurface;
 }> {
-  const receipt = memoryUseReceiptFromGuide(guide);
+  const context = asRecord(agentContextFromGuide(guide));
   const rows: Array<{ memory_id: string; surface: AionisResolvedAgentEvidenceSurface }> = [];
-  if (options.include_inspect_before_use !== false) {
-    for (const memoryId of receipt.inspect_before_use_memory_ids) {
+  const includeInspectBeforeUse = options.include_inspect_before_use ?? false;
+  if (includeInspectBeforeUse) {
+    for (const memoryId of stringArray(context?.inspect_before_use_memory_ids)) {
       rows.push({ memory_id: memoryId, surface: "inspect_before_use" });
     }
   }
   if (options.include_rehydrate !== false) {
-    for (const memoryId of receipt.rehydrate_memory_ids) {
+    for (const memoryId of rehydrateHintMemoryIds(context?.rehydrate_hints)) {
       rows.push({ memory_id: memoryId, surface: "rehydrate" });
     }
   }
@@ -2334,103 +1134,1514 @@ function nodeEvidenceText(response: unknown): {
   return { text: "", source: "unresolved" };
 }
 
-function renderResolvedEvidenceBlock(
-  evidence: AionisResolvedAgentEvidence[],
-  maxChars: number,
-): { text: string; evidence_char_count: number } {
-  const resolved = evidence.filter((entry) => entry.resolved && entry.evidence_text.trim().length > 0);
-  if (resolved.length === 0) return { text: "", evidence_char_count: 0 };
-  const sections = [
-    "AIONIS_RESOLVED_EVIDENCE v1",
-    "Resolved evidence below was explicitly surfaced by Aionis as inspect_before_use or rehydrate. Use it as evidence, not as a bypass around the admission decision.",
-    "",
-    ...resolved.flatMap((entry, index) => [
-      `[${index + 1}] memory_id=${entry.memory_id} surface=${entry.surface} source=${entry.source}${entry.uri ? ` uri=${entry.uri}` : ""}`,
-      truncateText(entry.evidence_text, Math.max(400, Math.floor(maxChars / Math.max(1, resolved.length)))),
-      "",
-    ]),
-  ];
-  const text = truncateText(sections.join("\n").trim(), maxChars);
-  return { text, evidence_char_count: text.length };
+// <aionis-runtime-owned:execution-episode-client>
+
+function agentSessionVerifierStatus(
+  verifier: unknown,
+): AionisAgentSessionVerifierStatus {
+  const outcome = asRecord(asRecord(verifier)?.outcome);
+  const status = coerceString(outcome?.status);
+  if (
+    status === "passed"
+    || status === "failed"
+    || status === "infrastructure_error"
+    || status === "inconclusive"
+  ) {
+    return status;
+  }
+  return "unknown";
 }
 
-function mergeCompiledContextWithEvidence(args: {
-  guide: unknown;
-  resolvedEvidence: AionisResolvedAgentEvidence[];
-  options: AionisGuideAgentContextOptions;
-}): {
-  compiled_context: AionisCompiledExecutionAgentContext;
-  agent_prompt: string;
-  evidence_char_count: number;
-} {
-  const maxPromptChars = args.options.max_prompt_chars ?? 50_000;
-  const evidenceBudget = args.options.evidence_char_budget ?? Math.min(20_000, Math.max(4_000, Math.floor(maxPromptChars * 0.4)));
-  const { text: evidenceBlock, evidence_char_count: evidenceCharCount } = renderResolvedEvidenceBlock(
-    args.resolvedEvidence,
-    evidenceBudget,
-  );
-  const promptFormat = args.options.prompt_format ?? "contract";
-  const includeEvidence = promptFormat === "runtime_compact"
-    ? args.options.include_resolved_evidence_in_prompt === true
-    : args.options.include_resolved_evidence_in_prompt ?? true;
-  const compiledMaxPromptChars = includeEvidence && evidenceBlock
-    ? Math.max(4_000, maxPromptChars - evidenceBlock.length - 2)
-    : maxPromptChars;
-  if (promptFormat === "runtime_compact") {
-    const compiled = compileExecutionAgentContext({
-      guide: args.guide,
-      task: args.options.task,
-      repo_state: args.options.repo_state,
-      budget_profile: args.options.budget_profile ?? "compact",
-      max_prompt_chars: compiledMaxPromptChars,
-      prompt_format: "runtime_compact",
-      additional_instructions: args.options.additional_instructions,
-    });
-    const agentPrompt = includeEvidence && evidenceBlock
-      ? truncateText(`${compiled.agent_prompt}\n\n${evidenceBlock}`, maxPromptChars)
-      : compiled.agent_prompt;
-    return {
-      compiled_context: {
-        ...compiled,
-        agent_prompt: agentPrompt,
-        prompt_char_count: agentPrompt.length,
-      },
-      agent_prompt: agentPrompt,
-      evidence_char_count: evidenceCharCount,
-    };
+function verifierContinuationReason(
+  status: Exclude<AionisAgentSessionVerifierStatus, "passed">,
+):
+  | "verifier_failed"
+  | "verifier_infrastructure_error"
+  | "verifier_inconclusive"
+  | "verifier_outcome_unavailable" {
+  if (status === "failed") return "verifier_failed";
+  if (status === "infrastructure_error") {
+    return "verifier_infrastructure_error";
   }
-  const compiled = compileExecutionAgentContext({
-    guide: args.guide,
-    task: args.options.task,
-    repo_state: args.options.repo_state,
-    budget_profile: args.options.budget_profile ?? "balanced",
-    max_prompt_chars: compiledMaxPromptChars,
-    prompt_format: "contract",
-    additional_instructions: args.options.additional_instructions,
-  });
-  const agentPrompt = includeEvidence && evidenceBlock
-    ? truncateText(`${compiled.agent_prompt}\n\n${evidenceBlock}`, maxPromptChars)
-    : compiled.agent_prompt;
+  if (status === "inconclusive") return "verifier_inconclusive";
+  return "verifier_outcome_unavailable";
+}
+
+type AgentSessionRecoveryTarget = Readonly<{
+  failed_snapshot_id: string;
+  failed_verifier_receipt_id: string;
+  target_snapshot_id: string;
+  target_verifier_receipt_id: string;
+}>;
+
+function agentSessionRecoveryTarget(
+  verifier: unknown,
+  currentStateSnapshotId: string,
+  verifierReceiptId: string | undefined,
+): AgentSessionRecoveryTarget | null {
+  if (verifierReceiptId === undefined) return null;
+  const verifierRecord = asRecord(verifier);
+  const currentState = asRecord(
+    verifierRecord?.current_execution_state,
+  );
+  const continuity = asRecord(currentState?.continuity_projection);
+  const branch = asRecord(continuity?.branch_state);
+  const recommendation = asRecord(branch?.recovery_recommendation);
+  const failed = asRecord(
+    recommendation?.current_failed_candidate,
+  );
+  const target = asRecord(
+    recommendation?.target_accepted_candidate,
+  );
+  const failedSnapshotId = coerceString(failed?.snapshot_id);
+  const failedReceiptId = coerceString(failed?.verifier_receipt_id);
+  const failedVerifierId = coerceString(failed?.verifier_id);
+  const targetSnapshotId = coerceString(target?.snapshot_id);
+  const targetReceiptId = coerceString(target?.verifier_receipt_id);
+  const targetVerifierId = coerceString(target?.verifier_id);
+  if (
+    recommendation?.recommended_action !== "restore_snapshot"
+    || recommendation?.reason_code
+      !== "current_verifier_failed_prior_snapshot_passed"
+    || failed?.verification_status !== "failed"
+    || failedSnapshotId !== currentStateSnapshotId
+    || failedReceiptId !== verifierReceiptId
+    || failedVerifierId === null
+    || targetVerifierId !== failedVerifierId
+    || targetSnapshotId === null
+    || targetReceiptId === null
+    || targetSnapshotId === failedSnapshotId
+  ) {
+    return null;
+  }
   return {
-    compiled_context: {
-      ...compiled,
-      agent_prompt: agentPrompt,
-      prompt_char_count: agentPrompt.length,
-    },
-    agent_prompt: agentPrompt,
-    evidence_char_count: evidenceCharCount,
+    failed_snapshot_id: failedSnapshotId,
+    failed_verifier_receipt_id: failedReceiptId,
+    target_snapshot_id: targetSnapshotId,
+    target_verifier_receipt_id: targetReceiptId,
   };
 }
 
+function agentSessionRecoveryOperationId(args: {
+  episode_id: string;
+  verifier_operation_id: string;
+  failed_snapshot_id: string;
+  target_snapshot_id: string;
+}): string {
+  const digest = createHash("sha256")
+    .update([
+      "aionis-agent-session-finish-recovery-v1",
+      args.episode_id,
+      args.verifier_operation_id,
+      args.failed_snapshot_id,
+      args.target_snapshot_id,
+    ].join("\u0000"))
+    .digest("hex");
+  return `finish-recovery-${digest.slice(0, 48)}`;
+}
+
+function executionEpisodeBytes(
+  value: string | Uint8Array | AionisJsonObject,
+  label: string,
+): Buffer {
+  if (typeof value === "string") return Buffer.from(value, "utf8");
+  if (value instanceof Uint8Array) return Buffer.from(value);
+  try {
+    return Buffer.from(JSON.stringify(value), "utf8");
+  } catch {
+    throw new Error(`${label} must be serializable as exact bytes`);
+  }
+}
+
+function exactExecutionContractString(
+  value: unknown,
+  maxBytes: number,
+): string | null {
+  return (
+    typeof value === "string"
+    && value.length > 0
+    && value === value.trim()
+    && !value.includes("\u0000")
+    && !value.includes("\r")
+    && !value.includes("\n")
+    && Buffer.byteLength(value, "utf8") <= maxBytes
+  )
+    ? value
+    : null;
+}
+
+function exactExecutionContractKeys(
+  value: unknown,
+  expectedKeys: readonly string[],
+): boolean {
+  const record = asRecord(value);
+  if (record === null) return false;
+  const actual = Object.keys(record).sort();
+  const expected = [...expectedKeys].sort();
+  return actual.length === expected.length
+    && actual.every((key, index) => key === expected[index]);
+}
+
+function executionSubjectFromResponse(
+  value: unknown,
+): AionisExecutionSubjectV1 {
+  const subject = asRecord(value);
+  const subjectId = exactExecutionContractString(subject?.subject_id, 256);
+  const kind = exactExecutionContractString(subject?.kind, 120);
+  const adapterId = exactExecutionContractString(subject?.adapter_id, 120);
+  const adapterVersion = exactExecutionContractString(
+    subject?.adapter_version,
+    120,
+  );
+  const identitySha256 = exactExecutionContractString(
+    subject?.identity_sha256,
+    64,
+  );
+  const capabilityDescriptorRef = exactExecutionContractString(
+    subject?.capability_descriptor_ref,
+    2_048,
+  );
+  const capabilityDescriptorSha256 = exactExecutionContractString(
+    subject?.capability_descriptor_sha256,
+    64,
+  );
+  if (
+    subject?.contract_version !== "execution_subject_v1"
+    || !exactExecutionContractKeys(subject, [
+      "contract_version",
+      "subject_id",
+      "kind",
+      "adapter_id",
+      "adapter_version",
+      "identity_sha256",
+      "capability_descriptor_ref",
+      "capability_descriptor_sha256",
+    ])
+    || !subjectId
+    || !kind
+    || !adapterId
+    || !adapterVersion
+    || !identitySha256
+    || !capabilityDescriptorRef
+    || !capabilityDescriptorSha256
+    || !/^[0-9a-f]{64}$/.test(identitySha256)
+    || !/^[0-9a-f]{64}$/.test(capabilityDescriptorSha256)
+    || subjectId !== `esub_${identitySha256}`
+    || capabilityDescriptorRef
+      !== `urn:aionis:subject-capability:sha256:${capabilityDescriptorSha256}`
+  ) {
+    throw new Error("Runtime returned an invalid execution subject");
+  }
+  return {
+    contract_version: "execution_subject_v1",
+    subject_id: subjectId,
+    kind,
+    adapter_id: adapterId,
+    adapter_version: adapterVersion,
+    identity_sha256: identitySha256,
+    capability_descriptor_ref: capabilityDescriptorRef,
+    capability_descriptor_sha256: capabilityDescriptorSha256,
+  };
+}
+
+function executionSubjectsEqual(
+  left: AionisExecutionSubjectV1,
+  right: AionisExecutionSubjectV1,
+): boolean {
+  return left.contract_version === right.contract_version
+    && left.subject_id === right.subject_id
+    && left.kind === right.kind
+    && left.adapter_id === right.adapter_id
+    && left.adapter_version === right.adapter_version
+    && left.identity_sha256 === right.identity_sha256
+    && left.capability_descriptor_ref === right.capability_descriptor_ref
+    && left.capability_descriptor_sha256
+      === right.capability_descriptor_sha256;
+}
+
+function stateSnapshotV2FromResponse(
+  value: unknown,
+): AionisStateSnapshotV2 {
+  const snapshot = asRecord(value);
+  const snapshotId = exactExecutionContractString(
+    snapshot?.snapshot_id,
+    256,
+  );
+  const subject = executionSubjectFromResponse(snapshot?.subject);
+  const capturedAt = exactExecutionContractString(
+    snapshot?.captured_at,
+    128,
+  );
+  const algorithmId = exactExecutionContractString(
+    snapshot?.algorithm_id,
+    120,
+  );
+  const algorithmVersion = exactExecutionContractString(
+    snapshot?.algorithm_version,
+    120,
+  );
+  const environmentSha256 = exactExecutionContractString(
+    snapshot?.environment_sha256,
+    64,
+  );
+  const contentRef = exactExecutionContractString(
+    snapshot?.content_ref,
+    2_048,
+  );
+  const contentSha256 = exactExecutionContractString(
+    snapshot?.content_sha256,
+    64,
+  );
+  const contentMediaType = exactExecutionContractString(
+    snapshot?.content_media_type,
+    2_048,
+  );
+  const contentEncoding = exactExecutionContractString(
+    snapshot?.content_encoding,
+    120,
+  );
+  const captureAuthority = snapshot?.capture_authority;
+  const attestationRef = snapshot?.attestation_ref === null
+    ? null
+    : exactExecutionContractString(snapshot?.attestation_ref, 2_048);
+  const parsedCapturedAt = capturedAt === null
+    ? null
+    : new Date(capturedAt);
+  if (
+    snapshot?.contract_version !== "state_snapshot_v2"
+    || !exactExecutionContractKeys(snapshot, [
+      "contract_version",
+      "snapshot_id",
+      "subject",
+      "captured_at",
+      "algorithm_id",
+      "algorithm_version",
+      "environment_sha256",
+      "content_ref",
+      "content_sha256",
+      "content_media_type",
+      "content_encoding",
+      "capture_authority",
+      "attestation_ref",
+    ])
+    || !snapshotId
+    || !capturedAt
+    || parsedCapturedAt === null
+    || !Number.isFinite(parsedCapturedAt.getTime())
+    || parsedCapturedAt.toISOString() !== capturedAt
+    || !algorithmId
+    || !algorithmVersion
+    || !environmentSha256
+    || !/^[0-9a-f]{64}$/.test(environmentSha256)
+    || !contentRef
+    || !contentSha256
+    || !/^[0-9a-f]{64}$/.test(contentSha256)
+    || contentRef !== `urn:aionis:state:sha256:${contentSha256}`
+    || !contentMediaType
+    || !contentEncoding
+    || (
+      captureAuthority !== "runtime_adapter"
+      && captureAuthority !== "signed_host_adapter"
+    )
+    || (
+      captureAuthority === "runtime_adapter"
+        ? attestationRef !== null
+        : attestationRef === null
+    )
+  ) {
+    throw new Error("Runtime returned an invalid V2 state snapshot");
+  }
+  return {
+    contract_version: "state_snapshot_v2",
+    snapshot_id: snapshotId,
+    subject,
+    captured_at: capturedAt,
+    algorithm_id: algorithmId,
+    algorithm_version: algorithmVersion,
+    environment_sha256: environmentSha256,
+    content_ref: contentRef,
+    content_sha256: contentSha256,
+    content_media_type: contentMediaType,
+    content_encoding: contentEncoding,
+    capture_authority: captureAuthority,
+    attestation_ref: attestationRef,
+  };
+}
+
+function executionEpisodeHandleFromResponse(
+  response: unknown,
+  workspaceRoot: string,
+): AionisExecutionEpisodeHandleV2 {
+  const root = asRecord(response);
+  const episode = asRecord(root?.episode);
+  const subject = asRecord(episode?.subject_identity);
+  const executionSubject = executionSubjectFromResponse(
+    episode?.execution_subject,
+  );
+  const requiredVerifier = asRecord(episode?.required_verifier);
+  const current = asRecord(root?.current_state_snapshot);
+  const currentState = stateSnapshotV2FromResponse(
+    root?.current_state_snapshot_v2,
+  );
+  const episodeId = coerceString(episode?.episode_id);
+  const tenantId = coerceString(episode?.tenant_id);
+  const scope = coerceString(episode?.public_scope);
+  const taskId = coerceString(episode?.task_id);
+  const taskEnvelopeDigest = coerceString(episode?.task_envelope_digest);
+  const runId = coerceString(episode?.run_id);
+  const workspaceRootSha256 = coerceString(subject?.canonical_root_sha256);
+  const currentStateSnapshotId = coerceString(current?.snapshot_id);
+  const verifierId = coerceString(requiredVerifier?.verifier_id);
+  const verifierDefinitionSha256 = coerceString(
+    requiredVerifier?.verifier_definition_sha256,
+  );
+  if (
+    taskEnvelopeDigest !== null
+    && !/^[0-9a-f]{64}$/.test(taskEnvelopeDigest)
+  ) {
+    throw new Error(
+      "Runtime returned an invalid execution episode task envelope digest",
+    );
+  }
+  if (
+    !episodeId
+    || !tenantId
+    || !scope
+    || !taskId
+    || !taskEnvelopeDigest
+    || !runId
+    || !workspaceRootSha256
+    || !currentStateSnapshotId
+    || !verifierId
+    || !verifierDefinitionSha256
+    || currentState.snapshot_id !== currentStateSnapshotId
+    || !executionSubjectsEqual(currentState.subject, executionSubject)
+  ) {
+    throw new Error(
+      "Runtime returned an incomplete execution episode identity",
+    );
+  }
+  return {
+    contract_version: "aionis_execution_episode_handle_v2",
+    episode_id: episodeId,
+    tenant_id: tenantId,
+    scope,
+    task_id: taskId,
+    task_envelope_digest: taskEnvelopeDigest,
+    run_id: runId,
+    workspace_root: workspaceRoot,
+    workspace_root_sha256: workspaceRootSha256,
+    subject: executionSubject,
+    current_state_snapshot_id: currentStateSnapshotId,
+    current_state: currentState,
+    required_verifier: {
+      contract_version: "execution_episode_required_verifier_v1",
+      verifier_id: verifierId,
+      verifier_definition_sha256: verifierDefinitionSha256,
+    },
+    closed: root?.closed === true,
+  };
+}
+
+function updateExecutionEpisodeHandle(
+  handle: AionisExecutionEpisodeHandleV2,
+  response: unknown,
+  closed = handle.closed,
+): AionisExecutionEpisodeHandleV2 {
+  const responseRecord = asRecord(response);
+  const current = asRecord(responseRecord?.current_state_snapshot);
+  const currentStateSnapshotId =
+    coerceString(current?.snapshot_id) ?? handle.current_state_snapshot_id;
+  const currentState = responseRecord?.current_state_snapshot_v2 === undefined
+    ? null
+    : stateSnapshotV2FromResponse(
+        responseRecord.current_state_snapshot_v2,
+      );
+  if (
+    currentState !== null
+    && (
+      currentState.snapshot_id !== currentStateSnapshotId
+      || !executionSubjectsEqual(currentState.subject, handle.subject)
+    )
+  ) {
+    throw new Error(
+      "Runtime V2 state snapshot does not match its execution episode handle",
+    );
+  }
+  if (
+    currentState === null
+    && currentStateSnapshotId !== handle.current_state_snapshot_id
+  ) {
+    throw new Error(
+      "Runtime changed execution state without returning its V2 snapshot",
+    );
+  }
+  return {
+    ...handle,
+    current_state_snapshot_id: currentStateSnapshotId,
+    current_state: currentState ?? handle.current_state,
+    closed,
+  };
+}
+
+function agentSessionHandleFromResponse(
+  response: unknown,
+  workspaceRoot: string,
+  episodeFallback?: AionisExecutionEpisodeHandleV2,
+): AionisAgentSessionHandleV1 {
+  const root = asRecord(response);
+  const operation = asRecord(root?.session);
+  const lease = asRecord(operation?.lease);
+  const binding = asRecord(lease?.binding);
+  const sessionKey = coerceString(binding?.session_key);
+  const continuationId = coerceString(binding?.continuation_id);
+  const holderId = coerceString(lease?.holder_id);
+  const leaseId = coerceString(lease?.lease_id);
+  const leaseRevision =
+    typeof lease?.lease_revision === "number"
+    && Number.isSafeInteger(lease.lease_revision)
+    && lease.lease_revision > 0
+      ? lease.lease_revision
+      : null;
+  const leaseStatus = lease?.status;
+  const leaseExpiresAt =
+    lease?.expires_at === null
+      ? null
+      : coerceString(lease?.expires_at);
+  if (
+    !sessionKey
+    || !continuationId
+    || !holderId
+    || !leaseId
+    || leaseRevision === null
+    || (
+      leaseStatus !== "active"
+      && leaseStatus !== "released"
+      && leaseStatus !== "expired"
+    )
+    || (leaseStatus === "active" && !leaseExpiresAt)
+  ) {
+    throw new Error(
+      "Runtime returned an incomplete execution-session lease",
+    );
+  }
+  const episode = asRecord(root?.episode)
+    ? executionEpisodeHandleFromResponse(response, workspaceRoot)
+    : episodeFallback
+      ? updateExecutionEpisodeHandle(
+          episodeFallback,
+          response,
+          episodeFallback.closed,
+        )
+      : null;
+  if (
+    !episode
+    || coerceString(binding?.episode_id) !== episode.episode_id
+    || coerceString(binding?.public_scope) !== episode.scope
+    || coerceString(binding?.tenant_id) !== episode.tenant_id
+  ) {
+    throw new Error(
+      "Runtime execution-session binding does not match its episode",
+    );
+  }
+  return {
+    contract_version: "aionis_agent_session_handle_v1",
+    session_key: sessionKey,
+    continuation_id: continuationId,
+    holder_id: holderId,
+    lease_id: leaseId,
+    lease_revision: leaseRevision,
+    lease_status: leaseStatus,
+    lease_expires_at: leaseExpiresAt,
+    episode,
+  };
+}
+
+function canonicalAgentSessionHandle(
+  value: AionisAgentSessionHandleV1,
+): AionisAgentSessionHandleV1 {
+  const exactString = (candidate: unknown): candidate is string =>
+    typeof candidate === "string"
+    && candidate.length > 0
+    && candidate === candidate.trim()
+    && !candidate.includes("\u0000");
+  if (
+    value === null
+    || typeof value !== "object"
+    || value.contract_version !== "aionis_agent_session_handle_v1"
+    || !exactString(value.session_key)
+    || !exactString(value.continuation_id)
+    || !exactString(value.holder_id)
+    || !exactString(value.lease_id)
+    || !Number.isSafeInteger(value.lease_revision)
+    || value.lease_revision < 1
+    || (
+      value.lease_status !== "active"
+      && value.lease_status !== "released"
+      && value.lease_status !== "expired"
+    )
+    || (
+      value.lease_status === "active"
+      && !exactString(value.lease_expires_at)
+    )
+    || (
+      value.lease_status === "released"
+      && value.lease_expires_at !== null
+    )
+  ) {
+    throw new Error("Invalid serialized Aionis Agent session handle");
+  }
+  return {
+    ...value,
+    episode: canonicalExecutionEpisodeHandle(value.episode),
+  };
+}
+
+function sessionLeaseContext(
+  handle: AionisAgentSessionHandleV1,
+  leaseOperationId: string,
+  leaseTtlMs?: number,
+): AionisExecutionSessionLeaseContextV1 {
+  if (handle.lease_status !== "active" || handle.episode.closed) {
+    throw new Error("Cannot use a closed Aionis Agent session");
+  }
+  return stripUndefined({
+    contract_version: "execution_session_lease_context_v1" as const,
+    session_key: handle.session_key,
+    continuation_id: handle.continuation_id,
+    holder_id: handle.holder_id,
+    lease_id: handle.lease_id,
+    lease_revision: handle.lease_revision,
+    lease_operation_id: leaseOperationId,
+    lease_ttl_ms: leaseTtlMs,
+  }) as AionisExecutionSessionLeaseContextV1;
+}
+
+function agentSessionSuboperationId(
+  operationId: string,
+  kind: string,
+): string {
+  return `ass_${createHash("sha256").update(
+    JSON.stringify({
+      contract_version: "aionis_agent_session_suboperation_v1",
+      operation_id: operationId,
+      kind,
+    }),
+  ).digest("hex")}`;
+}
+
+function executionEpisodeOptions(
+  handle: AionisExecutionEpisodeHandleV2,
+  options?: AionisRequestOptions,
+): AionisRequestOptions {
+  if (
+    options?.tenant_id !== undefined
+    && options.tenant_id !== handle.tenant_id
+  ) {
+    throw new Error("Execution episode tenant identity cannot change");
+  }
+  if (options?.scope !== undefined && options.scope !== handle.scope) {
+    throw new Error("Execution episode scope identity cannot change");
+  }
+  return {
+    ...(options ?? {}),
+    tenant_id: handle.tenant_id,
+    scope: handle.scope,
+  };
+}
+
+async function guideAgentContextFromGuideResponse<TGuide>(args: {
+  guide: TGuide;
+  body: AionisGuideRequest;
+  options?: AionisGuideRequestOptions;
+  contextOptions: AionisGuideAgentContextOptions;
+  defaultTenantId?: string | null;
+  defaultScope?: string | null;
+  resolveMemory: (
+    body: AionisMemoryResolveRequest,
+    options?: AionisRequestOptions,
+  ) => Promise<unknown>;
+}): Promise<AionisGuideAgentContextResult<TGuide>> {
+  const bodyRecord = asRecord(args.body) ?? {};
+  const effectiveContextOptions = { ...args.contextOptions };
+  const { tenant_id: tenantId, scope } = guideTenantScope(args.guide, {
+    tenant_id:
+      args.options?.tenant_id
+      ?? coerceString(bodyRecord.tenant_id)
+      ?? args.defaultTenantId
+      ?? undefined,
+    scope:
+      args.options?.scope
+      ?? coerceString(bodyRecord.scope)
+      ?? args.defaultScope
+      ?? undefined,
+  });
+  const evidenceLimit = effectiveContextOptions.evidence_limit ?? 6;
+  const resolveTypes =
+    effectiveContextOptions.resolve_types ?? DEFAULT_RESOLVE_TYPES;
+  const onResolveError =
+    effectiveContextOptions.on_resolve_error ?? "include_placeholder";
+  const evidenceRows = resolveEvidenceIds(
+    args.guide,
+    effectiveContextOptions,
+  ).slice(0, evidenceLimit);
+  const resolvedEvidence: AionisResolvedAgentEvidence[] = [];
+  const consumerAgentId = coerceString(bodyRecord.consumer_agent_id);
+  const consumerTeamId = coerceString(bodyRecord.consumer_team_id);
+
+  for (const row of evidenceRows) {
+    if (!AIONIS_MEMORY_ID_RE.test(row.memory_id)) {
+      if (onResolveError === "throw") {
+        throw new Error(
+          `Cannot resolve non-Aionis memory id: ${row.memory_id}`,
+        );
+      }
+      if (onResolveError === "include_placeholder") {
+        resolvedEvidence.push({
+          memory_id: row.memory_id,
+          surface: row.surface,
+          uri: null,
+          resolved_type: null,
+          resolved: false,
+          source: "unresolved",
+          evidence_text: "",
+          error: {
+            message:
+              "memory id is not an Aionis UUID; external memory ids are adjudicated but not resolvable through /v1/memory/resolve",
+          },
+        });
+      }
+      continue;
+    }
+
+    let lastError: unknown = null;
+    let resolved = false;
+    for (const type of resolveTypes) {
+      const uri = buildClientAionisUri({
+        tenant_id: tenantId,
+        scope,
+        type,
+        id: row.memory_id,
+      });
+      try {
+        const response = await args.resolveMemory({
+          uri,
+          include_meta: true,
+          include_slots: true,
+          ...(consumerAgentId
+            ? { consumer_agent_id: consumerAgentId }
+            : {}),
+          ...(consumerTeamId
+            ? { consumer_team_id: consumerTeamId }
+            : {}),
+        }, args.options);
+        const extracted = nodeEvidenceText(response);
+        resolvedEvidence.push({
+          memory_id: row.memory_id,
+          surface: row.surface,
+          uri,
+          resolved_type: type,
+          resolved: true,
+          source: extracted.source,
+          evidence_text: extracted.text,
+          response,
+        });
+        resolved = true;
+        break;
+      } catch (error) {
+        lastError = error;
+        if (error instanceof AionisClientError && error.status === 404) {
+          continue;
+        }
+        if (onResolveError === "throw") throw error;
+        break;
+      }
+    }
+    if (!resolved && onResolveError !== "skip") {
+      resolvedEvidence.push({
+        memory_id: row.memory_id,
+        surface: row.surface,
+        uri: null,
+        resolved_type: null,
+        resolved: false,
+        source: "unresolved",
+        evidence_text: "",
+        error: {
+          message:
+            lastError instanceof Error
+              ? lastError.message
+              : "memory resolve failed",
+          ...(lastError instanceof AionisClientError
+            ? { status: lastError.status }
+            : {}),
+        },
+      });
+    }
+  }
+
+  const agentPrompt = agentPromptFromGuide(args.guide);
+  const unresolvedMemoryIds = resolvedEvidence
+    .filter((entry) => !entry.resolved)
+    .map((entry) => entry.memory_id);
+
+  return {
+    contract_version: "aionis_sdk_agent_context_with_evidence_v1",
+    guide: args.guide,
+    agent_context: asRecord(args.guide)?.agent_context ?? null,
+    agent_prompt: agentPrompt,
+    resolved_evidence: resolvedEvidence,
+    unresolved_memory_ids: unresolvedMemoryIds,
+    evidence_char_count: resolvedEvidence.reduce(
+      (total, entry) => total + entry.evidence_text.length,
+      0,
+    ),
+    prompt_char_count: agentPrompt.length,
+    guide_trace_id: guideTraceIdValue(args.guide),
+  };
+}
+
+function assertExecutionEpisodeRequestScope(
+  input: { tenant_id?: string; scope?: string },
+  options?: AionisRequestOptions,
+): void {
+  if (
+    input.tenant_id !== undefined
+    && options?.tenant_id !== undefined
+    && input.tenant_id !== options.tenant_id
+  ) {
+    throw new Error("Execution episode tenant identity cannot change");
+  }
+  if (
+    input.scope !== undefined
+    && options?.scope !== undefined
+    && input.scope !== options.scope
+  ) {
+    throw new Error("Execution episode scope identity cannot change");
+  }
+}
+
+function canonicalExecutionEpisodeHandle(
+  value: AionisExecutionEpisodeHandleV2,
+): AionisExecutionEpisodeHandleV2 {
+  const subject = executionSubjectFromResponse(value?.subject);
+  const currentState = stateSnapshotV2FromResponse(value?.current_state);
+  const sha256 = /^[0-9a-f]{64}$/;
+  const exactString = (candidate: unknown): candidate is string =>
+    typeof candidate === "string"
+    && candidate.length > 0
+    && candidate === candidate.trim()
+    && !candidate.includes("\u0000");
+  if (
+    value === null
+    || typeof value !== "object"
+    || value.contract_version !== "aionis_execution_episode_handle_v2"
+    || !exactString(value.episode_id)
+    || !exactString(value.tenant_id)
+    || !exactString(value.scope)
+    || !exactString(value.task_id)
+    || !sha256.test(value.task_envelope_digest)
+    || !exactString(value.run_id)
+    || !exactString(value.workspace_root)
+    || !sha256.test(value.workspace_root_sha256)
+    || !exactString(value.current_state_snapshot_id)
+    || currentState.snapshot_id !== value.current_state_snapshot_id
+    || !executionSubjectsEqual(currentState.subject, subject)
+    || value.required_verifier?.contract_version
+      !== "execution_episode_required_verifier_v1"
+    || !exactString(value.required_verifier.verifier_id)
+    || !sha256.test(
+      value.required_verifier.verifier_definition_sha256,
+    )
+    || typeof value.closed !== "boolean"
+  ) {
+    throw new Error("Invalid serialized execution episode handle");
+  }
+  return {
+    ...value,
+    subject,
+    current_state: currentState,
+    required_verifier: { ...value.required_verifier },
+  };
+}
+
+function canonicalAttachedExecutionEpisodeHandle(
+  value: AionisExecutionEpisodeHandleV2,
+): AionisExecutionEpisodeHandleV2 {
+  const exactKeys = (
+    candidate: unknown,
+    expectedKeys: readonly string[],
+  ): boolean => {
+    const record = asRecord(candidate);
+    if (record === null) return false;
+    const actualKeys = Object.keys(record).sort();
+    const expected = [...expectedKeys].sort();
+    return actualKeys.length === expected.length
+      && actualKeys.every((key, index) => key === expected[index]);
+  };
+  if (
+    !exactKeys(value, [
+      "contract_version",
+      "episode_id",
+      "tenant_id",
+      "scope",
+      "task_id",
+      "task_envelope_digest",
+      "run_id",
+      "workspace_root",
+      "workspace_root_sha256",
+      "subject",
+      "current_state_snapshot_id",
+      "current_state",
+      "required_verifier",
+      "closed",
+    ])
+    || !exactKeys(value?.required_verifier, [
+      "contract_version",
+      "verifier_id",
+      "verifier_definition_sha256",
+    ])
+    || !exactKeys(value?.subject, [
+      "contract_version",
+      "subject_id",
+      "kind",
+      "adapter_id",
+      "adapter_version",
+      "identity_sha256",
+      "capability_descriptor_ref",
+      "capability_descriptor_sha256",
+    ])
+    || !exactKeys(value?.current_state, [
+      "contract_version",
+      "snapshot_id",
+      "subject",
+      "captured_at",
+      "algorithm_id",
+      "algorithm_version",
+      "environment_sha256",
+      "content_ref",
+      "content_sha256",
+      "content_media_type",
+      "content_encoding",
+      "capture_authority",
+      "attestation_ref",
+    ])
+    || !exactKeys(value?.current_state?.subject, [
+      "contract_version",
+      "subject_id",
+      "kind",
+      "adapter_id",
+      "adapter_version",
+      "identity_sha256",
+      "capability_descriptor_ref",
+      "capability_descriptor_sha256",
+    ])
+  ) {
+    throw new Error("Invalid serialized execution episode handle");
+  }
+  return canonicalExecutionEpisodeHandle(value);
+}
+
+function assertResumedExecutionEpisodeIdentity(
+  expected: AionisExecutionEpisodeHandleV2,
+  actual: AionisExecutionEpisodeHandleV2,
+): void {
+  if (
+    actual.episode_id !== expected.episode_id
+    || actual.tenant_id !== expected.tenant_id
+    || actual.scope !== expected.scope
+    || actual.task_id !== expected.task_id
+    || actual.task_envelope_digest !== expected.task_envelope_digest
+    || actual.run_id !== expected.run_id
+    || actual.workspace_root !== expected.workspace_root
+    || actual.workspace_root_sha256 !== expected.workspace_root_sha256
+    || !executionSubjectsEqual(actual.subject, expected.subject)
+    || actual.required_verifier.verifier_id
+      !== expected.required_verifier.verifier_id
+    || actual.required_verifier.verifier_definition_sha256
+      !== expected.required_verifier.verifier_definition_sha256
+  ) {
+    throw new Error(
+      "Runtime execution episode identity changed while resuming a serialized handle",
+    );
+  }
+}
+
+/**
+ * Canonical stateful Host Episode Protocol.
+ *
+ * Calls are serialized so concurrent Host callbacks cannot apply out-of-order
+ * responses to the local handle. `toJSON()` returns the portable handle that
+ * another process can pass to `aionis.execution.resumeEpisode(...)`.
+ */
+export class AionisAgentSession {
+  private readonly client: AionisClient;
+  private currentHandle: AionisAgentSessionHandleV1;
+  private operationTail: Promise<void> = Promise.resolve();
+  private stateCaptureInFlight = false;
+
+  constructor(
+    client: AionisClient,
+    handle: AionisAgentSessionHandleV1,
+  ) {
+    this.client = client;
+    this.currentHandle = canonicalAgentSessionHandle(handle);
+    this.turn = this.turn.bind(this);
+    this.guide = this.guide.bind(this);
+    this.guideAgentContext = this.guideAgentContext.bind(this);
+    this.aroundAction = this.aroundAction.bind(this);
+    this.restoreSnapshot = this.restoreSnapshot.bind(this);
+    this.recordObservation = this.recordObservation.bind(this);
+    this.recordDecision = this.recordDecision.bind(this);
+    this.recordProgress = this.recordProgress.bind(this);
+    this.recordPlannedAction = this.recordPlannedAction.bind(this);
+    this.runVerifier = this.runVerifier.bind(this);
+    this.finish = this.finish.bind(this);
+    this.handoff = this.handoff.bind(this);
+    this.release = this.release.bind(this);
+  }
+
+  get handle(): AionisAgentSessionHandleV1 {
+    return canonicalAgentSessionHandle(this.currentHandle);
+  }
+
+  get episodeId(): string {
+    return this.currentHandle.episode.episode_id;
+  }
+
+  get continuationId(): string {
+    return this.currentHandle.continuation_id;
+  }
+
+  get currentStateSnapshotId(): string {
+    return this.currentHandle.episode.current_state_snapshot_id;
+  }
+
+  get active(): boolean {
+    return this.currentHandle.lease_status === "active"
+      && !this.currentHandle.episode.closed;
+  }
+
+  toJSON(): AionisAgentSessionHandleV1 {
+    return this.handle;
+  }
+
+  private enqueue<T>(operation: () => Promise<T>): Promise<T> {
+    const run = this.operationTail.then(operation, operation);
+    this.operationTail = run.then(
+      () => undefined,
+      () => undefined,
+    );
+    return run;
+  }
+
+  private enqueueEpisode<T>(
+    operation: (
+      handle: AionisAgentSessionHandleV1,
+    ) => Promise<AionisExecutionEpisodeOperationResult<T>>,
+    episodeClosed = false,
+  ): Promise<T> {
+    return this.enqueue(async () => {
+      const previous = this.currentHandle;
+      const result = await operation(previous);
+      let next = agentSessionHandleFromResponse(
+        result.response,
+        previous.episode.workspace_root,
+        result.handle,
+      );
+      if (episodeClosed) {
+        next = {
+          ...next,
+          episode: {
+            ...next.episode,
+            closed: true,
+          },
+        };
+      }
+      this.currentHandle = canonicalAgentSessionHandle(next);
+      return result.response;
+    });
+  }
+
+  private context(
+    parentOperationId: string,
+    kind: string,
+    leaseTtlMs?: number,
+  ): AionisExecutionSessionLeaseContextV1 {
+    return sessionLeaseContext(
+      this.currentHandle,
+      agentSessionSuboperationId(parentOperationId, kind),
+      leaseTtlMs,
+    );
+  }
+
+  guide<T = unknown>(
+    input: AionisGuideRequest & {
+      operation_id: string;
+      lease_ttl_ms?: number;
+    },
+    options?: AionisGuideRequestOptions,
+  ): Promise<T> {
+    return this.enqueueEpisode((handle) =>
+      this.client.guideEpisode<T>({
+        handle: handle.episode,
+        operation_id: input.operation_id,
+        guide: {
+          ...input,
+          session_lease_v1: this.context(
+            input.operation_id,
+            "guide_lease",
+            input.lease_ttl_ms,
+          ),
+        },
+      }, options));
+  }
+
+  guideAgentContext<TGuide = unknown>(
+    input: AionisGuideRequest & {
+      operation_id: string;
+      lease_ttl_ms?: number;
+    },
+    options?: AionisGuideRequestOptions,
+    contextOptions: AionisGuideAgentContextOptions = {},
+  ): Promise<AionisGuideAgentContextResult<TGuide>> {
+    return this.enqueue(async () => {
+      const previous = this.currentHandle;
+      const guideInput: AionisGuideRequest = {
+        ...input,
+        session_lease_v1: this.context(
+          input.operation_id,
+          "guide_context_lease",
+          input.lease_ttl_ms,
+        ),
+      };
+      const result = await this.client.guideEpisode<TGuide>({
+        handle: previous.episode,
+        operation_id: input.operation_id,
+        guide: guideInput,
+      }, options);
+      const next = agentSessionHandleFromResponse(
+        result.response,
+        previous.episode.workspace_root,
+        result.handle,
+      );
+      this.currentHandle = canonicalAgentSessionHandle(next);
+      const scopedOptions = executionEpisodeOptions(
+        next.episode,
+        options,
+      );
+      return await guideAgentContextFromGuideResponse({
+        guide: result.response,
+        body: guideInput,
+        options: scopedOptions,
+        contextOptions,
+        defaultTenantId: next.episode.tenant_id,
+        defaultScope: next.episode.scope,
+        resolveMemory: (body, requestOptions) =>
+          this.client.resolveMemory(body, requestOptions),
+      });
+    });
+  }
+
+  async turn<TGuide = unknown>(
+    input: AionisAgentSessionTurnInput,
+    options?: AionisGuideRequestOptions,
+    contextOptions: AionisGuideAgentContextOptions = {},
+  ): Promise<AionisAgentSessionTurnResult<TGuide>> {
+    const observation = await this.recordObservation({
+      operation_id: agentSessionSuboperationId(
+        input.operation_id,
+        "turn_observation",
+      ),
+      observation: input.observation,
+      authority: input.authority,
+      evidence_kind: input.evidence_kind,
+      evidence: input.evidence,
+      evidence_media_type: input.evidence_media_type,
+      evidence_encoding: input.evidence_encoding,
+      lease_ttl_ms: input.lease_ttl_ms,
+    }, options);
+    const guideInput = {
+      ...input.guide,
+      operation_id: agentSessionSuboperationId(
+        input.operation_id,
+        "turn_guide",
+      ),
+      lease_ttl_ms: input.lease_ttl_ms,
+    } as AionisGuideRequest & {
+      operation_id: string;
+      lease_ttl_ms?: number;
+    };
+    const context = await this.guideAgentContext<TGuide>(
+      guideInput,
+      options,
+      contextOptions,
+    );
+    return { observation, context };
+  }
+
+  recordObservation<T = unknown>(
+    input: Omit<
+      AionisRecordEpisodeObservationInput,
+      "handle" | "session_lease_v1"
+    > & { lease_ttl_ms?: number },
+    options?: AionisRequestOptions,
+  ): Promise<T> {
+    return this.enqueueEpisode((handle) =>
+      this.client.recordEpisodeObservation<T>({
+        ...input,
+        handle: handle.episode,
+        session_lease_v1: this.context(
+          input.operation_id,
+          "observation_lease",
+          input.lease_ttl_ms,
+        ),
+      }, options));
+  }
+
+  recordDecision<T = unknown>(
+    input: Omit<
+      AionisRecordEpisodeDecisionInput,
+      "handle" | "session_lease_v1"
+    > & { lease_ttl_ms?: number },
+    options?: AionisRequestOptions,
+  ): Promise<T> {
+    return this.enqueueEpisode((handle) =>
+      this.client.recordEpisodeDecision<T>({
+        ...input,
+        handle: handle.episode,
+        session_lease_v1: this.context(
+          input.operation_id,
+          "decision_lease",
+          input.lease_ttl_ms,
+        ),
+      }, options));
+  }
+
+  recordProgress<T = unknown>(
+    input: Omit<
+      AionisRecordEpisodeProgressInput,
+      "handle" | "session_lease_v1"
+    > & { lease_ttl_ms?: number },
+    options?: AionisRequestOptions,
+  ): Promise<T> {
+    return this.enqueueEpisode((handle) =>
+      this.client.recordEpisodeProgress<T>({
+        ...input,
+        handle: handle.episode,
+        session_lease_v1: this.context(
+          input.operation_id,
+          "progress_lease",
+          input.lease_ttl_ms,
+        ),
+      }, options));
+  }
+
+  recordPlannedAction<T = unknown>(
+    input: Omit<
+      AionisRecordEpisodePlannedActionInput,
+      "handle" | "session_lease_v1"
+    > & { lease_ttl_ms?: number },
+    options?: AionisRequestOptions,
+  ): Promise<T> {
+    return this.enqueueEpisode((handle) =>
+      this.client.recordEpisodePlannedAction<T>({
+        ...input,
+        handle: handle.episode,
+        session_lease_v1: this.context(
+          input.operation_id,
+          "planned_action_lease",
+          input.lease_ttl_ms,
+        ),
+      }, options));
+  }
+
+  aroundAction<TResult, TReceipt = unknown>(
+    input: AionisAgentSessionAroundActionInput<TResult>,
+    options?: AionisRequestOptions,
+  ): Promise<AionisAgentSessionAroundActionResult<TResult, TReceipt>> {
+    if (this.stateCaptureInFlight) {
+      return Promise.reject(new Error(
+        "Aionis Agent session action callbacks must be awaited before the Host mutates workspace state again",
+      ));
+    }
+    this.stateCaptureInFlight = true;
+    return this.enqueue(async () => {
+      const previous = this.currentHandle;
+      const result = await input.execute();
+      const serialized = input.serialize_result
+        ? input.serialize_result(result)
+        : (
+          typeof result === "string"
+          || result instanceof Uint8Array
+          || (
+            result !== null
+            && typeof result === "object"
+            && !Array.isArray(result)
+          )
+        )
+          ? result as string | Uint8Array | AionisJsonObject
+          : { value: result } as AionisJsonObject;
+      const recorded = await this.client.recordAction<TReceipt>({
+        handle: previous.episode,
+        operation_id: input.operation_id,
+        action_kind: input.action_kind,
+        tool_name: input.tool_name,
+        request: input.request,
+        result: serialized,
+        session_lease_v1: this.context(
+          input.operation_id,
+          "action_lease",
+          input.lease_ttl_ms,
+        ),
+      }, options);
+      this.currentHandle = canonicalAgentSessionHandle(
+        agentSessionHandleFromResponse(
+          recorded.response,
+          previous.episode.workspace_root,
+          recorded.handle,
+        ),
+      );
+      return {
+        result,
+        receipt: recorded.response,
+      };
+    }).finally(() => {
+      this.stateCaptureInFlight = false;
+    });
+  }
+
+  restoreSnapshot<T = unknown>(
+    input: Omit<
+      AionisRestoreEpisodeSnapshotInput,
+      "handle" | "session_lease_v1"
+    > & { lease_ttl_ms?: number },
+    options?: AionisRequestOptions,
+  ): Promise<T> {
+    if (this.stateCaptureInFlight) {
+      return Promise.reject(new Error(
+        "Aionis Agent session snapshot recovery must be awaited before the Host mutates subject state again",
+      ));
+    }
+    this.stateCaptureInFlight = true;
+    return this.enqueueEpisode((handle) =>
+      this.client.restoreEpisodeSnapshot<T>({
+        ...input,
+        handle: handle.episode,
+        session_lease_v1: this.context(
+          input.operation_id,
+          "snapshot_restore_lease",
+          input.lease_ttl_ms,
+        ),
+      }, options)).finally(() => {
+        this.stateCaptureInFlight = false;
+      });
+  }
+
+  runVerifier<T = unknown>(
+    input: Omit<
+      AionisRunEpisodeVerifierInput,
+      "handle" | "session_lease_v1"
+    > & { lease_ttl_ms?: number },
+    options?: AionisRequestOptions,
+  ): Promise<T> {
+    return this.enqueueEpisode((handle) =>
+      this.client.runEpisodeVerifier<T>({
+        ...input,
+        handle: handle.episode,
+        session_lease_v1: this.context(
+          input.operation_id,
+          "verifier_lease",
+          input.lease_ttl_ms,
+        ),
+      }, options));
+  }
+
+  async finish<
+    TVerifier = unknown,
+    TClose = unknown,
+    TRecovery = unknown,
+  >(
+    input: AionisAgentSessionFinishInput,
+    options?: AionisRequestOptions,
+  ): Promise<
+    AionisAgentSessionFinishResult<TVerifier, TClose, TRecovery>
+  > {
+    const recoveryMode = input.recovery_mode ?? "automatic";
+    if (
+      recoveryMode !== "automatic"
+      && recoveryMode !== "manual"
+    ) {
+      throw new Error(
+        "Aionis Agent session recovery_mode must be automatic or manual",
+      );
+    }
+    const verifier = await this.runVerifier<TVerifier>({
+      operation_id: input.verifier_operation_id,
+      lease_ttl_ms: input.lease_ttl_ms,
+    }, options);
+    const verifierRecord = asRecord(verifier);
+    const outcome = asRecord(verifierRecord?.outcome);
+    const verifierStatus = agentSessionVerifierStatus(verifier);
+    const verifierReceiptId =
+      coerceString(outcome?.verifier_receipt_id)
+      ?? undefined;
+    if (
+      input.termination === "completed"
+      && verifierStatus !== "passed"
+    ) {
+      const recoveryTarget = verifierStatus === "failed"
+        && recoveryMode === "automatic"
+        ? agentSessionRecoveryTarget(
+          verifier,
+          this.currentStateSnapshotId,
+          verifierReceiptId,
+        )
+        : null;
+      if (recoveryTarget !== null) {
+        const recoveryOperationId =
+          input.recovery_operation_id
+          ?? agentSessionRecoveryOperationId({
+            episode_id: this.episodeId,
+            verifier_operation_id: input.verifier_operation_id,
+            failed_snapshot_id: recoveryTarget.failed_snapshot_id,
+            target_snapshot_id: recoveryTarget.target_snapshot_id,
+          });
+        const recovery = await this.restoreSnapshot<TRecovery>({
+          operation_id: recoveryOperationId,
+          target_snapshot_id: recoveryTarget.target_snapshot_id,
+          lease_ttl_ms: input.lease_ttl_ms,
+        }, options);
+        if (
+          this.currentStateSnapshotId
+          !== recoveryTarget.target_snapshot_id
+        ) {
+          throw new Error(
+            "Aionis Agent session recovery did not restore the accepted snapshot",
+          );
+        }
+        return {
+          contract_version: "aionis_agent_session_finish_result_v1",
+          status: "continue",
+          verifier_status: verifierStatus,
+          verifier,
+          close: null,
+          continuation: {
+            reason: "verified_branch_restored",
+            current_state_snapshot_id: this.currentStateSnapshotId,
+            verifier_receipt_id: verifierReceiptId ?? null,
+            recovery: {
+              contract_version:
+                "aionis_agent_session_recovery_result_v1",
+              status: "restored",
+              operation_id: recoveryOperationId,
+              failed_snapshot_id:
+                recoveryTarget.failed_snapshot_id,
+              failed_verifier_receipt_id:
+                recoveryTarget.failed_verifier_receipt_id,
+              restored_snapshot_id:
+                recoveryTarget.target_snapshot_id,
+              accepted_verifier_receipt_id:
+                recoveryTarget.target_verifier_receipt_id,
+              response: recovery,
+            },
+          },
+        };
+      }
+      return {
+        contract_version: "aionis_agent_session_finish_result_v1",
+        status: "continue",
+        verifier_status: verifierStatus,
+        verifier,
+        close: null,
+        continuation: {
+          reason: verifierContinuationReason(verifierStatus),
+          current_state_snapshot_id: this.currentStateSnapshotId,
+          verifier_receipt_id: verifierReceiptId ?? null,
+          recovery: null,
+        },
+      };
+    }
+    const close = await this.enqueueEpisode((handle) =>
+      this.client.closeEpisode<TClose>({
+        handle: handle.episode,
+        operation_id: input.close_operation_id,
+        expected_current_state_snapshot_id:
+          input.expected_current_state_snapshot_id,
+        termination: input.termination,
+        verifier_receipt_id: verifierReceiptId,
+        outcome_details: input.outcome_details,
+        cost: input.cost,
+        session_lease_v1: this.context(
+          input.close_operation_id,
+          "finish_release",
+          input.lease_ttl_ms,
+        ),
+      }, options), true);
+    if (input.termination === "completed") {
+      return {
+        contract_version: "aionis_agent_session_finish_result_v1",
+        status: "completed",
+        verifier_status: "passed",
+        verifier,
+        close,
+        continuation: null,
+      };
+    }
+    return {
+      contract_version: "aionis_agent_session_finish_result_v1",
+      status: "terminated",
+      verifier_status: verifierStatus,
+      verifier,
+      close,
+      continuation: null,
+    };
+  }
+
+  handoff<T = unknown>(
+    input: {
+      operation_id: string;
+      to_holder_id: string;
+      evidence_refs?: string[];
+      lease_ttl_ms?: number;
+    },
+    options?: AionisRequestOptions,
+  ): Promise<T> {
+    return this.enqueue(async () => {
+      const result = await this.client.handoffAgentSession<T>({
+        handle: this.currentHandle,
+        operation_id: input.operation_id,
+        to_holder_id: input.to_holder_id,
+        evidence_refs: input.evidence_refs,
+        lease_ttl_ms: input.lease_ttl_ms,
+      }, options);
+      this.currentHandle = canonicalAgentSessionHandle(result.handle);
+      return result.response;
+    });
+  }
+
+  release<T = unknown>(
+    input: { operation_id: string },
+    options?: AionisRequestOptions,
+  ): Promise<T> {
+    return this.enqueue(async () => {
+      const result = await this.client.releaseAgentSession<T>({
+        handle: this.currentHandle,
+        operation_id: input.operation_id,
+      }, options);
+      this.currentHandle = canonicalAgentSessionHandle(result.handle);
+      return result.response;
+    });
+  }
+}
+
 export class AionisClient {
-  readonly execution: AionisExecutionClient;
+  readonly agentSession: AionisAgentSessionClient;
 
   private readonly baseUrl: string;
   private readonly apiKey: string | null;
   private readonly tenantId: string | null;
   private readonly scope: string | null;
   private readonly headers: Record<string, string>;
-  private readonly defaultGuideMode: AionisGuideMode | null;
   private readonly fetchImpl: typeof fetch;
 
   constructor(options: AionisClientOptions) {
@@ -2439,21 +2650,699 @@ export class AionisClient {
     this.tenantId = options.tenant_id?.trim() || null;
     this.scope = options.scope?.trim() || null;
     this.headers = { ...(options.headers ?? {}) };
-    this.defaultGuideMode = options.default_guide_mode === undefined ? "full_power" : options.default_guide_mode;
     this.fetchImpl = options.fetchImpl ?? fetch;
-    this.execution = new AionisExecutionClient(this);
+    this.agentSession = new AionisAgentSessionClient(this);
   }
 
   async observe<T = AionisObserveResult>(body: AionisObserveRequest, options?: AionisRequestOptions): Promise<T> {
     return this.post<T>("/v1/observe", body, options);
   }
 
+  async beginEpisode<T = unknown>(
+    input: AionisBeginEpisodeInput,
+    options?: AionisRequestOptions,
+  ): Promise<AionisExecutionEpisodeOperationResult<T>> {
+    assertExecutionEpisodeRequestScope(input, options);
+    const sourceTaskBytes = executionEpisodeBytes(
+      input.source_task,
+      "beginEpisode source_task",
+    );
+    const sourceTaskSha256 = createHash("sha256")
+      .update(sourceTaskBytes)
+      .digest("hex");
+    if (sourceTaskSha256 !== input.task_envelope_v1.source_task_sha256) {
+      throw new Error(
+        "beginEpisode source_task bytes do not match task_envelope_v1.source_task_sha256",
+      );
+    }
+    const response = await this.post<T>("/v1/observe", {
+      ...stripUndefined({
+      observation_kind: "execution_episode",
+      event_kind: "episode_started",
+      operation_id: input.operation_id,
+      task_envelope_v1: input.task_envelope_v1,
+      source_task_base64: sourceTaskBytes.toString("base64"),
+      run_id: input.run_id,
+      model_id: input.model_id,
+      budget: input.budget,
+      workspace_root: input.workspace_root,
+      subject_state_spec_v2: input.subject_state_spec_v2,
+      required_verifier_id: input.required_verifier_id,
+      tenant_id: input.tenant_id,
+      scope: input.scope,
+      }),
+      // null is a valid JSON model configuration. The general SDK compactor
+      // intentionally strips nullish optional fields, so bind this required
+      // field after compaction.
+      model_config: input.model_config,
+    }, options);
+    const handle = executionEpisodeHandleFromResponse(
+      response,
+      input.workspace_root,
+    );
+    const taskEnvelopeDigest = hostTaskEnvelopeDigest(
+      input.task_envelope_v1,
+    );
+    if (
+      handle.task_id !== input.task_envelope_v1.host_task_id
+      || handle.task_envelope_digest !== taskEnvelopeDigest
+    ) {
+      throw new Error(
+        "Runtime execution episode task identity does not match beginEpisode input",
+      );
+    }
+    const expectedTenantId =
+      options?.tenant_id ?? input.tenant_id ?? this.tenantId;
+    const expectedScope = options?.scope ?? input.scope ?? this.scope;
+    if (
+      (expectedTenantId !== null && expectedTenantId !== undefined
+        && handle.tenant_id !== expectedTenantId)
+      || (expectedScope !== null && expectedScope !== undefined
+        && handle.scope !== expectedScope)
+    ) {
+      throw new Error(
+        "Runtime execution episode scope identity does not match beginEpisode input",
+      );
+    }
+    return { handle, response };
+  }
+
+  async resumeEpisode<T = unknown>(
+    input: AionisResumeEpisodeInput,
+    options?: AionisRequestOptions,
+  ): Promise<AionisExecutionEpisodeOperationResult<T>> {
+    assertExecutionEpisodeRequestScope(input, options);
+    const response = await this.post<T>("/v1/observe", stripUndefined({
+      observation_kind: "execution_episode",
+      event_kind: "episode_resumed",
+      episode_id: input.episode_id,
+      workspace_root: input.workspace_root,
+      tenant_id: input.tenant_id,
+      scope: input.scope,
+    }), options);
+    const handle = executionEpisodeHandleFromResponse(
+      response,
+      input.workspace_root,
+    );
+    if (handle.episode_id !== input.episode_id) {
+      throw new Error(
+        "Runtime execution episode identity does not match resumeEpisode input",
+      );
+    }
+    const expectedTenantId =
+      options?.tenant_id ?? input.tenant_id ?? this.tenantId;
+    const expectedScope = options?.scope ?? input.scope ?? this.scope;
+    if (
+      (expectedTenantId !== null && expectedTenantId !== undefined
+        && handle.tenant_id !== expectedTenantId)
+      || (expectedScope !== null && expectedScope !== undefined
+        && handle.scope !== expectedScope)
+    ) {
+      throw new Error(
+        "Runtime execution episode scope identity does not match resumeEpisode input",
+      );
+    }
+    return { handle, response };
+  }
+
+  async beginAgentSession<T = unknown>(
+    input: AionisBeginAgentSessionInput,
+    options?: AionisRequestOptions,
+  ): Promise<AionisAgentSessionOperationResult<T>> {
+    assertExecutionEpisodeRequestScope(input, options);
+    const sourceTaskBytes = executionEpisodeBytes(
+      input.source_task,
+      "beginAgentSession source_task",
+    );
+    const sourceTaskSha256 = createHash("sha256")
+      .update(sourceTaskBytes)
+      .digest("hex");
+    if (sourceTaskSha256 !== input.task_envelope_v1.source_task_sha256) {
+      throw new Error(
+        "beginAgentSession source_task bytes do not match task_envelope_v1.source_task_sha256",
+      );
+    }
+    const response = await this.post<T>("/v1/observe", {
+      ...stripUndefined({
+        observation_kind: "execution_session",
+        event_kind: "session_begin",
+        operation_id: input.operation_id,
+        session_key: input.session_key,
+        continuation_id: input.continuation_id,
+        holder_id: input.holder_id,
+        lease_ttl_ms: input.lease_ttl_ms,
+        task_envelope_v1: input.task_envelope_v1,
+        source_task_base64: sourceTaskBytes.toString("base64"),
+        run_id: input.run_id,
+        model_id: input.model_id,
+        budget: input.budget,
+        workspace_root: input.workspace_root,
+        subject_state_spec_v2: input.subject_state_spec_v2,
+        required_verifier_id: input.required_verifier_id,
+        tenant_id: input.tenant_id,
+        scope: input.scope,
+      }),
+      model_config: input.model_config,
+    }, options);
+    const handle = agentSessionHandleFromResponse(
+      response,
+      input.workspace_root,
+    );
+    if (
+      handle.session_key !== input.session_key
+      || handle.continuation_id !== input.continuation_id
+    ) {
+      throw new Error(
+        "Runtime execution-session identity does not match begin input",
+      );
+    }
+    return { handle, response };
+  }
+
+  async resumeAgentSession<T = unknown>(
+    input: AionisResumeAgentSessionInput,
+    options?: AionisRequestOptions,
+  ): Promise<AionisAgentSessionOperationResult<T>> {
+    assertExecutionEpisodeRequestScope(input, options);
+    const response = await this.post<T>(
+      "/v1/observe",
+      stripUndefined({
+        observation_kind: "execution_session",
+        event_kind: "session_resume",
+        operation_id: input.operation_id,
+        session_key: input.session_key,
+        holder_id: input.holder_id,
+        lease_ttl_ms: input.lease_ttl_ms,
+        workspace_root: input.workspace_root,
+        tenant_id: input.tenant_id,
+        scope: input.scope,
+      }),
+      options,
+    );
+    const handle = agentSessionHandleFromResponse(
+      response,
+      input.workspace_root,
+    );
+    if (
+      handle.session_key !== input.session_key
+      || handle.holder_id !== input.holder_id
+    ) {
+      throw new Error(
+        "Runtime execution-session identity does not match resume input",
+      );
+    }
+    return { handle, response };
+  }
+
+  private async mutateAgentSession<T>(
+    eventKind: "session_renew" | "session_handoff" | "session_release",
+    input:
+      | AionisAgentSessionLeaseOperationInput
+      | AionisAgentSessionHandoffInput,
+    options?: AionisRequestOptions,
+  ): Promise<AionisAgentSessionOperationResult<T>> {
+    const handle = canonicalAgentSessionHandle(input.handle);
+    const handoff = eventKind === "session_handoff"
+      ? input as AionisAgentSessionHandoffInput
+      : null;
+    const response = await this.post<T>(
+      "/v1/observe",
+      stripUndefined({
+        observation_kind: "execution_session",
+        event_kind: eventKind,
+        operation_id: input.operation_id,
+        session_key: handle.session_key,
+        holder_id: handle.holder_id,
+        lease_id: handle.lease_id,
+        lease_revision: handle.lease_revision,
+        lease_ttl_ms: input.lease_ttl_ms,
+        to_holder_id: handoff?.to_holder_id,
+        evidence_refs: handoff?.evidence_refs,
+      }),
+      executionEpisodeOptions(handle.episode, options),
+    );
+    return {
+      handle: agentSessionHandleFromResponse(
+        response,
+        handle.episode.workspace_root,
+        handle.episode,
+      ),
+      response,
+    };
+  }
+
+  async renewAgentSession<T = unknown>(
+    input: AionisAgentSessionLeaseOperationInput,
+    options?: AionisRequestOptions,
+  ): Promise<AionisAgentSessionOperationResult<T>> {
+    return await this.mutateAgentSession("session_renew", input, options);
+  }
+
+  async handoffAgentSession<T = unknown>(
+    input: AionisAgentSessionHandoffInput,
+    options?: AionisRequestOptions,
+  ): Promise<AionisAgentSessionOperationResult<T>> {
+    return await this.mutateAgentSession("session_handoff", input, options);
+  }
+
+  async releaseAgentSession<T = unknown>(
+    input: AionisAgentSessionLeaseOperationInput,
+    options?: AionisRequestOptions,
+  ): Promise<AionisAgentSessionOperationResult<T>> {
+    return await this.mutateAgentSession("session_release", input, options);
+  }
+
+  async guideEpisode<T = unknown>(
+    input: AionisGuideEpisodeInput,
+    options?: AionisGuideRequestOptions,
+  ): Promise<AionisExecutionEpisodeOperationResult<T>> {
+    if (input.handle.closed) {
+      throw new Error("Cannot guide a closed execution episode");
+    }
+    if (
+      input.guide.operation_id !== undefined
+      && input.guide.operation_id !== input.operation_id
+    ) {
+      throw new Error("Execution episode guide operation identity cannot change");
+    }
+    if (
+      input.guide.episode_id !== undefined
+      && input.guide.episode_id !== input.handle.episode_id
+    ) {
+      throw new Error("Execution episode guide identity cannot change");
+    }
+    if (
+      input.guide.expected_current_state_snapshot_id !== undefined
+      && input.guide.expected_current_state_snapshot_id
+        !== input.handle.current_state_snapshot_id
+    ) {
+      throw new Error(
+        "Execution episode guide target state cannot change",
+      );
+    }
+    if (
+      input.guide.run_id !== undefined
+      && input.guide.run_id !== input.handle.run_id
+    ) {
+      throw new Error("Execution episode guide run identity cannot change");
+    }
+    if (
+      input.guide.host_task_envelope_v1 !== undefined
+      && (
+        input.guide.host_task_envelope_v1.host_task_id
+          !== input.handle.task_id
+        || hostTaskEnvelopeDigest(
+          input.guide.host_task_envelope_v1,
+        ) !== input.handle.task_envelope_digest
+      )
+    ) {
+      throw new Error("Execution episode guide task identity cannot change");
+    }
+    executionEpisodeOptions(input.handle, options);
+    const response = await this.guide<T>({
+      ...input.guide,
+      operation_id: input.operation_id,
+      episode_id: input.handle.episode_id,
+      expected_current_state_snapshot_id:
+        input.handle.current_state_snapshot_id,
+      run_id: input.handle.run_id,
+    }, {
+      ...(options ?? {}),
+      tenant_id: input.handle.tenant_id,
+      scope: input.handle.scope,
+    });
+    return {
+      handle: input.handle,
+      response,
+    };
+  }
+
+  async recordAction<T = unknown>(
+    input: AionisRecordEpisodeActionInput,
+    options?: AionisRequestOptions,
+  ): Promise<AionisExecutionEpisodeOperationResult<T>> {
+    if (input.handle.closed) {
+      throw new Error("Cannot record an action on a closed execution episode");
+    }
+    const requestBytes = executionEpisodeBytes(
+      input.request,
+      "recordAction request",
+    );
+    const resultBytes = executionEpisodeBytes(
+      input.result,
+      "recordAction result",
+    );
+    const response = await this.post<T>("/v1/observe", {
+      observation_kind: "execution_episode",
+      event_kind: "action_observed",
+      operation_id: input.operation_id,
+      episode_id: input.handle.episode_id,
+      workspace_root: input.handle.workspace_root,
+      expected_current_state_snapshot_id:
+        input.expected_current_state_snapshot_id
+        ?? input.handle.current_state_snapshot_id,
+      action_kind: input.action_kind,
+      tool_name: input.tool_name,
+      request_base64: requestBytes.toString("base64"),
+      result_base64: resultBytes.toString("base64"),
+      session_lease_v1: input.session_lease_v1,
+    }, executionEpisodeOptions(input.handle, options));
+    return {
+      handle: updateExecutionEpisodeHandle(input.handle, response),
+      response,
+    };
+  }
+
+  async recordEpisodeObservation<T = unknown>(
+    input: AionisRecordEpisodeObservationInput,
+    options?: AionisRequestOptions,
+  ): Promise<AionisExecutionEpisodeOperationResult<T>> {
+    if (input.handle.closed) {
+      throw new Error(
+        "Cannot record an observation on a closed execution episode",
+      );
+    }
+    const evidenceBytes = executionEpisodeBytes(
+      input.evidence,
+      "recordObservation evidence",
+    );
+    const response = await this.post<T>("/v1/observe", stripUndefined({
+      observation_kind: "execution_episode",
+      event_kind: "semantic_observation_recorded",
+      operation_id: input.operation_id,
+      episode_id: input.handle.episode_id,
+      workspace_root: input.handle.workspace_root,
+      expected_current_state_snapshot_id:
+        input.expected_current_state_snapshot_id
+        ?? input.handle.current_state_snapshot_id,
+      observation: input.observation,
+      authority: input.authority,
+      evidence_kind: input.evidence_kind,
+      evidence_base64: evidenceBytes.toString("base64"),
+      evidence_media_type: input.evidence_media_type,
+      evidence_encoding: input.evidence_encoding,
+      decisive_evidence: input.decisive_evidence,
+      session_lease_v1: input.session_lease_v1,
+    }), executionEpisodeOptions(input.handle, options));
+    return {
+      handle: updateExecutionEpisodeHandle(input.handle, response),
+      response,
+    };
+  }
+
+  async recordEpisodeDecision<T = unknown>(
+    input: AionisRecordEpisodeDecisionInput,
+    options?: AionisRequestOptions,
+  ): Promise<AionisExecutionEpisodeOperationResult<T>> {
+    if (input.handle.closed) {
+      throw new Error(
+        "Cannot record a decision on a closed execution episode",
+      );
+    }
+    const evidenceBytes = executionEpisodeBytes(
+      input.evidence,
+      "recordDecision evidence",
+    );
+    const response = await this.post<T>("/v1/observe", stripUndefined({
+      observation_kind: "execution_episode",
+      event_kind: "agent_decision_recorded",
+      operation_id: input.operation_id,
+      episode_id: input.handle.episode_id,
+      workspace_root: input.handle.workspace_root,
+      expected_current_state_snapshot_id:
+        input.expected_current_state_snapshot_id
+        ?? input.handle.current_state_snapshot_id,
+      decision: input.decision,
+      reasons: input.reasons,
+      alternatives_rejected: input.alternatives_rejected,
+      authority: input.authority,
+      evidence_kind: input.evidence_kind,
+      evidence_base64: evidenceBytes.toString("base64"),
+      evidence_media_type: input.evidence_media_type,
+      evidence_encoding: input.evidence_encoding,
+      decisive_evidence: input.decisive_evidence,
+      session_lease_v1: input.session_lease_v1,
+    }), executionEpisodeOptions(input.handle, options));
+    return {
+      handle: updateExecutionEpisodeHandle(input.handle, response),
+      response,
+    };
+  }
+
+  async recordEpisodeProgress<T = unknown>(
+    input: AionisRecordEpisodeProgressInput,
+    options?: AionisRequestOptions,
+  ): Promise<AionisExecutionEpisodeOperationResult<T>> {
+    if (input.handle.closed) {
+      throw new Error(
+        "Cannot record progress on a closed execution episode",
+      );
+    }
+    const evidenceBytes = executionEpisodeBytes(
+      input.evidence,
+      "recordProgress evidence",
+    );
+    const response = await this.post<T>("/v1/observe", stripUndefined({
+      observation_kind: "execution_episode",
+      event_kind: "progress_state_recorded",
+      operation_id: input.operation_id,
+      episode_id: input.handle.episode_id,
+      workspace_root: input.handle.workspace_root,
+      expected_current_state_snapshot_id:
+        input.expected_current_state_snapshot_id
+        ?? input.handle.current_state_snapshot_id,
+      item_id: input.item_id,
+      state: input.state,
+      statement: input.statement,
+      authority: input.authority,
+      evidence_kind: input.evidence_kind,
+      evidence_base64: evidenceBytes.toString("base64"),
+      evidence_media_type: input.evidence_media_type,
+      evidence_encoding: input.evidence_encoding,
+      decisive_evidence: input.decisive_evidence,
+      session_lease_v1: input.session_lease_v1,
+    }), executionEpisodeOptions(input.handle, options));
+    return {
+      handle: updateExecutionEpisodeHandle(input.handle, response),
+      response,
+    };
+  }
+
+  async recordEpisodePlannedAction<T = unknown>(
+    input: AionisRecordEpisodePlannedActionInput,
+    options?: AionisRequestOptions,
+  ): Promise<AionisExecutionEpisodeOperationResult<T>> {
+    if (input.handle.closed) {
+      throw new Error(
+        "Cannot record a planned action on a closed execution episode",
+      );
+    }
+    const evidenceBytes = executionEpisodeBytes(
+      input.evidence,
+      "recordPlannedAction evidence",
+    );
+    const response = await this.post<T>("/v1/observe", stripUndefined({
+      observation_kind: "execution_episode",
+      event_kind: "planned_action_recorded",
+      operation_id: input.operation_id,
+      episode_id: input.handle.episode_id,
+      workspace_root: input.handle.workspace_root,
+      expected_current_state_snapshot_id:
+        input.expected_current_state_snapshot_id
+        ?? input.handle.current_state_snapshot_id,
+      action_id: input.action_id,
+      intent: input.intent,
+      justification: input.justification,
+      preconditions: input.preconditions,
+      authority: input.authority,
+      evidence_kind: input.evidence_kind,
+      evidence_base64: evidenceBytes.toString("base64"),
+      evidence_media_type: input.evidence_media_type,
+      evidence_encoding: input.evidence_encoding,
+      decisive_evidence: input.decisive_evidence,
+      session_lease_v1: input.session_lease_v1,
+    }), executionEpisodeOptions(input.handle, options));
+    return {
+      handle: updateExecutionEpisodeHandle(input.handle, response),
+      response,
+    };
+  }
+
+  async recordMutation<T = unknown>(
+    input: AionisRecordEpisodeMutationInput,
+    options?: AionisRequestOptions,
+  ): Promise<AionisExecutionEpisodeOperationResult<T>> {
+    if (input.handle.closed) {
+      throw new Error(
+        "Cannot record a mutation on a closed execution episode",
+      );
+    }
+    const response = await this.post<T>("/v1/observe", {
+      observation_kind: "execution_episode",
+      event_kind: "state_mutation",
+      operation_id: input.operation_id,
+      episode_id: input.handle.episode_id,
+      workspace_root: input.handle.workspace_root,
+      expected_current_state_snapshot_id:
+        input.expected_current_state_snapshot_id
+        ?? input.handle.current_state_snapshot_id,
+      action_kind: input.mutation_kind,
+      request_base64: executionEpisodeBytes(
+        {
+          mutation_kind: input.mutation_kind,
+          details: input.details ?? {},
+        },
+        "recordMutation details",
+      ).toString("base64"),
+      result_base64: executionEpisodeBytes(
+        { observed: true },
+        "recordMutation result",
+      ).toString("base64"),
+      session_lease_v1: input.session_lease_v1,
+    }, executionEpisodeOptions(input.handle, options));
+    return {
+      handle: updateExecutionEpisodeHandle(input.handle, response),
+      response,
+    };
+  }
+
+  async restoreEpisodeSnapshot<T = unknown>(
+    input: AionisRestoreEpisodeSnapshotInput,
+    options?: AionisRequestOptions,
+  ): Promise<AionisExecutionEpisodeOperationResult<T>> {
+    if (input.handle.closed) {
+      throw new Error(
+        "Cannot restore a snapshot on a closed execution episode",
+      );
+    }
+    if (
+      input.expected_current_state_snapshot_id !== undefined
+      && input.expected_current_state_snapshot_id
+        !== input.handle.current_state_snapshot_id
+    ) {
+      throw new Error(
+        "Execution episode snapshot recovery source state cannot change",
+      );
+    }
+    const response = await this.post<T>(
+      "/v1/observe",
+      stripUndefined({
+        observation_kind: "execution_episode",
+        event_kind: "snapshot_restored",
+        operation_id: input.operation_id,
+        episode_id: input.handle.episode_id,
+        workspace_root: input.handle.workspace_root,
+        expected_current_state_snapshot_id:
+          input.expected_current_state_snapshot_id
+          ?? input.handle.current_state_snapshot_id,
+        target_snapshot_id: input.target_snapshot_id,
+        session_lease_v1: input.session_lease_v1,
+      }),
+      executionEpisodeOptions(input.handle, options),
+    );
+    return {
+      handle: updateExecutionEpisodeHandle(input.handle, response),
+      response,
+    };
+  }
+
+  async runEpisodeVerifier<T = unknown>(
+    input: AionisRunEpisodeVerifierInput,
+    options?: AionisRequestOptions,
+  ): Promise<AionisExecutionEpisodeOperationResult<T>> {
+    if (input.handle.closed) {
+      throw new Error("Cannot run a verifier on a closed execution episode");
+    }
+    if (
+      input.expected_current_state_snapshot_id !== undefined
+      && input.expected_current_state_snapshot_id
+        !== input.handle.current_state_snapshot_id
+    ) {
+      throw new Error(
+        "Execution episode verifier target state cannot change",
+      );
+    }
+    const response = await this.post<T>("/v1/feedback", {
+      feedback_kind: "episode_outcome",
+      event_kind: "run_verifier",
+      operation_id: input.operation_id,
+      episode_id: input.handle.episode_id,
+      workspace_root: input.handle.workspace_root,
+      expected_current_state_snapshot_id:
+        input.handle.current_state_snapshot_id,
+      session_lease_v1: input.session_lease_v1,
+    }, executionEpisodeOptions(input.handle, options));
+    const responseRecord = asRecord(response);
+    const invocation = asRecord(responseRecord?.invocation);
+    const targetStateSnapshotId = coerceString(
+      invocation?.target_state_snapshot_id,
+    );
+    if (
+      targetStateSnapshotId !== input.handle.current_state_snapshot_id
+    ) {
+      throw new Error(
+        "Runtime verifier target state does not match the execution episode handle",
+      );
+    }
+    return {
+      handle: updateExecutionEpisodeHandle(input.handle, response),
+      response,
+    };
+  }
+
+  async closeEpisode<T = unknown>(
+    input: AionisCloseEpisodeInput,
+    options?: AionisRequestOptions,
+  ): Promise<AionisExecutionEpisodeOperationResult<T>> {
+    const cost = input.cost
+      ? stripUndefined({
+        provider: input.cost.provider,
+        model: input.cost.model,
+        input_tokens: input.cost.input_tokens,
+        output_tokens: input.cost.output_tokens,
+        cached_input_tokens: input.cost.cached_input_tokens,
+        token_usage_authority: input.cost.token_usage_authority,
+        usage_receipt_base64: executionEpisodeBytes(
+          input.cost.usage_receipt,
+          "closeEpisode usage_receipt",
+        ).toString("base64"),
+        usage_receipt_media_type:
+          input.cost.usage_receipt_media_type,
+        usage_receipt_encoding: input.cost.usage_receipt_encoding,
+        monetary_cost_micros: input.cost.monetary_cost_micros,
+        currency: input.cost.currency,
+        producer_id: input.cost.producer_id,
+      })
+      : undefined;
+    const response = await this.post<T>("/v1/feedback", stripUndefined({
+      feedback_kind: "episode_outcome",
+      event_kind: "episode_closed",
+      operation_id: input.operation_id,
+      episode_id: input.handle.episode_id,
+      workspace_root: input.handle.workspace_root,
+      expected_current_state_snapshot_id:
+        input.expected_current_state_snapshot_id
+        ?? input.handle.current_state_snapshot_id,
+      termination: input.termination,
+      verifier_receipt_id: input.verifier_receipt_id,
+      outcome_details: input.outcome_details,
+      cost,
+      session_lease_v1: input.session_lease_v1,
+    }), executionEpisodeOptions(input.handle, options));
+    return {
+      handle: updateExecutionEpisodeHandle(input.handle, response, true),
+      response,
+    };
+  }
+
+// </aionis-runtime-owned:execution-episode-client>
+
   async remember<T = unknown>(body: AionisRememberRequest, options?: AionisRequestOptions): Promise<T> {
     return this.observe<T>(rememberBody(body), options);
   }
 
   async guide<T = unknown>(body: AionisGuideRequest, options?: AionisGuideRequestOptions): Promise<T> {
-    return this.post<T>("/v1/guide", this.guideBody(body, options), options);
+    return this.post<T>("/v1/guide", stripUndefined(body), options);
   }
 
   async resolveMemory<T = unknown>(body: AionisMemoryResolveRequest, options?: AionisRequestOptions): Promise<T> {
@@ -2466,110 +3355,16 @@ export class AionisClient {
     contextOptions: AionisGuideAgentContextOptions = {},
   ): Promise<AionisGuideAgentContextResult<TGuide>> {
     const guide = await this.guide<TGuide>(body, options);
-    const bodyRecord = asRecord(body) ?? {};
-    const effectiveContextOptions = { ...contextOptions };
-    const { tenant_id: tenantId, scope } = guideTenantScope(guide, {
-      tenant_id: options?.tenant_id ?? coerceString(bodyRecord.tenant_id) ?? this.tenantId ?? undefined,
-      scope: options?.scope ?? coerceString(bodyRecord.scope) ?? this.scope ?? undefined,
-    });
-    const evidenceLimit = effectiveContextOptions.evidence_limit ?? 6;
-    const resolveTypes = effectiveContextOptions.resolve_types ?? DEFAULT_RESOLVE_TYPES;
-    const onResolveError = effectiveContextOptions.on_resolve_error ?? "include_placeholder";
-    const evidenceRows = resolveEvidenceIds(guide, effectiveContextOptions).slice(0, evidenceLimit);
-    const resolvedEvidence: AionisResolvedAgentEvidence[] = [];
-    const consumerAgentId = coerceString(bodyRecord.consumer_agent_id);
-    const consumerTeamId = coerceString(bodyRecord.consumer_team_id);
-
-    for (const row of evidenceRows) {
-      if (!AIONIS_MEMORY_ID_RE.test(row.memory_id)) {
-        if (onResolveError === "throw") {
-          throw new Error(`Cannot resolve non-Aionis memory id: ${row.memory_id}`);
-        }
-        if (onResolveError === "include_placeholder") {
-          resolvedEvidence.push({
-            memory_id: row.memory_id,
-            surface: row.surface,
-            uri: null,
-            resolved_type: null,
-            resolved: false,
-            source: "unresolved",
-            evidence_text: "",
-            error: { message: "memory id is not an Aionis UUID; external memory ids are adjudicated but not resolvable through /v1/memory/resolve" },
-          });
-        }
-        continue;
-      }
-
-      let lastError: unknown = null;
-      let resolved = false;
-      for (const type of resolveTypes) {
-        const uri = buildClientAionisUri({ tenant_id: tenantId, scope, type, id: row.memory_id });
-        try {
-          const response = await this.resolveMemory<unknown>({
-            uri,
-            include_meta: true,
-            include_slots: true,
-            ...(consumerAgentId ? { consumer_agent_id: consumerAgentId } : {}),
-            ...(consumerTeamId ? { consumer_team_id: consumerTeamId } : {}),
-          }, options);
-          const extracted = nodeEvidenceText(response);
-          resolvedEvidence.push({
-            memory_id: row.memory_id,
-            surface: row.surface,
-            uri,
-            resolved_type: type,
-            resolved: true,
-            source: extracted.source,
-            evidence_text: extracted.text,
-            response,
-          });
-          resolved = true;
-          break;
-        } catch (error) {
-          lastError = error;
-          if (error instanceof AionisClientError && error.status === 404) continue;
-          if (onResolveError === "throw") throw error;
-          break;
-        }
-      }
-      if (!resolved && onResolveError !== "skip") {
-        resolvedEvidence.push({
-          memory_id: row.memory_id,
-          surface: row.surface,
-          uri: null,
-          resolved_type: null,
-          resolved: false,
-          source: "unresolved",
-          evidence_text: "",
-          error: {
-            message: lastError instanceof Error ? lastError.message : "memory resolve failed",
-            ...(lastError instanceof AionisClientError ? { status: lastError.status } : {}),
-          },
-        });
-      }
-    }
-
-    const merged = mergeCompiledContextWithEvidence({
+    return guideAgentContextFromGuideResponse({
       guide,
-      resolvedEvidence,
-      options: effectiveContextOptions,
+      body,
+      options,
+      contextOptions,
+      defaultTenantId: this.tenantId,
+      defaultScope: this.scope,
+      resolveMemory: (resolveBody, requestOptions) =>
+        this.resolveMemory(resolveBody, requestOptions),
     });
-    const unresolvedMemoryIds = resolvedEvidence
-      .filter((entry) => !entry.resolved)
-      .map((entry) => entry.memory_id);
-
-    return {
-      contract_version: "aionis_sdk_agent_context_with_evidence_v1",
-      guide,
-      compiled_context: merged.compiled_context,
-      agent_context: asRecord(guide)?.agent_context ?? null,
-      agent_prompt: merged.agent_prompt,
-      resolved_evidence: resolvedEvidence,
-      unresolved_memory_ids: unresolvedMemoryIds,
-      evidence_char_count: merged.evidence_char_count,
-      prompt_char_count: merged.agent_prompt.length,
-      guide_trace_id: guideTraceIdValue(guide),
-    };
   }
 
   async guideWithEvidence<TGuide = unknown>(
@@ -2578,32 +3373,6 @@ export class AionisClient {
     contextOptions?: AionisGuideAgentContextOptions,
   ): Promise<AionisGuideAgentContextResult<TGuide>> {
     return this.guideAgentContext<TGuide>(body, options, contextOptions);
-  }
-
-  async governMemory<T = AionisMemoryAdmissionGatewayResponse>(
-    body: AionisMemoryAdmissionRequest,
-    options?: AionisRequestOptions,
-  ): Promise<T> {
-    return this.post<T>("/v1/memory/govern", body, options);
-  }
-
-  async governMem0SearchResults<T = AionisMemoryAdmissionGatewayResponse>(
-    input: AionisGovernMem0SearchResultsInput,
-    options?: AionisRequestOptions,
-  ): Promise<T> {
-    const rawBody = { ...(input as AionisJsonObject) };
-    delete rawBody.mem0_results;
-    delete rawBody.mapper;
-    delete rawBody.candidates;
-    const requestBody: AionisMemoryAdmissionRequest = {
-      ...rawBody,
-      query_text: input.query_text,
-      mode: input.mode ?? "firewall",
-      context_mode: input.context_mode ?? "compact_agent",
-      include_records: input.include_records ?? true,
-      candidates: mem0SearchResultsToAionisCandidates(input.mem0_results, input.mapper),
-    };
-    return this.governMemory<T>(requestBody, options);
   }
 
   async forget<T = unknown>(body: AionisJsonObject, options?: AionisRequestOptions): Promise<T> {
@@ -2618,42 +3387,6 @@ export class AionisClient {
     return this.post<T>("/v1/rehydrate", body, options);
   }
 
-  async measure<T = AionisMeasureResult>(body: AionisJsonObject, options?: AionisRequestOptions): Promise<T> {
-    return this.post<T>("/v1/measure", body, options);
-  }
-
-  async materializeSkillCandidate<T = AionisSkillCandidateMaterializeResult>(
-    candidateId: string,
-    body: AionisJsonObject = {},
-    options?: AionisRequestOptions,
-  ): Promise<T> {
-    const id = candidateId.trim();
-    if (!id) throw new Error("candidateId is required");
-    return this.post<T>(`/v1/skills/candidates/${encodeURIComponent(id)}/materialize`, body, options);
-  }
-
-  async observeMaterializedSkillCandidate<T = unknown>(
-    materialized: AionisSkillCandidateMaterializeResult,
-    options?: AionisRequestOptions,
-  ): Promise<T> {
-    return this.observe<T>(materialized.recommended_observe_payload, options);
-  }
-
-  async operatorSnapshot<T = unknown>(body: AionisJsonObject, options?: AionisRequestOptions): Promise<T> {
-    return this.post<T>("/v1/operator/snapshot", body, options);
-  }
-
-  async flightRecorder<T = AionisAgentFlightRecorderResponse>(
-    body: AionisAgentFlightRecorderRequest,
-    options?: AionisRequestOptions,
-  ): Promise<T> {
-    return this.post<T>("/v1/audit/flight-recorder", body, options);
-  }
-
-  async snapshot<T = unknown>(body: AionisJsonObject, options?: AionisRequestOptions): Promise<T> {
-    return this.operatorSnapshot<T>(body, options);
-  }
-
   async health<T = unknown>(): Promise<T> {
     const response = await this.fetchImpl(`${this.baseUrl}/health`, {
       method: "GET",
@@ -2665,37 +3398,42 @@ export class AionisClient {
   }
 
   private async post<T>(path: string, body: AionisJsonObject, options?: AionisRequestOptions): Promise<T> {
-    const response = await this.fetchImpl(`${this.baseUrl}${path}`, {
-      method: "POST",
-      headers: this.requestHeaders(options),
-      body: JSON.stringify(scopedBody(body, {
-        tenant_id: this.tenantId ?? undefined,
-        scope: this.scope ?? undefined,
-      }, options)),
-    });
-    const payload = await readResponseBody(response);
-    if (!response.ok) throw new AionisClientError(response.status, path, payload);
-    return payload as T;
-  }
+    const requestBody = scopedBody(body, {
+      tenant_id: this.tenantId ?? undefined,
+      scope: this.scope ?? undefined,
+    }, options);
+    const serializedBody = JSON.stringify(requestBody);
+    const replaySafe = (
+      AIONIS_REPLAY_SAFE_POST_PATHS.has(path)
+      && typeof requestBody.operation_id === "string"
+      && requestBody.operation_id.trim().length > 0
+    );
 
-  private guideBody(body: AionisJsonObject, options?: AionisGuideRequestOptions): AionisJsonObject {
-    const compactBody = stripUndefined(body);
-    const guideMode = options?.guide_mode === undefined ? this.defaultGuideMode : options.guide_mode;
-    if (compactBody.mode !== undefined) return compactBody;
-    if (compactBody.context_mode !== undefined) {
-      if (compactBody.context_mode === "compact_agent" && guideMode) {
-        return {
-          mode: guideMode,
-          ...compactBody,
-        };
+    for (let attempt = 0; attempt < 2; attempt += 1) {
+      try {
+        const response = await this.fetchImpl(`${this.baseUrl}${path}`, {
+          method: "POST",
+          headers: this.requestHeaders(options),
+          body: serializedBody,
+        });
+        const payload = await readResponseBody(response);
+        if (!response.ok) {
+          throw new AionisClientError(response.status, path, payload);
+        }
+        return payload as T;
+      } catch (error) {
+        if (
+          attempt === 0
+          && replaySafe
+          && isRetryableAionisTransportError(error)
+        ) {
+          continue;
+        }
+        throw error;
       }
-      return compactBody;
     }
-    if (!guideMode) return compactBody;
-    return {
-      mode: guideMode,
-      ...compactBody,
-    };
+
+    throw new Error("Aionis replay-safe request retry exhausted");
   }
 
   private requestHeaders(options?: AionisRequestOptions): Record<string, string> {
@@ -2708,316 +3446,63 @@ export class AionisClient {
   }
 }
 
-export class AionisExecutionClient {
+export class AionisAgentSessionClient {
   private readonly client: AionisClient;
 
   constructor(client: AionisClient) {
     this.client = client;
   }
 
-  compileAgentContext(input: AionisExecutionAgentContextCompileInput): AionisCompiledExecutionAgentContext {
-    return compileExecutionAgentContext(input);
-  }
-
-  async observeStep<T = unknown>(input: AionisExecutionStepInput, options?: AionisRequestOptions): Promise<T> {
-    return this.client.observe<T>({
-      ...executionObserveBase(input),
-      input_text: input.input_text ?? `${input.title}\n${input.summary}`,
-      execution: executionPayload(input),
-    }, {
-      ...executionScopeOptions(input),
-      ...(options ?? {}),
-    });
-  }
-
-  async handoff<T = unknown>(input: AionisExecutionHandoffInput, options?: AionisRequestOptions): Promise<T> {
-    return this.client.observe<T>({
-      ...executionObserveBase(input),
-      handoff: executionHandoffPayload(input),
-    }, {
-      ...executionScopeOptions(input),
-      ...(options ?? {}),
-    });
-  }
-
-  async guideForRole<T = unknown>(
-    input: AionisExecutionGuideForRoleInput,
-    options?: AionisGuideRequestOptions,
-  ): Promise<T> {
-    const agentId = executionAgentId(input);
-    return this.client.guide<T>({
-      query_text: input.query_text,
-      agent_role: executionRole(input),
-      consumer_agent_id: agentId,
-      consumer_team_id: input.team_id,
-      run_id: input.run_id,
-      context: {
-        task_id: input.task_id,
-        task_signature: input.task_signature,
-        task_family: input.task_family,
-        workflow_signature: input.workflow_signature,
-        ...(input.context ?? {}),
-      },
-      execution_tree_v1: input.execution_tree_v1 ?? undefined,
-      tool_candidates: input.tool_candidates,
-      limit: input.limit ?? 10,
-      include_packets: input.include_packets ?? true,
-      mode: input.mode,
-      context_mode: input.context_mode,
-      context_char_budget: input.context_char_budget,
-      context_token_budget: input.context_token_budget,
-      context_compaction_profile: input.context_compaction_profile,
-      context_optimization_profile: input.context_optimization_profile,
-      ...(input.guide ?? {}),
-      ...(input.operation_id !== undefined ? { operation_id: input.operation_id } : {}),
-      ...(input.host_task_envelope_v1 !== undefined
-        ? { host_task_envelope_v1: input.host_task_envelope_v1 }
-        : {}),
-      ...(input.task_context_profile ? { task_context_profile: input.task_context_profile } : {}),
-    }, {
-      ...executionScopeOptions(input),
-      ...(options ?? {}),
-    });
-  }
-
-  async guideAgentContextForRole<TGuide = unknown>(
-    input: AionisExecutionGuideForRoleInput,
-    options?: AionisGuideRequestOptions,
-    contextOptions: AionisGuideAgentContextOptions = {},
-  ): Promise<AionisGuideAgentContextResult<TGuide>> {
-    const agentId = executionAgentId(input);
-    return this.client.guideAgentContext<TGuide>({
-      query_text: input.query_text,
-      agent_role: executionRole(input),
-      consumer_agent_id: agentId,
-      consumer_team_id: input.team_id,
-      run_id: input.run_id,
-      context: {
-        task_id: input.task_id,
-        task_signature: input.task_signature,
-        task_family: input.task_family,
-        workflow_signature: input.workflow_signature,
-        ...(input.context ?? {}),
-      },
-      execution_tree_v1: input.execution_tree_v1 ?? undefined,
-      tool_candidates: input.tool_candidates,
-      limit: input.limit ?? 10,
-      include_packets: input.include_packets ?? true,
-      mode: input.mode,
-      context_mode: input.context_mode,
-      context_char_budget: input.context_char_budget,
-      context_token_budget: input.context_token_budget,
-      context_compaction_profile: input.context_compaction_profile,
-      context_optimization_profile: input.context_optimization_profile,
-      ...(input.guide ?? {}),
-      ...(input.operation_id !== undefined ? { operation_id: input.operation_id } : {}),
-      ...(input.host_task_envelope_v1 !== undefined
-        ? { host_task_envelope_v1: input.host_task_envelope_v1 }
-        : {}),
-      ...(input.task_context_profile ? { task_context_profile: input.task_context_profile } : {}),
-    }, {
-      ...executionScopeOptions(input),
-      ...(options ?? {}),
-    }, {
-      task: contextOptions.task ?? {
-        task_id: input.task_id,
-        run_id: input.run_id,
-        task_signature: input.task_signature,
-        query_text: input.query_text,
-      },
-      ...contextOptions,
-    });
-  }
-
-  async observeOutcome<TObserve = unknown, TFeedback = unknown>(
-    input: AionisExecutionOutcomeInput,
+  async begin(
+    input: AionisBeginAgentSessionInput,
     options?: AionisRequestOptions,
-  ): Promise<AionisExecutionOutcomeResult<TObserve, TFeedback>> {
-    const observe = await this.observeStep<TObserve>(input, options);
-    const feedback = input.feedback === false ? null : await this.feedbackFromOutcome<TFeedback>(input, options);
-    return { observe, feedback };
+  ): Promise<AionisAgentSession> {
+    const result = await this.client.beginAgentSession(input, options);
+    return new AionisAgentSession(this.client, result.handle);
   }
 
-  async feedbackFromOutcome<T = unknown>(
-    input: AionisExecutionOutcomeInput,
+  attach(
+    serializedHandle: AionisAgentSessionHandleV1,
+  ): AionisAgentSession {
+    return new AionisAgentSession(
+      this.client,
+      canonicalAgentSessionHandle(serializedHandle),
+    );
+  }
+
+  async resume(
+    serializedHandle: AionisAgentSessionHandleV1,
+    input: Readonly<{
+      operation_id: string;
+      lease_ttl_ms?: number;
+    }>,
     options?: AionisRequestOptions,
-  ): Promise<T | null> {
-    const usedMemoryIds = input.used_memory_ids ?? [];
-    if (input.host_use_receipt_v1 && usedMemoryIds.length === 0) {
-      throw new Error("Aionis execution formal feedback requires used_memory_ids matching the host-use receipt");
-    }
-    if (input.host_use_receipt_v1 && !input.guide) {
-      throw new Error("Aionis execution host-use receipt feedback requires the source guide response");
-    }
-    if (usedMemoryIds.length === 0) return null;
-    if (!input.guide) {
-      throw new AionisGuideFeedbackError(
-        "guide_feedback_attribution_missing",
-        "Aionis execution feedback requires the source guide response with feedback_attribution_v1",
+  ): Promise<AionisAgentSession> {
+    const expected = canonicalAgentSessionHandle(serializedHandle);
+    const result = await this.client.resumeAgentSession({
+      operation_id: input.operation_id,
+      session_key: expected.session_key,
+      holder_id: expected.holder_id,
+      workspace_root: expected.episode.workspace_root,
+      lease_ttl_ms: input.lease_ttl_ms,
+      tenant_id: expected.episode.tenant_id,
+      scope: expected.episode.scope,
+    }, executionEpisodeOptions(expected.episode, options));
+    if (
+      result.handle.session_key !== expected.session_key
+      || result.handle.continuation_id !== expected.continuation_id
+      || result.handle.episode.episode_id !== expected.episode.episode_id
+    ) {
+      throw new Error(
+        "Runtime execution-session identity changed while resuming a serialized handle",
       );
     }
-    return this.client.feedback<T>(feedbackFromGuide({
-      guide: input.guide,
-      operation_id: input.feedback_operation_id,
-      host_use_receipt_v1: input.host_use_receipt_v1,
-      reason: input.feedback_reason ?? input.summary,
-      run_id: input.run_id,
-      outcome: executionFeedbackOutcome(input),
-      used_memory_ids: usedMemoryIds,
-      used_surface: input.used_surface,
-      actor: input.agent_id,
-      verifier_status: input.host_use_receipt_v1
-        ? input.verifier_status ?? "passed"
-        : executionVerifierStatus(input),
-      tool_status: executionToolStatus(input),
-      runtime_signal_refs: input.runtime_signal_refs,
-    }), {
-      ...executionScopeOptions(input),
-      ...(options ?? {}),
-    });
-  }
-
-  async measureRun<T = AionisMeasureResult>(input: AionisExecutionMeasureRunInput, options?: AionisRequestOptions): Promise<T> {
-    return this.client.measure<T>(measureInputFromGuideLoop({
-      operation_id: input.operation_id,
-      task: {
-        task_id: input.task_id ?? input.run_id,
-        run_id: input.run_id,
-        task_signature: input.task_signature,
-        task_family: input.task_family,
-        workflow_signature: input.workflow_signature,
-      },
-      before_guide: input.before_guide,
-      after_guide: input.after_guide,
-      feedback_result: input.feedback_result,
-      sufficient_evidence: input.sufficient_evidence,
-      evidence_ids: input.evidence_ids,
-      tenant_id: input.tenant_id,
-      scope: input.scope,
-      product_trace: input.product_trace,
-    }), options);
-  }
-
-  async snapshotRun<T = unknown>(input: AionisExecutionSnapshotRunInput, options?: AionisRequestOptions): Promise<T> {
-    return this.client.snapshot<T>(snapshotInputFromGuideLoop({
-      run_id: input.run_id,
-      task_signature: input.task_signature,
-      task_family: input.task_family,
-      guide: input.guide,
-      measure_result: input.measure_result,
-      include_markdown: input.include_markdown,
-      tenant_id: input.tenant_id,
-      scope: input.scope,
-      extra: {
-        workflow_signature: input.workflow_signature,
-        ...(input.extra ?? {}),
-      },
-    }), options);
+    return new AionisAgentSession(this.client, result.handle);
   }
 }
 
 export function createAionisClient(options: AionisClientOptions): AionisClient {
   return new AionisClient(options);
-}
-
-function planAssetId(input: AionisPlanAssetObserveInput): string {
-  return input.plan.plan_id ?? `plan:${stableTextHash([
-    input.run_id,
-    input.task_signature,
-    input.workflow_signature ?? "",
-    input.plan.title,
-    input.plan.summary,
-  ].join("\n"))}`;
-}
-
-function planAssetTargetFiles(plan: AionisPlanAsset): string[] {
-  return uniqueStrings(plan.decisions.flatMap((decision) => decision.target_files ?? []));
-}
-
-function planAssetSummary(input: AionisPlanAssetObserveInput, planId: string): string {
-  const decisionLines = input.plan.decisions.map((decision) => [
-    `PLAN_DECISION ${decision.decision_id}: ${decision.statement}`,
-    decision.rationale ? `Rationale: ${decision.rationale}` : "",
-    ...(decision.alternatives_rejected ?? []).map((entry) => `Rejected alternative: ${entry}`),
-  ].filter(Boolean).join(" "));
-  return [
-    "PLAN_AS_MEMORY_ASSET",
-    `Plan ID: ${planId}`,
-    input.plan.artifact_ref ? `Artifact: ${input.plan.artifact_ref}` : "",
-    input.planner.model ? `Planner model: ${input.planner.model}` : "",
-    input.plan.summary,
-    ...decisionLines,
-    ...input.plan.acceptance_checks.map((check, index) => `PLAN_ACCEPTANCE_CHECK ${index + 1}: ${check}`),
-    ...input.plan.execution_boundaries.map((boundary, index) => `PLAN_EXECUTION_BOUNDARY ${index + 1}: ${boundary}`),
-    `Rejected branch count: ${input.plan.failed_branches?.length ?? 0}`,
-  ].filter(Boolean).join("\n");
-}
-
-export function planAssetObserveEvents(input: AionisPlanAssetObserveInput): AionisExecutionStepInput[] {
-  const planId = planAssetId(input);
-  const targetFiles = planAssetTargetFiles(input.plan);
-  const base = {
-    run_id: input.run_id,
-    task_id: input.task_id,
-    task_signature: input.task_signature,
-    task_family: input.task_family,
-    workflow_signature: input.workflow_signature,
-    tenant_id: input.tenant_id,
-    scope: input.scope,
-    memory_lane: input.memory_lane,
-    auto_embed: input.auto_embed,
-    agent_id: input.planner.agent_id,
-    team_id: input.planner.team_id,
-    role: "planner" as const,
-  };
-  const planEvent: AionisExecutionStepInput = {
-    ...base,
-    title: input.plan.title,
-    summary: planAssetSummary(input, planId),
-    outcome: "succeeded",
-    target_files: targetFiles,
-    acceptance_checks: input.plan.acceptance_checks,
-    continuation_hint: "Use this plan as adjudicated execution memory; preserve decisions, acceptance checks, boundaries, and rejected branches.",
-    slots: stripUndefined({
-      plan_asset_v1: stripUndefined({
-        plan_id: planId,
-        artifact_ref: input.plan.artifact_ref,
-        planner_model: input.planner.model,
-        decision_ids: input.plan.decisions.map((decision) => decision.decision_id),
-        acceptance_check_count: input.plan.acceptance_checks.length,
-        execution_boundary_count: input.plan.execution_boundaries.length,
-        rejected_branch_count: input.plan.failed_branches?.length ?? 0,
-      }),
-      evidence_kind: "plan_asset",
-    }),
-  };
-  const rejectedBranchEvents = (input.plan.failed_branches ?? []).map((branch): AionisExecutionStepInput => ({
-    ...base,
-    title: `Rejected plan branch: ${branch.branch_id}`,
-    summary: [
-      "PLAN_REJECTED_BRANCH",
-      `Plan ID: ${planId}`,
-      `${branch.branch_id}: rejected branch.`,
-      `Reason: ${truncateText(branch.reason, 120)}`,
-      "counter-evidence only; do not use as primary route.",
-    ].join("\n"),
-    outcome: "failed",
-    target_files: branch.target_files ?? [],
-    acceptance_checks: input.plan.acceptance_checks,
-    continuation_hint: "Do not continue this rejected plan branch as the primary route.",
-    slots: stripUndefined({
-      plan_asset_v1: stripUndefined({
-        plan_id: planId,
-        rejected_branch_id: branch.branch_id,
-        artifact_ref: input.plan.artifact_ref,
-        planner_model: input.planner.model,
-        rejected_branch_statement: branch.statement,
-        rejected_branch_reason: branch.reason,
-      }),
-      evidence_kind: "plan_rejected_branch",
-    }),
-  }));
-  return [planEvent, ...rejectedBranchEvents];
 }
 
 export function agentContextFromGuide<T = AionisJsonObject>(guide: unknown): T {
@@ -3040,280 +3525,6 @@ export function rehydrateHintsFromGuide(guide: unknown): AionisRehydrateHint[] {
   return rehydrateRequestsFromGuide(guide);
 }
 
-export function memoryUseReceiptFromGuide(guide: unknown): AionisMemoryUseReceipt {
-  return receiptFromGuideTrace(guide) ?? generatedMemoryUseReceipt(guide);
-}
-
-export function memoryAdmissionRecordFromGuide(guide: unknown): AionisMemoryAdmissionRecord {
-  const record = admissionRecordFromGuideTrace(guide);
-  if (record) return record;
-  const receipt = memoryUseReceiptFromGuide(guide);
-  const entries = receipt.decision_summaries.map((summary) => ({
-    memory_id: summary.memory_id,
-    title: null,
-    domain: "execution" as const,
-    memory_type: "unknown" as const,
-    lifecycle_state: "unknown" as const,
-    authority: "none" as const,
-    admission_action: summary.agent_surface,
-    decision_kind: summary.decision_kind,
-    actionable: summary.actionable,
-    prompt_included: summary.agent_surface !== "not_agent_facing",
-    agent_used: receipt.attributed_memory_ids.includes(summary.memory_id),
-    feedback_outcome: null,
-    attribution_strength: null,
-    reason_codes: summary.reason_codes,
-    evidence_ids: [],
-  }));
-  return {
-    contract_version: "aionis_memory_admission_record_v1",
-    intended_use: "memory_admission_audit_dataset",
-    source: "memory_decision_trace",
-    agent_prompt_included: false,
-    runtime_mutation: false,
-    tenant_id: guideTenantId(guide),
-    scope: guideScope(guide),
-    guide_trace_id: receipt.guide_trace_id,
-    prompt_char_count: receipt.prompt_char_count,
-    history_used: receipt.history_used,
-    actionable_history_used: receipt.actionable_history_used,
-    candidate_memory_count: entries.length,
-    prompt_included_memory_count: entries.filter((entry) => entry.prompt_included).length,
-    agent_used_memory_count: entries.filter((entry) => entry.agent_used).length,
-    entries,
-    summary: `Aionis generated ${entries.length} compact admission records from memory use receipt surfaces; full decision details require Runtime memory_decision_trace.`,
-  };
-}
-
-function admissionDatasetOutcomeLabel(entry: AionisMemoryAdmissionRecordEntry): AionisMemoryAdmissionDatasetOutcomeLabel {
-  if (entry.agent_used && entry.feedback_outcome === "positive") return "positive_use";
-  if (entry.agent_used && entry.feedback_outcome === "negative") return "negative_use";
-  if (entry.agent_used && entry.feedback_outcome === "neutral") return "neutral_use";
-  if (entry.admission_action === "do_not_use") return "blocked_or_suppressed";
-  if (entry.admission_action === "rehydrate") return "rehydrate_requested";
-  if (entry.admission_action === "not_agent_facing") return "not_agent_facing";
-  if (entry.prompt_included && !entry.agent_used) return "unused_exposed";
-  return "unknown";
-}
-
-function admissionDatasetString(value: string | null | undefined): string | null {
-  return typeof value === "string" && value.length > 0 ? value : null;
-}
-
-type AdmissionDatasetPriorCounters = {
-  supported: number;
-  contradicted: number;
-  rehydrateRequested: number;
-};
-
-function emptyAdmissionDatasetPriorCounters(): AdmissionDatasetPriorCounters {
-  return {
-    supported: 0,
-    contradicted: 0,
-    rehydrateRequested: 0,
-  };
-}
-
-function closedLoopEffectStateFromPrior(
-  prior: AdmissionDatasetPriorCounters,
-): AionisMemoryAdmissionClosedLoopEffectState {
-  if (prior.supported > 0 && prior.contradicted > 0) return "mixed";
-  if (prior.contradicted > 0) return "contradicted";
-  if (prior.supported > 0) return "supported";
-  if (prior.rehydrateRequested > 0) return "rehydrate_requested";
-  return "no_prior";
-}
-
-function admissionDatasetPriorKey(row: Pick<AionisMemoryAdmissionDatasetRow, "memory_id">): string | null {
-  return admissionDatasetString(row.memory_id);
-}
-
-function updateAdmissionDatasetPriorCounters(
-  prior: AdmissionDatasetPriorCounters,
-  row: Pick<AionisMemoryAdmissionDatasetRow, "outcome_label">,
-): AdmissionDatasetPriorCounters {
-  const next = { ...prior };
-  if (row.outcome_label === "positive_use") next.supported += 1;
-  if (row.outcome_label === "negative_use") next.contradicted += 1;
-  if (row.outcome_label === "rehydrate_requested") next.rehydrateRequested += 1;
-  return next;
-}
-
-export function memoryAdmissionDatasetRowsWithClosedLoopPrior(
-  rows: AionisMemoryAdmissionDatasetRow[],
-): AionisMemoryAdmissionDatasetRow[] {
-  const priorByMemoryId = new Map<string, AdmissionDatasetPriorCounters>();
-  return rows.map((row) => {
-    const key = admissionDatasetPriorKey(row);
-    const prior = key ? (priorByMemoryId.get(key) ?? emptyAdmissionDatasetPriorCounters()) : emptyAdmissionDatasetPriorCounters();
-    const enriched: AionisMemoryAdmissionDatasetRow = {
-      ...row,
-      prior_supported_use_count: prior.supported,
-      prior_contradicted_use_count: prior.contradicted,
-      prior_rehydrate_requested_count: prior.rehydrateRequested,
-      closed_loop_effect_state: closedLoopEffectStateFromPrior(prior),
-      repeated_negative_posture: prior.contradicted >= 2,
-    };
-    if (key) {
-      priorByMemoryId.set(key, updateAdmissionDatasetPriorCounters(prior, row));
-    }
-    return enriched;
-  });
-}
-
-function baseMemoryAdmissionDatasetRowsFromRecord(
-  record: AionisMemoryAdmissionRecord,
-  options: AionisMemoryAdmissionDatasetExportOptions = {},
-): AionisMemoryAdmissionDatasetRow[] {
-  return record.entries.map((entry, index) => ({
-    contract_version: "aionis_memory_admission_dataset_row_v1",
-    intended_use: "memory_admission_policy_training_or_audit",
-    source: "memory_admission_record",
-    agent_prompt_included: false,
-    runtime_mutation: false,
-    policy_id: admissionDatasetString(options.policy_id) ?? AIONIS_ADMISSION_POLICY_ID,
-    policy_version: admissionDatasetString(options.policy_version) ?? AIONIS_ADMISSION_POLICY_VERSION,
-    policy_mode: admissionDatasetString(options.policy_mode) ?? AIONIS_ADMISSION_POLICY_MODE,
-    runtime_version: admissionDatasetString(options.runtime_version),
-    tenant_id: admissionDatasetString(record.tenant_id),
-    scope: admissionDatasetString(record.scope),
-    guide_trace_id: admissionDatasetString(record.guide_trace_id),
-    run_id: admissionDatasetString(options.run_id),
-    task_id: admissionDatasetString(options.task_id),
-    task_signature: admissionDatasetString(options.task_signature),
-    row_index: index,
-    memory_id: entry.memory_id,
-    title: entry.title,
-    memory_origin: entry.memory_origin ?? "aionis",
-    source_backend: admissionDatasetString(entry.source_backend ?? null),
-    domain: entry.domain,
-    memory_type: entry.memory_type,
-    lifecycle_state: entry.lifecycle_state,
-    authority: entry.authority,
-    admission_action: entry.admission_action,
-    decision_kind: entry.decision_kind,
-    actionable: entry.actionable,
-    prompt_included: entry.prompt_included,
-    agent_used: entry.agent_used,
-    feedback_outcome: entry.feedback_outcome,
-    attribution_strength: entry.attribution_strength,
-    outcome_label: admissionDatasetOutcomeLabel(entry),
-    reason_codes: [...entry.reason_codes],
-    evidence_ids: [...entry.evidence_ids],
-    prompt_char_count: record.prompt_char_count,
-    history_used: record.history_used,
-    actionable_history_used: record.actionable_history_used,
-    prior_supported_use_count: 0,
-    prior_contradicted_use_count: 0,
-    prior_rehydrate_requested_count: 0,
-    closed_loop_effect_state: "no_prior",
-    repeated_negative_posture: false,
-  }));
-}
-
-export function memoryAdmissionDatasetRowsFromRecord(
-  record: AionisMemoryAdmissionRecord,
-  options: AionisMemoryAdmissionDatasetExportOptions = {},
-): AionisMemoryAdmissionDatasetRow[] {
-  return memoryAdmissionDatasetRowsWithClosedLoopPrior(baseMemoryAdmissionDatasetRowsFromRecord(record, options));
-}
-
-export function memoryAdmissionDatasetRowsFromRecords(
-  records: AionisMemoryAdmissionRecord[],
-  options: AionisMemoryAdmissionDatasetExportOptions = {},
-): AionisMemoryAdmissionDatasetRow[] {
-  return memoryAdmissionDatasetRowsWithClosedLoopPrior(
-    records.flatMap((record) => baseMemoryAdmissionDatasetRowsFromRecord(record, options)),
-  );
-}
-
-export function memoryAdmissionDatasetRowsFromGuide(
-  guide: unknown,
-  options: AionisMemoryAdmissionDatasetExportOptions = {},
-): AionisMemoryAdmissionDatasetRow[] {
-  return memoryAdmissionDatasetRowsFromRecord(memoryAdmissionRecordFromGuide(guide), options);
-}
-
-export function memoryAdmissionDatasetJsonlFromRows(rows: AionisMemoryAdmissionDatasetRow[]): string {
-  const enrichedRows = memoryAdmissionDatasetRowsWithClosedLoopPrior(rows);
-  return enrichedRows.length > 0 ? `${enrichedRows.map((row) => JSON.stringify(row)).join("\n")}\n` : "";
-}
-
-export function memoryAdmissionDatasetJsonlFromRecord(
-  record: AionisMemoryAdmissionRecord,
-  options: AionisMemoryAdmissionDatasetExportOptions = {},
-): string {
-  return memoryAdmissionDatasetJsonlFromRows(memoryAdmissionDatasetRowsFromRecord(record, options));
-}
-
-export function memoryAdmissionDatasetJsonlFromRecords(
-  records: AionisMemoryAdmissionRecord[],
-  options: AionisMemoryAdmissionDatasetExportOptions = {},
-): string {
-  return memoryAdmissionDatasetJsonlFromRows(memoryAdmissionDatasetRowsFromRecords(records, options));
-}
-
-export function memoryAdmissionDatasetJsonlFromGuide(
-  guide: unknown,
-  options: AionisMemoryAdmissionDatasetExportOptions = {},
-): string {
-  return memoryAdmissionDatasetJsonlFromRows(memoryAdmissionDatasetRowsFromGuide(guide, options));
-}
-
-export function effectReportFromMeasure(measure: unknown): AionisEffectReport {
-  const effectReport = asRecord(asRecord(measure)?.effect_report);
-  if (!effectReport) {
-    throw new Error("Aionis measure response is missing effect_report");
-  }
-  return effectReport as AionisEffectReport;
-}
-
-export function traceDerivedSkillCandidatesFromMeasure(
-  measure: unknown,
-): AionisTraceDerivedSkillTrainingCandidate[] {
-  const candidates = asRecord(effectReportFromMeasure(measure))?.training_candidates;
-  if (!Array.isArray(candidates)) return [];
-  return candidates.filter((candidate): candidate is AionisTraceDerivedSkillTrainingCandidate => {
-    const record = asRecord(candidate);
-    return record?.candidate_type === "trace_derived_skill"
-      && asRecord(record.trace_derived_skill)?.contract_version === "aionis_trace_derived_skill_candidate_v1";
-  });
-}
-
-export function traceDerivedSkillReviewItemsFromMeasure(
-  measure: unknown,
-): AionisTraceDerivedSkillReviewItem[] {
-  return traceDerivedSkillCandidatesFromMeasure(measure).map((candidate) => {
-    const skill = candidate.trace_derived_skill;
-    return {
-      candidate_type: "trace_derived_skill",
-      review_action: "review_for_promotion",
-      skill_name: skill.skill_name,
-      label: candidate.label,
-      export_ready: candidate.export_ready,
-      promotion_status: skill.promotion_status,
-      reason: candidate.reason,
-      source_ids: candidate.source_ids,
-      source_trace_ids: skill.source_trace_ids,
-      source_signal_ids: skill.source_signal_ids,
-      applies_when: skill.applies_when,
-      does_not_apply_when: skill.does_not_apply_when,
-      procedure_steps: skill.procedure_steps,
-      target_files: skill.target_files,
-      acceptance_checks: skill.acceptance_checks,
-      failure_counterexamples: skill.failure_counterexamples,
-      evidence_refs: skill.evidence_refs,
-      safety: {
-        authority_state: skill.authority_state,
-        agent_prompt_included: skill.export_policy.agent_prompt_included,
-        runtime_mutation: skill.export_policy.runtime_mutation,
-        required_gate: skill.export_policy.required_gate,
-      },
-      candidate,
-    };
-  });
-}
-
 export function memoryIdsFromGuide(guide: unknown): string[] {
   const context = asRecord(agentContextFromGuide(guide));
   const ids = [
@@ -3323,7 +3534,6 @@ export function memoryIdsFromGuide(guide: unknown): string[] {
     ...stringArray(context?.do_not_use_memory_ids),
     ...rehydrateHintMemoryIds(context?.rehydrate_hints),
     ...commandPostureArray(context?.command_posture).map((entry) => entry.memory_id),
-    ...routeContractMemoryIds(context?.route_contract),
   ];
   return Array.from(new Set(ids));
 }
@@ -3334,243 +3544,7 @@ function actorFromGuide(guide: unknown): string | undefined {
   if (topLevel) return topLevel;
   const memoryPacketActor = asRecord(asRecord(record?.memory_packet)?.actor);
   const memoryPacketAgent = coerceString(memoryPacketActor?.consumer_agent_id);
-  if (memoryPacketAgent) return memoryPacketAgent;
-  const guidePacketActor = asRecord(asRecord(record?.guide_packet)?.actor);
-  const guidePacketAgent = coerceString(guidePacketActor?.consumer_agent_id);
-  return guidePacketAgent ?? undefined;
-}
-
-export function routeContractFromGuide(guide: unknown): AionisRouteContract | null {
-  const contract = asRecord(asRecord(agentContextFromGuide(guide))?.route_contract);
-  if (!contract) return null;
-  return {
-    active_targets: routeContractActiveTargetArray(contract.active_targets),
-    pending_artifacts: routeContractPendingArtifactArray(contract.pending_artifacts),
-    reference_only_targets: routeContractTargetArray(contract.reference_only_targets),
-    blocked_direction_targets: routeContractTargetArray(contract.blocked_direction_targets),
-    evidence_sources: routeContractEvidenceSourceArray(
-      Array.isArray(contract.evidence_sources) ? contract.evidence_sources : contract.reference_only_targets,
-    ),
-    blocked_routes: routeContractBlockedRouteArray(
-      Array.isArray(contract.blocked_routes) ? contract.blocked_routes : contract.blocked_direction_targets,
-    ),
-    conflict_policy: "do_not_treat_missing_active_target_as_superseded",
-    fallback_policy: "do_not_promote_reference_or_blocked_targets",
-    action_policy: routeContractActionPolicy(contract.action_policy),
-  };
-}
-
-export function activeRouteTargetsFromGuide(guide: unknown): string[] {
-  return routeContractFromGuide(guide)?.active_targets.map((entry) => entry.target) ?? [];
-}
-
-export function pendingArtifactTargetsFromGuide(guide: unknown): string[] {
-  return routeContractFromGuide(guide)?.pending_artifacts.map((entry) => entry.target) ?? [];
-}
-
-export function referenceOnlyRouteTargetsFromGuide(guide: unknown): string[] {
-  return routeContractFromGuide(guide)?.reference_only_targets.map((entry) => entry.target) ?? [];
-}
-
-export function blockedDirectionRouteTargetsFromGuide(guide: unknown): string[] {
-  return routeContractFromGuide(guide)?.blocked_direction_targets.map((entry) => entry.target) ?? [];
-}
-
-export function evidenceSourcesFromGuide(guide: unknown): AionisRouteContractEvidenceSource[] {
-  return routeContractFromGuide(guide)?.evidence_sources ?? [];
-}
-
-export function blockedRoutesFromGuide(guide: unknown): AionisRouteContractBlockedRoute[] {
-  return routeContractFromGuide(guide)?.blocked_routes ?? [];
-}
-
-export function compileExecutionAgentContext(
-  input: AionisExecutionAgentContextCompileInput,
-): AionisCompiledExecutionAgentContext {
-  const profile = input.budget_profile ?? "balanced";
-  const promptFormat = input.prompt_format ?? "contract";
-  const maxPromptChars = input.max_prompt_chars ?? defaultExecutionPromptBudget(profile);
-  const basePrompt = safeAgentPromptFromGuide(input.guide);
-  const routeContract = routeContractFromGuide(input.guide);
-  const commandPosture = commandPostureFromGuide(input.guide);
-  const receipt = memoryUseReceiptFromGuide(input.guide);
-  const admissionRecord = memoryAdmissionRecordFromGuide(input.guide);
-  const rehydrateRequests = rehydrateHintsFromGuide(input.guide);
-  const evidenceBudget = executionEvidenceBudget(profile);
-  const activePostures = new Set<AionisCommandPostureKind>(["should_continue"]);
-  const blockedPostures = new Set<AionisCommandPostureKind>(["must_not"]);
-  const routeStepLines = commandPostureEvidenceBullets({
-    commandPosture,
-    field: "workflow_steps",
-    postures: activePostures,
-    limit: evidenceBudget.items,
-    maxChars: evidenceBudget.chars,
-  });
-  const acceptanceCheckLines = commandPostureEvidenceBullets({
-    commandPosture,
-    field: "acceptance_checks",
-    postures: activePostures,
-    limit: evidenceBudget.items,
-    maxChars: evidenceBudget.chars,
-  });
-  const verificationLines = commandPostureEvidenceBullets({
-    commandPosture,
-    field: "verification_summary",
-    postures: activePostures,
-    limit: Math.max(1, Math.min(3, evidenceBudget.items)),
-    maxChars: evidenceBudget.chars,
-  });
-  const artifactHintLines = commandPostureEvidenceBullets({
-    commandPosture,
-    field: "artifact_hints",
-    postures: activePostures,
-    limit: Math.max(1, Math.min(3, evidenceBudget.items)),
-    maxChars: evidenceBudget.chars,
-  });
-  const failedBranchLines = commandPostureEvidenceBullets({
-    commandPosture,
-    field: "verification_summary",
-    postures: blockedPostures,
-    limit: Math.max(1, Math.min(3, evidenceBudget.items)),
-    maxChars: evidenceBudget.chars,
-  });
-  const activeContextLines = promptFormat === "contract" ? agentContextTextBullets({
-    guide: input.guide,
-    field: "use_now",
-    limit: evidenceBudget.items,
-    maxChars: evidenceBudget.chars,
-  }) : [];
-  const blockedContextLines = promptFormat === "contract" ? agentContextTextBullets({
-    guide: input.guide,
-    field: "do_not_use",
-    limit: Math.max(1, Math.min(3, evidenceBudget.items)),
-    maxChars: evidenceBudget.chars,
-  }) : [];
-  const useNowMemoryIds = receipt.use_now_memory_ids;
-  const inspectMemoryIds = receipt.inspect_before_use_memory_ids;
-  const doNotUseMemoryIds = receipt.do_not_use_memory_ids;
-  const activeTargets = routeContract ? targetList(routeContract.active_targets) : [];
-  const pendingArtifacts = routeContract ? targetList(routeContract.pending_artifacts) : [];
-  const referenceOnlyTargets = routeContract ? targetList(routeContract.evidence_sources.length > 0
-    ? routeContract.evidence_sources
-    : routeContract.reference_only_targets) : [];
-  const blockedDirectionTargets = routeContract ? targetList(routeContract.blocked_routes.length > 0
-    ? routeContract.blocked_routes
-    : routeContract.blocked_direction_targets) : [];
-  const presence = repoPresenceMap(input.repo_state);
-  const missingActiveTargets = activeTargets.filter((target) => presence.get(target) === false);
-  const warnings: AionisExecutionContextWarning[] = [];
-  if (missingActiveTargets.length > 0) {
-    warnings.push({
-      code: "missing_active_target",
-      message: "An active route target is absent in the observed workspace; treat it as pending work, not stale memory.",
-      targets: missingActiveTargets,
-    });
-  }
-  if (blockedDirectionTargets.length > 0) {
-    warnings.push({
-      code: "blocked_route_present",
-      message: "Blocked or retired targets are counter-evidence only and must not become the primary route.",
-      targets: blockedDirectionTargets,
-    });
-  }
-  if (referenceOnlyTargets.length > 0) {
-    warnings.push({
-      code: "reference_only_target_present",
-      message: "Reference-only targets may be inspected for evidence but must not be promoted into the chosen route.",
-      targets: referenceOnlyTargets,
-    });
-  }
-  if (rehydrateRequests.length > 0) {
-    warnings.push({
-      code: "rehydrate_recommended",
-      message: "Aionis exposed rehydrate pointers for evidence that should be expanded before exact use.",
-      memory_ids: rehydrateRequests.map((entry) => entry.memory_id),
-    });
-  }
-
-  const promptContract = AIONIS_EXECUTION_AGENT_CONTEXT_PROMPT_CONTRACT;
-  const contractSections = [
-    promptContract.header,
-    promptContract.authority_boundary,
-    "",
-    promptContract.sections.task,
-    ...taskLines(input.task),
-    ...(taskLines(input.task).length === 0 ? ["- Continue the current host task."] : []),
-    "",
-    promptContract.sections.execution_contract,
-    ...promptContract.execution_contract_rules.map((rule) => `- ${rule}`),
-    ...(input.additional_instructions ?? []).map((entry) => `- ${entry}`),
-    ...optionalPromptSection("ROUTE_STEPS", routeStepLines),
-    ...optionalPromptSection("ACCEPTANCE_CHECKS", acceptanceCheckLines),
-    ...optionalPromptSection("VERIFY_BEFORE_DONE", verificationLines),
-    ...optionalPromptSection("ARTIFACT_HINTS", artifactHintLines),
-    ...optionalPromptSection("KNOWN_FAILED_BRANCHES", failedBranchLines),
-    ...optionalPromptSection("ACTIVE_CONTEXT", activeContextLines),
-    ...optionalPromptSection("BLOCKED_CONTEXT", blockedContextLines),
-    "",
-    promptContract.sections.active_targets,
-    ...bulletLines(activeTargets, "none"),
-    "",
-    promptContract.sections.missing_active_targets,
-    ...bulletLines(missingActiveTargets, "none observed"),
-    "",
-    promptContract.sections.pending_artifacts,
-    ...bulletLines(pendingArtifacts, "none"),
-    "",
-    promptContract.sections.should_continue,
-    ...postureLines(commandPosture, "should_continue", "none"),
-    "",
-    promptContract.sections.inspect_before_use,
-    ...postureLines(commandPosture, "inspect_first", "none"),
-    "",
-    promptContract.sections.do_not_use,
-    ...postureLines(commandPosture, "must_not", "none"),
-    "",
-    promptContract.sections.reference_only_targets,
-    ...bulletLines(referenceOnlyTargets, "none"),
-    "",
-    promptContract.sections.blocked_direction_targets,
-    ...bulletLines(blockedDirectionTargets, "none"),
-    "",
-    promptContract.sections.rehydrate_requests,
-    ...(rehydrateRequests.length > 0
-      ? rehydrateRequests.map((entry) => `- ${entry.memory_id}${entry.reason ? `: ${entry.reason}` : ""}`)
-      : ["- none"]),
-  ];
-  const contractPrompt = contractSections.join("\n");
-  const agentPrompt = promptFormat === "runtime_compact"
-    ? truncateText(basePrompt, maxPromptChars)
-    : truncateText(contractPrompt, maxPromptChars);
-
-  return {
-    contract_version: promptContract.contract_version,
-    prompt_format: promptFormat,
-    budget_profile: profile,
-    agent_prompt: agentPrompt,
-    base_prompt: basePrompt,
-    prompt_char_count: agentPrompt.length,
-    route_contract: routeContract,
-    command_posture: commandPosture,
-    memory_use_receipt: receipt,
-    memory_admission_record: admissionRecord,
-    rehydrate_requests: rehydrateRequests,
-    use_now_memory_ids: useNowMemoryIds,
-    inspect_before_use_memory_ids: inspectMemoryIds,
-    do_not_use_memory_ids: doNotUseMemoryIds,
-    active_targets: activeTargets,
-    missing_active_targets: missingActiveTargets,
-    pending_artifacts: pendingArtifacts,
-    reference_only_targets: referenceOnlyTargets,
-    blocked_direction_targets: blockedDirectionTargets,
-    execution_warnings: warnings,
-  };
-}
-
-export function compileCodingAgentContext(
-  input: AionisExecutionAgentContextCompileInput,
-): AionisCompiledExecutionAgentContext {
-  return compileExecutionAgentContext(input);
+  return memoryPacketAgent ?? undefined;
 }
 
 export function commandPostureFromGuide(
@@ -4274,48 +4248,3 @@ export function feedbackFromGuide(input: AionisFeedbackFromGuideInput): AionisFe
 }
 
 // </aionis-runtime-owned:host-receipt-helpers>
-
-export function measureInputFromGuideLoop(input: AionisMeasureFromGuideLoopInput): AionisJsonObject {
-  return stripUndefined({
-    operation_id: input.operation_id,
-    tenant_id: input.tenant_id,
-    scope: input.scope,
-    task: stripUndefined({
-      task_id: input.task.task_id,
-      run_id: input.task.run_id,
-      task_signature: input.task.task_signature,
-      task_family: input.task.task_family,
-      workflow_signature: input.task.workflow_signature,
-    }),
-    product_trace: stripUndefined({
-      before_guide: input.before_guide,
-      after_guide: input.after_guide,
-      forget_result: input.feedback_result,
-      sufficient_evidence: input.sufficient_evidence,
-      evidence_ids: input.evidence_ids,
-      ...(input.product_trace ?? {}),
-    }),
-  });
-}
-
-export function snapshotInputFromGuideLoop(input: AionisSnapshotFromGuideLoopInput): AionisJsonObject {
-  const guide = asRecord(input.guide);
-  const measure = asRecord(input.measure_result);
-  if (!guide) throw new Error("snapshotInputFromGuideLoop requires a guide response object");
-  if (!measure) throw new Error("snapshotInputFromGuideLoop requires a measure result object");
-  return stripUndefined({
-    tenant_id: input.tenant_id,
-    scope: input.scope,
-    run_id: input.run_id,
-    task_signature: input.task_signature,
-    task_family: input.task_family,
-    agent_context: agentContextFromGuide(input.guide),
-    guide_packet: guide.guide_packet,
-    memory_decision_trace: measure.memory_decision_trace,
-    memory_decision_audit: measure.memory_decision_audit,
-    effect_report: measure.effect_report,
-    guide_trace_id: guide.guide_trace_id,
-    include_markdown: input.include_markdown,
-    ...(input.extra ?? {}),
-  });
-}

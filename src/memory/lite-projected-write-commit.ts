@@ -4,37 +4,11 @@ import { sha256Hex } from "../util/crypto.js";
 import type { WriteStoreAccess } from "../store/write-access.js";
 import type { LiteProjectionOutboxAccess } from "../store/lite-projection-outbox.js";
 import type { AssociativeLinkTriggerOrigin } from "./associative-linking-types.js";
-import type { MemoryLifecycleRelationCandidateProducer } from "./memory-lifecycle-adjudicator.js";
 import {
   applyPreparedMemoryWrite,
   prepareMemoryWriteLifecycleRelations,
   type PreparedWrite,
 } from "./write.js";
-import { projectWorkflowCandidatesFromPreparedWrite } from "./workflow-write-projection.js";
-
-export type LiteWorkflowProjectionStore = {
-  findExecutionNativeNodes: (args: {
-    scope: string;
-    consumerAgentId?: string | null;
-    consumerTeamId?: string | null;
-    executionKind?: "workflow_candidate" | "workflow_anchor" | null;
-    workflowSignature?: string | null;
-    limit: number;
-    offset: number;
-  }) => Promise<{ rows: Array<{ id: string; client_id?: string | null; slots?: Record<string, unknown> }>; has_more: boolean }>;
-  findLatestNodeByClientId: (scope: string, type: string, clientId: string) => Promise<{ id: string } | null>;
-  findNodes: (args: {
-    scope: string;
-    type?: string | null;
-    clientId?: string | null;
-    slotsContains?: Record<string, unknown> | null;
-    consumerAgentId?: string | null;
-    consumerTeamId?: string | null;
-    limit: number;
-    offset: number;
-  }) => Promise<{ rows: Array<{ id: string; client_id?: string | null; slots?: Record<string, unknown> }>; has_more: boolean }>;
-};
-
 export type LiteInlineEmbeddingStore = Pick<
   LiteProjectionOutboxAccess,
   | "claimProjectionJobs"
@@ -50,28 +24,8 @@ export type LiteInlineEmbeddingStore = Pick<
 };
 
 export type LiteProjectedWriteStore = WriteStoreAccess
-  & LiteWorkflowProjectionStore
   & LiteInlineEmbeddingStore
   & Pick<LiteProjectionOutboxAccess, "enqueueEmbeddingProjection">;
-
-async function appendLiteWorkflowProjection(args: {
-  prepared: PreparedWrite;
-  liteWriteStore: LiteWorkflowProjectionStore;
-  learningControlReviewProviders?: Parameters<typeof projectWorkflowCandidatesFromPreparedWrite>[0]["learningControlReviewProviders"];
-}): Promise<void> {
-  const projection = await projectWorkflowCandidatesFromPreparedWrite({
-    scope: args.prepared.scope,
-    nodes: args.prepared.nodes,
-    liteWriteStore: args.liteWriteStore,
-    learningControlReviewProviders: args.learningControlReviewProviders,
-  });
-  if (projection.nodes.length > 0) {
-    args.prepared.nodes.push(...projection.nodes);
-  }
-  if (projection.edges.length > 0) {
-    args.prepared.edges.push(...projection.edges);
-  }
-}
 
 export async function completeLiteInlineEmbeddings(args: {
   prepared: PreparedWrite;
@@ -133,18 +87,10 @@ export async function completeLiteInlineEmbeddings(args: {
 export async function prepareLiteProjectedWrite(args: {
   prepared: PreparedWrite;
   liteWriteStore: LiteProjectedWriteStore;
-  learningControlReviewProviders?: Parameters<typeof projectWorkflowCandidatesFromPreparedWrite>[0]["learningControlReviewProviders"];
-  lifecycleRelationCandidateProducer?: MemoryLifecycleRelationCandidateProducer;
 }): Promise<void> {
-  await appendLiteWorkflowProjection({
-    prepared: args.prepared,
-    liteWriteStore: args.liteWriteStore,
-    learningControlReviewProviders: args.learningControlReviewProviders,
-  });
   await prepareMemoryWriteLifecycleRelations(
     args.liteWriteStore,
     args.prepared,
-    args.lifecycleRelationCandidateProducer,
   );
 }
 
@@ -204,20 +150,16 @@ export async function commitLitePreparedWriteWithProjection(args: {
   liteWriteStore: LiteProjectedWriteStore;
   embedder: EmbeddingProvider | null;
   inlineEmbeddingTimeoutMs?: number | null;
-  learningControlReviewProviders?: Parameters<typeof projectWorkflowCandidatesFromPreparedWrite>[0]["learningControlReviewProviders"];
   writeOptions: {
     maxTextLen: number;
     piiRedaction: boolean;
     allowCrossScopeEdges: boolean;
     associativeLinkOrigin?: AssociativeLinkTriggerOrigin;
-    lifecycleRelationCandidateProducer?: MemoryLifecycleRelationCandidateProducer;
   };
 }) {
   await prepareLiteProjectedWrite({
     prepared: args.prepared,
     liteWriteStore: args.liteWriteStore,
-    learningControlReviewProviders: args.learningControlReviewProviders,
-    lifecycleRelationCandidateProducer: args.writeOptions.lifecycleRelationCandidateProducer,
   });
   const out = await args.liteWriteStore.withTx(() =>
     persistLitePreparedWrite({

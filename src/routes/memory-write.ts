@@ -7,12 +7,6 @@ import {
   isExecutionTreeDefaultDisabled,
 } from "../execution/tree-auto.js";
 import type { EmbeddingProvider } from "../embeddings/types.js";
-import { createEmbeddingSurfacePolicy, type EmbeddingSurfacePolicy } from "../embeddings/surface-policy.js";
-import {
-  buildLearningControlHttpClientConfig,
-  buildLiteLearningControlRuntimeProviders,
-  type LiteLearningControlRuntimeProviderBuilderOptions,
-} from "../app/learning-control-runtime-providers.js";
 import { collectExecutionWriteOverlaySlots } from "../memory/execution-slot-surface.js";
 import {
   prepareMemoryWrite,
@@ -24,7 +18,6 @@ import {
   persistLitePreparedWrite,
   prepareLiteProjectedWrite,
 } from "../memory/lite-projected-write-commit.js";
-import { createHttpMemoryLifecycleRelationCandidateProducer } from "../memory/memory-lifecycle-relation-model-producer.js";
 import type { LiteWriteStore } from "../store/lite-write-store.js";
 import type { SqliteTransactionRunner } from "../store/sqlite-transaction-runner.js";
 import { HttpError } from "../util/http.js";
@@ -76,11 +69,9 @@ export type MemoryWriteRouteService = {
 export type MemoryWriteRouteServiceArgs = {
   env: Env;
   embedder: EmbeddingProvider | null;
-  embeddingSurfacePolicy?: EmbeddingSurfacePolicy;
   liteWriteStore: LiteWriteStore;
   executionStateStore?: ExecutionStateStore | null;
   executionTreeStore?: ExecutionTreeStore | null;
-  learningControlRuntimeProviderBuilderOptions?: LiteLearningControlRuntimeProviderBuilderOptions;
 };
 
 function asRecord(value: unknown): Record<string, unknown> | null {
@@ -113,7 +104,6 @@ export function createMemoryWriteRouteService(args: MemoryWriteRouteServiceArgs)
   const {
     env,
     embedder,
-    embeddingSurfacePolicy: embeddingSurfacePolicyArg,
     liteWriteStore,
     executionStateStore,
     executionTreeStore,
@@ -126,31 +116,10 @@ export function createMemoryWriteRouteService(args: MemoryWriteRouteServiceArgs)
     throw new Error("memory write execution tree store must share the Lite write transaction runner");
   }
   assertLocalStoreRuntimeEdition(env, "local-store memory-write route");
-  const embeddingSurfacePolicy =
-    embeddingSurfacePolicyArg ?? createEmbeddingSurfacePolicy({ providerConfigured: !!embedder });
-  const writeEmbedder = embeddingSurfacePolicy.providerFor("write_auto_embed", embedder);
-  const learningControlProviders = buildLiteLearningControlRuntimeProviders(
-    env,
-    args.learningControlRuntimeProviderBuilderOptions,
-  );
-  const lifecycleRelationCandidateProducer =
-    env.MEMORY_LIFECYCLE_RELATION_HTTP_MODEL_PROVIDER_ENABLED
-      ? (() => {
-          const httpClientConfig = buildLearningControlHttpClientConfig(env, args.learningControlRuntimeProviderBuilderOptions);
-          return httpClientConfig
-            ? createHttpMemoryLifecycleRelationCandidateProducer({
-                config: httpClientConfig,
-                maxPairs: env.MEMORY_LIFECYCLE_RELATION_MODEL_MAX_PAIRS,
-              })
-            : undefined;
-        })()
-      : undefined;
   const prepareCommittedMemoryWrite = async (prepared: PreparedWrite): Promise<void> => {
     await prepareLiteProjectedWrite({
       prepared,
       liteWriteStore,
-      learningControlReviewProviders: learningControlProviders.workflowProjection,
-      lifecycleRelationCandidateProducer,
     });
   };
   const persistCommittedMemoryWrite = async (prepared: PreparedWrite): Promise<WriteResult> =>
@@ -171,7 +140,7 @@ export function createMemoryWriteRouteService(args: MemoryWriteRouteServiceArgs)
     try {
       liteInlineEmbedding = await completeLiteInlineEmbeddings({
         prepared,
-        embedder: writeEmbedder,
+        embedder,
         liteWriteStore,
         timeoutMs: typeof env.LITE_INLINE_EMBEDDING_TIMEOUT_MS === "number"
           ? env.LITE_INLINE_EMBEDDING_TIMEOUT_MS
@@ -318,10 +287,6 @@ export function createMemoryWriteRouteService(args: MemoryWriteRouteServiceArgs)
     embedding_backfill_failed_inline: args.out.embedding_backfill && "failed_inline" in args.out.embedding_backfill
       ? args.out.embedding_backfill.failed_nodes
       : 0,
-    distillation_enabled: args.out.distillation?.enabled === true,
-    distillation_sources: args.out.distillation?.sources_considered ?? 0,
-    distilled_evidence_nodes: args.out.distillation?.generated_evidence_nodes ?? 0,
-    distilled_fact_nodes: args.out.distillation?.generated_fact_nodes ?? 0,
     warnings: args.warnings.map((warning) => warning.code),
     ms: args.ms,
   });
@@ -335,7 +300,7 @@ export function createMemoryWriteRouteService(args: MemoryWriteRouteServiceArgs)
         piiRedaction: env.PII_REDACTION,
         allowCrossScopeEdges: env.ALLOW_CROSS_SCOPE_EDGES,
       },
-      writeEmbedder,
+      embedder,
     );
     if (env.MEMORY_WRITE_REQUIRE_NODES && prepared.nodes.length === 0) {
       throw new HttpError(

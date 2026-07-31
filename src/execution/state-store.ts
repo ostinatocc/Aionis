@@ -1,6 +1,12 @@
 import { z } from "zod";
 import {
+  CurrentExecutionEventRefV2Schema,
+  CurrentExecutionStateProjectionTransitionV1Schema,
+  CurrentExecutionStateV2Schema,
   ExecutionStateV1Schema,
+  type CurrentExecutionEventRefV2,
+  type CurrentExecutionStateProjectionTransitionV1,
+  type CurrentExecutionStateV2,
   type ExecutionStateV1,
 } from "./types.js";
 import {
@@ -32,6 +38,38 @@ export const StoredExecutionStateV1Schema = z.object({
 });
 export type StoredExecutionStateV1 = z.infer<typeof StoredExecutionStateV1Schema>;
 
+export const StoredCurrentExecutionStateV2Schema = z.object({
+  state: CurrentExecutionStateV2Schema,
+  revision: z.number().int().positive(),
+  last_projection_event_id: z.string().trim().min(1).nullable(),
+  last_projected_at: z.string().datetime().nullable(),
+}).strict().superRefine((value, context) => {
+  if (value.revision !== value.state.revision) {
+    context.addIssue({
+      code: z.ZodIssueCode.custom,
+      path: ["revision"],
+      message: "Stored current-state revision must match the state",
+    });
+  }
+  if (
+    (value.revision === 1)
+      !== (
+        value.last_projection_event_id === null
+        && value.last_projected_at === null
+      )
+  ) {
+    context.addIssue({
+      code: z.ZodIssueCode.custom,
+      path: ["last_projection_event_id"],
+      message:
+        "Only the initial current-state revision may omit projection-event identity",
+    });
+  }
+});
+export type StoredCurrentExecutionStateV2 = z.infer<
+  typeof StoredCurrentExecutionStateV2Schema
+>;
+
 export type ExecutionStateStoreHealthSnapshot = {
   path: string;
   mode: "sqlite_execution_state_v1";
@@ -46,6 +84,17 @@ export type ExecutionStateStore = {
   listByScope(scope: string): StoredExecutionStateV1[];
   applyTransition(transitionInput: ExecutionStateTransitionV1): StoredExecutionStateV1;
   has(scope: string, stateId: string): boolean;
+  getCurrent(
+    scope: string,
+    continuationId: string,
+  ): StoredCurrentExecutionStateV2 | null;
+  initializeCurrent(
+    state: CurrentExecutionStateV2,
+  ): StoredCurrentExecutionStateV2;
+  advanceCurrent(args: Readonly<{
+    state: CurrentExecutionStateV2;
+    sourceEvent: CurrentExecutionEventRefV2;
+  }>): StoredCurrentExecutionStateV2;
 };
 
 export type LiteExecutionStateStoreOptions = {
@@ -61,6 +110,7 @@ type LiteExecutionStateRow = {
   revision: number;
   last_transition_type: string | null;
   last_transition_at: string | null;
+  last_transition_id?: string | null;
 };
 
 type LiteExecutionTransitionRow = {
@@ -74,6 +124,11 @@ type LiteExecutionTransitionRow = {
 type StoredExecutionTransitionEvent = {
   transition: ExecutionStateTransitionV1;
   after: StoredExecutionStateV1;
+};
+
+type StoredCurrentExecutionProjectionEvent = {
+  transition: CurrentExecutionStateProjectionTransitionV1;
+  after: StoredCurrentExecutionStateV2;
 };
 
 function transitionIntent(value: ExecutionStateTransitionV1): Record<string, unknown> {
@@ -294,9 +349,300 @@ export class LiteExecutionStateStore implements ExecutionStateStore {
       SELECT state_json, revision, last_transition_type, last_transition_at
       FROM lite_execution_states
       WHERE scope = ?
+        AND json_extract(state_json, '$.version') = 1
       ORDER BY state_id ASC
     `).all(scope);
     return rows.map(rowToStoredExecutionState);
+  }
+
+  getCurrent(
+    scope: string,
+    continuationId: string,
+  ): StoredCurrentExecutionStateV2 | null {
+    const row = this.queryDatabase().prepare<LiteExecutionStateRow>(`
+      SELECT state.state_json,
+             state.revision,
+             state.last_transition_type,
+             state.last_transition_at,
+             (
+               SELECT transition.transition_id
+               FROM lite_execution_state_transitions AS transition
+               WHERE transition.scope = state.scope
+                 AND transition.state_id = state.state_id
+                 AND transition.revision = state.revision
+               LIMIT 1
+             ) AS last_transition_id
+      FROM lite_execution_states AS state
+      WHERE state.scope = ? AND state.state_id = ?
+        AND json_extract(
+          state.state_json,
+          '$.contract_version'
+        ) = 'current_execution_state_v2'
+    `).get(scope, continuationId);
+    return row ? rowToStoredCurrentExecutionState(row) : null;
+  }
+
+  initializeCurrent(
+    stateInput: CurrentExecutionStateV2,
+  ): StoredCurrentExecutionStateV2 {
+    const state = CurrentExecutionStateV2Schema.parse(stateInput);
+    if (state.revision !== 1 || state.parent_state_sha256 !== null) {
+      throw new HttpError(
+        409,
+        "current_execution_state_initial_revision_invalid",
+        "Current execution state must initialize from revision one.",
+      );
+    }
+    const next = StoredCurrentExecutionStateV2Schema.parse({
+      state,
+      revision: state.revision,
+      last_projection_event_id: null,
+      last_projected_at: null,
+    });
+    return this.mutate(() => {
+      const inserted = this.db.prepare<{ revision: number }>(`
+        INSERT INTO lite_execution_states (
+          scope,
+          state_id,
+          state_json,
+          revision,
+          last_transition_type,
+          last_transition_at,
+          created_at,
+          updated_at
+        )
+        VALUES (?, ?, ?, ?, NULL, NULL, ?, ?)
+        ON CONFLICT(scope, state_id) DO NOTHING
+        RETURNING revision
+      `).get(
+        state.scope_id,
+        state.continuation_id,
+        JSON.stringify(state),
+        state.revision,
+        state.updated_at,
+        state.updated_at,
+      );
+      if (inserted) return next;
+      const existing = this.getCurrent(
+        state.scope_id,
+        state.continuation_id,
+      );
+      if (
+        existing
+        && existing.state.state_sha256 === state.state_sha256
+      ) {
+        return existing;
+      }
+      throw new HttpError(
+        409,
+        "current_execution_state_initialization_conflict",
+        "Current execution state already has a different initial head.",
+        {
+          contract: "execution_conflict_v1",
+          resource_kind: "current_execution_state",
+          scope: state.scope_id,
+          continuation_id: state.continuation_id,
+          current_revision: existing?.revision ?? null,
+          current_snapshot_sha256:
+            existing?.state.state_sha256 ?? null,
+          incoming_snapshot_sha256: state.state_sha256,
+          retry_after_reload: true,
+        },
+      );
+    });
+  }
+
+  private getCurrentProjection(
+    scope: string,
+    continuationId: string,
+    eventId: string,
+  ): StoredCurrentExecutionProjectionEvent | null {
+    const row = this.db.prepare<LiteExecutionTransitionRow>(`
+      SELECT transition_json, revision, transition_type, transition_at,
+             state_after_json
+      FROM lite_execution_state_transitions
+      WHERE scope = ? AND state_id = ? AND transition_id = ?
+    `).get(scope, continuationId, eventId);
+    if (!row) return null;
+    if (row.transition_type !== "current_state_projected") {
+      throw executionHistoryCorruptError({
+        resourceKind: "execution_state",
+        databasePath: this.path,
+        violations: [{
+          kind: "invalid_transition_event",
+          scope,
+          resource_id: continuationId,
+          transition_id: eventId,
+          revision: Number(row.revision),
+        }],
+      });
+    }
+    try {
+      const transition =
+        CurrentExecutionStateProjectionTransitionV1Schema.parse(
+          JSON.parse(row.transition_json),
+        );
+      return {
+        transition,
+        after: StoredCurrentExecutionStateV2Schema.parse({
+          state: JSON.parse(row.state_after_json),
+          revision: Number(row.revision),
+          last_projection_event_id: transition.source_event.event_id,
+          last_projected_at: row.transition_at,
+        }),
+      };
+    } catch {
+      throw executionHistoryCorruptError({
+        resourceKind: "execution_state",
+        databasePath: this.path,
+        violations: [{
+          kind: "invalid_transition_event",
+          scope,
+          resource_id: continuationId,
+          transition_id: eventId,
+          revision: Number(row.revision),
+        }],
+      });
+    }
+  }
+
+  advanceCurrent(args: Readonly<{
+    state: CurrentExecutionStateV2;
+    sourceEvent: CurrentExecutionEventRefV2;
+  }>): StoredCurrentExecutionStateV2 {
+    const state = CurrentExecutionStateV2Schema.parse(args.state);
+    const sourceEvent = CurrentExecutionEventRefV2Schema.parse(
+      args.sourceEvent,
+    );
+    return this.mutate(() => {
+      const existing = this.getCurrent(
+        state.scope_id,
+        state.continuation_id,
+      );
+      if (!existing) {
+        throw new HttpError(
+          409,
+          "current_execution_state_missing",
+          "Current execution state must be initialized before projection.",
+        );
+      }
+      const prior = this.getCurrentProjection(
+        state.scope_id,
+        state.continuation_id,
+        sourceEvent.event_id,
+      );
+      if (prior) {
+        if (
+          prior.transition.source_event.event_sha256
+            !== sourceEvent.event_sha256
+          || prior.transition.source_event.sequence !== sourceEvent.sequence
+          || prior.transition.projected_state_sha256
+            !== state.state_sha256
+          || prior.after.state.state_sha256 !== state.state_sha256
+        ) {
+          throw new HttpError(
+            409,
+            "current_execution_state_projection_id_conflict",
+            "Projection event is already bound to different state.",
+          );
+        }
+        return prior.after;
+      }
+      if (
+        state.revision !== existing.revision + 1
+        || state.parent_state_sha256 !== existing.state.state_sha256
+        || sourceEvent.sequence + 1 !== state.revision
+      ) {
+        throw new HttpError(
+          409,
+          "current_execution_state_revision_conflict",
+          "Current execution state projection does not extend the exact head.",
+          {
+            contract: "execution_conflict_v1",
+            resource_kind: "current_execution_state",
+            scope: state.scope_id,
+            continuation_id: state.continuation_id,
+            expected_revision: existing.revision + 1,
+            current_revision: existing.revision,
+            current_snapshot_sha256: existing.state.state_sha256,
+            incoming_parent_sha256: state.parent_state_sha256,
+            retry_after_reload: true,
+          },
+        );
+      }
+      const transition =
+        CurrentExecutionStateProjectionTransitionV1Schema.parse({
+          contract_version:
+            "current_execution_state_projection_transition_v1",
+          continuation_id: state.continuation_id,
+          source_event: sourceEvent,
+          expected_revision: existing.revision,
+          expected_state_sha256: existing.state.state_sha256,
+          projected_revision: state.revision,
+          projected_state_sha256: state.state_sha256,
+          projected_at: state.updated_at,
+        });
+      const updated = this.db.prepare<{ revision: number }>(`
+        UPDATE lite_execution_states
+        SET state_json = ?,
+            revision = ?,
+            last_transition_type = 'current_state_projected',
+            last_transition_at = ?,
+            updated_at = ?
+        WHERE scope = ? AND state_id = ? AND revision = ?
+          AND json_extract(state_json, '$.state_sha256') = ?
+        RETURNING revision
+      `).get(
+        JSON.stringify(state),
+        state.revision,
+        state.updated_at,
+        state.updated_at,
+        state.scope_id,
+        state.continuation_id,
+        existing.revision,
+        existing.state.state_sha256,
+      );
+      if (!updated || updated.revision !== state.revision) {
+        throw new HttpError(
+          409,
+          "current_execution_state_revision_conflict",
+          "Current execution state changed before projection committed.",
+        );
+      }
+      this.db.prepare(`
+        INSERT INTO lite_execution_state_transitions (
+          scope,
+          state_id,
+          transition_id,
+          revision,
+          transition_type,
+          transition_at,
+          actor_role,
+          expected_revision,
+          transition_json,
+          state_after_json,
+          created_at
+        )
+        VALUES (?, ?, ?, ?, 'current_state_projected', ?, ?, ?, ?, ?, ?)
+      `).run(
+        state.scope_id,
+        state.continuation_id,
+        sourceEvent.event_id,
+        state.revision,
+        state.updated_at,
+        "runtime_projector",
+        existing.revision,
+        JSON.stringify(transition),
+        JSON.stringify(state),
+        state.updated_at,
+      );
+      return StoredCurrentExecutionStateV2Schema.parse({
+        state,
+        revision: state.revision,
+        last_projection_event_id: sourceEvent.event_id,
+        last_projected_at: state.updated_at,
+      });
+    });
   }
 
   private getTransition(
@@ -515,6 +861,26 @@ function rowToStoredExecutionState(row: LiteExecutionStateRow): StoredExecutionS
     revision: row.revision,
     last_transition_type: row.last_transition_type,
     last_transition_at: row.last_transition_at,
+  });
+}
+
+function rowToStoredCurrentExecutionState(
+  row: LiteExecutionStateRow,
+): StoredCurrentExecutionStateV2 {
+  const state = CurrentExecutionStateV2Schema.parse(
+    JSON.parse(row.state_json),
+  );
+  return StoredCurrentExecutionStateV2Schema.parse({
+    state,
+    revision: row.revision,
+    last_projection_event_id:
+      row.last_transition_type === "current_state_projected"
+        ? row.last_transition_id ?? null
+        : null,
+    last_projected_at:
+      row.last_transition_type === "current_state_projected"
+        ? row.last_transition_at
+        : null,
   });
 }
 

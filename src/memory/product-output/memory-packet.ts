@@ -1,21 +1,16 @@
-import type { ContractTrust } from "../../app/planning-summary.js";
+import type { ContractTrust } from "../contract-trust.js";
 import {
   parseAionisMemoryPacket,
-  type AionisGuidePacket,
-  type AionisLifecycleCandidateSignal,
   type AionisMemoryDomain,
   type AionisMemoryPacket,
   type AionisRecallSourceTrace,
-} from "../product-output-contract.js";
-import type { AionisGuidanceAuthority, AionisMemoryDecisionSurface, GovernanceDecisionV1 } from "../governance-contract.js";
+} from "../runtime-product-contract.js";
+import type { AionisGuidanceAuthority, GovernanceDecisionV1 } from "../governance-contract.js";
 import {
   decideGovernedMemory,
   type GovernanceRequestContext,
 } from "../governance-decision.js";
-import {
-  authorityConsumptionStateFromValue,
-} from "../authority-consumption.js";
-import { normalizeExecutionOutcomeRoleFromValue } from "../execution-outcome-role.js";
+import { deriveExecutionOutcomeRoleFromSlots } from "../execution-outcome-role.js";
 import {
   resolveNodeAnchorKind,
   resolveNodeArchiveRelocationSurface,
@@ -41,14 +36,19 @@ import {
   type MemoryLifecycleEdgeInput,
   type MemoryLifecycleRelation,
 } from "../memory-lifecycle-adjudicator.js";
-import {
-  lifecycleCandidateDirectUseUnsafe,
-  lifecycleCandidateRuntimeOwnedProducer,
-} from "../lifecycle-candidate-inference.js";
 
-export type ProductTask = AionisGuidePacket["task"];
+export type ProductTask = {
+  task_id?: string | null;
+  run_id?: string | null;
+  task_signature?: string | null;
+  task_family?: string | null;
+};
 
-export type ProductActor = NonNullable<AionisGuidePacket["actor"]>;
+export type ProductActor = {
+  consumer_agent_id?: string | null;
+  consumer_team_id?: string | null;
+  producer_agent_ids: string[];
+};
 
 export type MemoryPacketEntry = AionisMemoryPacket["relevant_memories"][number];
 
@@ -428,9 +428,7 @@ type MemoryContractProjectionInput = Pick<
 >;
 
 function memoryContractEvidenceOnly(entry: MemoryContractProjectionInput): boolean {
-  return entry.domain === "general"
-    && (entry.source_layer === "L0" || entry.source_layer === "L1")
-    && (entry.memory_type === "event" || entry.memory_type === "evidence");
+  return entry.source_layer === "L0" || entry.source_layer === "L1";
 }
 
 function memoryContractForEntry(entry: MemoryContractProjectionInput): MemoryPacketEntry["memory_contract"] {
@@ -557,13 +555,7 @@ function memoryExecutionStateProjection(args: {
   const workflowSignature = resolveNodeWorkflowSignature({ slots: args.slots })
     ?? stringValue(args.contextItem?.workflow_signature);
   const executionOutcomeRole =
-    normalizeExecutionOutcomeRoleFromValue(executionNative?.execution_outcome_role)
-    ?? normalizeExecutionOutcomeRoleFromValue(executionNative?.outcome)
-    ?? normalizeExecutionOutcomeRoleFromValue(executionObservation?.execution_outcome_role)
-    ?? normalizeExecutionOutcomeRoleFromValue(executionObservation?.outcome_role)
-    ?? normalizeExecutionOutcomeRoleFromValue(executionObservation?.outcome)
-    ?? normalizeExecutionOutcomeRoleFromValue(args.slots?.execution_outcome_role)
-    ?? normalizeExecutionOutcomeRoleFromValue(args.slots?.outcome);
+    deriveExecutionOutcomeRoleFromSlots(args.slots);
   const nextActionHint = resolveNodeNextAction({ slots: args.slots })
     ?? stringValue(args.contextItem?.next_action);
   const actorRole = stringValue(executionNative?.actor_role)
@@ -991,6 +983,7 @@ export function contractEntryIsCurrentState(entry: MemoryPacketEntry): boolean {
     || kind === "handoff"
   ) return true;
   if (entry.domain !== "execution") return false;
+  if (entry.execution_state?.transition_kind === "resume_current_state") return true;
   const text = executionStateText(entry);
   return text.includes("current active path")
     || text.includes("active continuation")
@@ -1104,90 +1097,6 @@ function looksLikeRepositoryName(value: string): boolean {
   return !COMMON_CODE_PATH_ROOTS.has(parts[0] ?? "");
 }
 
-export function lifecycleCandidateSignalsByMemoryId(
-  signals: AionisLifecycleCandidateSignal[],
-): Map<string, AionisLifecycleCandidateSignal[]> {
-  const byId = new Map<string, AionisLifecycleCandidateSignal[]>();
-  for (const signal of signals) {
-    const existing = byId.get(signal.memory_id) ?? [];
-    existing.push(signal);
-    byId.set(signal.memory_id, existing);
-  }
-  return byId;
-}
-
-function lifecycleCandidateProtectiveNegativeSignal(signal: AionisLifecycleCandidateSignal): boolean {
-  if (signal.signal_type !== "negative") return false;
-  const quote = signal.evidence_span.quote.toLowerCase();
-  return /\b(?:do not|check before direct use|avoid|check)\s+(?:restart|rely|use)\b/.test(quote)
-    || /\bpreserve\b.{0,80}\b(?:counter-evidence|failed|older|stale)\b/.test(quote)
-    || /\b(?:failed|older|stale|non-current)\s+branches?\s+as\s+counter-evidence\b/.test(quote);
-}
-
-export function lifecycleCandidateMemoryDirectUseUnsafe(signals: AionisLifecycleCandidateSignal[]): boolean {
-  const hasCurrentOrProcedure = signals.some((signal) =>
-    signal.signal_type === "current" || signal.signal_type === "procedure"
-  );
-  const hasSelfStaleOrContested = signals.some((signal) =>
-    signal.signal_type === "stale" || signal.signal_type === "contested"
-  );
-  return signals.some((signal) => {
-    if (!lifecycleCandidateDirectUseUnsafe(signal)) return false;
-    if (
-      signal.signal_type === "negative"
-      && hasCurrentOrProcedure
-      && !hasSelfStaleOrContested
-      && lifecycleCandidateProtectiveNegativeSignal(signal)
-    ) {
-      return false;
-    }
-    return true;
-  });
-}
-
-export function lifecycleCandidateMemoryDirectUseAdmissible(args: {
-  entry: MemoryPacketEntry;
-  signals: AionisLifecycleCandidateSignal[];
-}): boolean {
-  if (args.entry.lifecycle_state !== "active") return false;
-  if (args.entry.authority !== "candidate") return false;
-  if (args.entry.domain !== "execution" && args.entry.memory_type !== "execution_memory" && args.entry.memory_type !== "procedure") {
-    return false;
-  }
-  if (lifecycleCandidateMemoryDirectUseUnsafe(args.signals)) return false;
-  return args.signals.some((signal) =>
-    lifecycleCandidateRuntimeOwnedProducer(signal)
-    && signal.confidence >= 0.76
-    && (signal.signal_type === "current" || signal.signal_type === "procedure")
-  );
-}
-
-function lifecycleCandidateRehydrateSignal(signal: AionisLifecycleCandidateSignal): boolean {
-  return lifecycleCandidateRuntimeOwnedProducer(signal)
-    && signal.signal_type === "rehydrate"
-    && signal.confidence >= 0.78;
-}
-
-export function lifecycleCandidateRehydrateEligible(args: {
-  entry: MemoryPacketEntry;
-  signals: AionisLifecycleCandidateSignal[];
-}): boolean {
-  if (memoryEntryBlocked(args.entry)) return false;
-  if (
-    args.entry.domain !== "execution"
-    && args.entry.memory_type !== "execution_memory"
-    && args.entry.memory_type !== "procedure"
-  ) {
-    return false;
-  }
-  if (!args.signals.some(lifecycleCandidateRehydrateSignal)) return false;
-  return !args.signals.some((signal) =>
-    signal.signal_type === "negative"
-    || signal.signal_type === "stale"
-    || (signal.signal_type === "contested" && signal.evidence_span.source_field !== "slots")
-  );
-}
-
 function governanceExecutionKind(
   entry: MemoryPacketEntry,
 ): "current_state" | "procedure" | "handoff" | "other" | null {
@@ -1199,10 +1108,9 @@ function governanceExecutionKind(
 }
 
 export function governanceDecisionForMemoryEntry(args: {
-  entry: MemoryPacketEntry; executionScope: NormalizedAgentPromptExecutionScope;
-  premiseConflict?: GovernanceRequestContext["premise_conflict"]; trustedWorkflowConflict?: boolean;
-  verifiedRecoveredHandoff?: boolean; rehydrateRequested?: boolean;
-  lifecycleCandidate?: GovernanceRequestContext["lifecycle_candidate"]; projectedSurface?: AionisMemoryDecisionSurface | null;
+  entry: MemoryPacketEntry;
+  executionScope: NormalizedAgentPromptExecutionScope;
+  rehydrateRequested?: boolean;
 }): GovernanceDecisionV1 {
   const entry = args.entry;
   return decideGovernedMemory({
@@ -1212,20 +1120,21 @@ export function governanceDecisionForMemoryEntry(args: {
       lifecycle_state: entry.lifecycle_state,
       domain: entry.domain,
       execution_kind: governanceExecutionKind(entry),
+      execution_effect: entry.domain !== "execution"
+        ? null
+        : entry.execution_state?.execution_outcome_role === "passed_solution"
+          ? "positive"
+          : entry.execution_state?.execution_outcome_role === "failed_branch"
+            || entry.execution_state?.execution_outcome_role === "blocked"
+            ? "negative"
+            : "unknown",
       memory_contract: entry.memory_contract.use_policy,
       target_files: entry.target_files,
     },
     request: {
       scope_match: governanceScopeMatchForEntry({ entry, executionScope: args.executionScope }),
-      premise_conflict: args.premiseConflict ?? "none",
-      trusted_workflow_conflict: args.trustedWorkflowConflict ?? false,
-      verified_recovered_handoff: args.verifiedRecoveredHandoff ?? false,
       rehydrate_requested: args.rehydrateRequested ?? false,
-      lifecycle_candidate: args.lifecycleCandidate ?? "none",
-      projected_surface: args.projectedSurface ?? null,
     },
     lifecycle: lifecycleDecisionForEntry(entry),
-    authority: authorityConsumptionStateFromValue({ authority_blocked: entry.authority === "blocked" }),
-    feedback: { posture: "none" },
   });
 }

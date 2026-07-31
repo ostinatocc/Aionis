@@ -28,7 +28,6 @@ const MODE_PRESETS = {
     RATE_LIMIT_ENABLED: "true",
     RATE_LIMIT_BYPASS_LOOPBACK: "true",
     TENANT_QUOTA_ENABLED: "true",
-    MEMORY_RECALL_PROFILE: "strict_edges",
   },
   service: {
     APP_ENV: "prod",
@@ -36,7 +35,6 @@ const MODE_PRESETS = {
     RATE_LIMIT_ENABLED: "true",
     RATE_LIMIT_BYPASS_LOOPBACK: "false",
     TENANT_QUOTA_ENABLED: "true",
-    MEMORY_RECALL_PROFILE: "strict_edges",
   },
   cloud: {
     APP_ENV: "prod",
@@ -44,7 +42,6 @@ const MODE_PRESETS = {
     RATE_LIMIT_ENABLED: "true",
     RATE_LIMIT_BYPASS_LOOPBACK: "false",
     TENANT_QUOTA_ENABLED: "true",
-    MEMORY_RECALL_PROFILE: "strict_edges",
   },
 } as const;
 
@@ -69,7 +66,6 @@ export function applyRuntimeProfileDefaults(source: NodeJS.ProcessEnv): NodeJS.P
   const edition = String(source.AIONIS_EDITION ?? "lite").trim().toLowerCase();
   if (edition !== "lite" && edition !== "server") return resolved;
   resolved.AIONIS_EDITION = edition;
-  if (!resolved.RECALL_ENGINE_MODE?.trim()) resolved.RECALL_ENGINE_MODE = "hybrid";
   if (edition === "lite") {
     if (!resolved.AIONIS_MODE?.trim()) resolved.AIONIS_MODE = "local";
     resolved.MEMORY_AUTH_MODE = "off";

@@ -1,10 +1,8 @@
 import { z } from "zod";
 import stableStringify from "fast-json-stable-stringify";
 
-import type { ClaimLedgerAccess, ClaimLedgerRow } from "../store/memory-store.js";
 import type { LiteWriteStore } from "../store/lite-write-store.js";
 import type { MemoryWriteRouteService } from "../routes/memory-write.js";
-import type { HandoffRouteService } from "../routes/handoff.js";
 import { HttpError } from "../util/http.js";
 
 import {
@@ -24,7 +22,6 @@ import {
 import {
   normalizeExecutionOutcomeRoleFromValue,
 } from "../memory/execution-outcome-role.js";
-import { HandoffStoreRequest } from "../memory/schemas.js";
 import type {
   ProductObserveInput,
   ProductObserveExecutionContext,
@@ -74,7 +71,6 @@ function assertObserveNestedIdentity(args: {
   };
   for (const [surface, payload] of [
     ["memory", objectValue(args.parsed.memory)],
-    ["handoff", objectValue(args.parsed.handoff)],
   ] as const) {
     if (!payload) continue;
     for (const key of ["tenant_id", "scope", "actor"] as const) {
@@ -124,7 +120,6 @@ function observeWritePayload(
     owner_agent_id: parsed.owner_agent_id,
     owner_team_id: parsed.owner_team_id,
     force_reembed: parsed.force_reembed,
-    distill: parsed.distill,
     edges: parsed.edges,
     nodes: structured.nodes,
   }, options);
@@ -142,84 +137,6 @@ function productObservedExecutionMemoryCount(summary: ProductObserveStructuringS
     && !!node.execution_kind
   ).length;
   return summary.execution_workflow_count + alreadyStructuredExecutionCount;
-}
-
-function parseStringListJson(value: string | null | undefined): string[] {
-  if (!value) return [];
-  try {
-    const parsed = JSON.parse(value);
-    return Array.isArray(parsed)
-      ? parsed.filter((entry): entry is string => typeof entry === "string" && entry.trim().length > 0)
-      : [];
-  } catch {
-    return [];
-  }
-}
-
-function firstWrittenMemoryNodeId(write: InternalDispatchResult | null): string | null {
-  if (!write?.ok) return null;
-  const body = objectValue(write.body);
-  const nodes = Array.isArray(body?.nodes) ? body.nodes : [];
-  for (const node of nodes) {
-    const record = objectValue(node);
-    if (typeof record?.id === "string" && record.id.trim().length > 0) return record.id;
-  }
-  return null;
-}
-
-function buildClaimObserveReceipt(rows: ClaimLedgerRow[]) {
-  const supersededClaimIds = uniqueStrings(rows.flatMap((row) => parseStringListJson(row.supersedes_claim_ids_json)));
-  const contestedClaimIds = rows
-    .filter((row) => row.status === "contested")
-    .map((row) => row.claim_id);
-  return {
-    contract_version: "aionis_claim_observe_receipt_v1",
-    written_count: rows.length,
-    claim_ids: rows.map((row) => row.claim_id),
-    superseded_claim_ids: supersededClaimIds,
-    contested_claim_ids: contestedClaimIds,
-    agent_prompt_included: false,
-    runtime_mutation: true,
-  };
-}
-
-async function writeProductObserveClaims(args: {
-  claimLedgerAccess: ClaimLedgerAccess | null | undefined;
-  claims: NonNullable<z.infer<typeof ProductObserveRequest>["claims"]>;
-  write: InternalDispatchResult | null;
-  tenantId: string;
-  scope: string;
-}) {
-  const claims = args.claims;
-  if (claims.length === 0) return null;
-  if (!args.claimLedgerAccess) {
-    return {
-      ok: false as const,
-      statusCode: 503,
-      body: productErrorResponse({
-        status: 503,
-        error: "claim_ledger_unavailable",
-        message: "claim ledger is not available for this Runtime",
-      }),
-    };
-  }
-
-  const sourceMemoryId = firstWrittenMemoryNodeId(args.write);
-  const rows: ClaimLedgerRow[] = [];
-  for (const claim of claims) {
-    rows.push(await args.claimLedgerAccess.writeClaim({
-      scope: args.scope,
-      tenantId: args.tenantId,
-      claim: {
-        ...claim,
-        source_memory_id: claim.source_memory_id ?? sourceMemoryId ?? undefined,
-      },
-    }));
-  }
-  return {
-    ok: true as const,
-    receipt: buildClaimObserveReceipt(rows),
-  };
 }
 
 export type ProductObserveStructuringSummary = {
@@ -473,12 +390,20 @@ function observeStructureExecutionObservationAsNode(parsed: ProductObserveMemory
     execution.resume_hint,
     execution.reuse_hint,
     slots.continuation_hint,
-    summary,
   );
-  const executionOutcomeRole = normalizeExecutionOutcomeRoleFromValue(execution.execution_outcome_role)
-    ?? normalizeExecutionOutcomeRoleFromValue(slots.execution_outcome_role)
-    ?? normalizeExecutionOutcomeRoleFromValue(execution.outcome)
-    ?? normalizeExecutionOutcomeRoleFromValue(slots.outcome);
+  const executionResultSummary = observeStructureProductRecord(
+    slots.execution_result_summary,
+  );
+  const executionOutcomeRole =
+    normalizeExecutionOutcomeRoleFromValue(
+      execution.execution_outcome_role,
+    )
+    ?? normalizeExecutionOutcomeRoleFromValue(
+      slots.execution_outcome_role,
+    )
+    ?? normalizeExecutionOutcomeRoleFromValue(
+      executionResultSummary?.execution_outcome_role,
+    );
 
   slots.memory_kind = "execution_workflow";
   slots.product_observe_v1 = {
@@ -495,6 +420,26 @@ function observeStructureExecutionObservationAsNode(parsed: ProductObserveMemory
     task_id: observeStructureProductFirstString(execution.task_id, slots.task_id),
     outcome: observeStructureProductFirstString(execution.outcome, slots.outcome),
     execution_outcome_role: executionOutcomeRole ?? undefined,
+    task_outcome: observeStructureProductFirstString(
+      execution.task_outcome,
+      slots.task_outcome,
+      executionResultSummary?.task_outcome,
+    ),
+    outcome_authority: observeStructureProductFirstString(
+      execution.outcome_authority,
+      slots.outcome_authority,
+      executionResultSummary?.outcome_authority,
+    ),
+    verifier_receipt_id: observeStructureProductFirstString(
+      execution.verifier_receipt_id,
+      slots.verifier_receipt_id,
+      executionResultSummary?.verifier_receipt_id,
+    ),
+    target_state_snapshot_id: observeStructureProductFirstString(
+      execution.target_state_snapshot_id,
+      slots.target_state_snapshot_id,
+      executionResultSummary?.target_state_snapshot_id,
+    ),
     evidence,
     artifacts,
     acceptance_checks: acceptanceChecks,
@@ -561,14 +506,16 @@ function observeStructureStructureExecutionWorkflowNode(node: Record<string, unk
     slots.workflow_signature,
     `observed_workflow:${observeStructureProductSlug(signatureBase)}`,
   );
-  const nextAction = observeStructureProductFirstString(node.next_action, slots.next_action, summary);
+  const nextAction = observeStructureProductFirstString(
+    node.next_action,
+    slots.next_action,
+  );
   const executionObservation = observeStructureProductRecord(slots.execution_observation_v1);
   const executionOutcomeRole = normalizeExecutionOutcomeRoleFromValue(node.execution_outcome_role)
     ?? normalizeExecutionOutcomeRoleFromValue(slots.execution_outcome_role)
-    ?? normalizeExecutionOutcomeRoleFromValue(executionObservation?.execution_outcome_role)
-    ?? normalizeExecutionOutcomeRoleFromValue(node.outcome)
-    ?? normalizeExecutionOutcomeRoleFromValue(slots.outcome)
-    ?? normalizeExecutionOutcomeRoleFromValue(executionObservation?.outcome);
+    ?? normalizeExecutionOutcomeRoleFromValue(
+      executionObservation?.execution_outcome_role,
+    );
   const contractTrust = observeStructureProductContractTrust(slots.contract_trust)
     ?? observeStructureProductContractTrust(node.contract_trust)
     ?? "advisory";
@@ -803,7 +750,6 @@ export function structureProductObserveMemoryInput(
 }
 
 type ProductMemoryWritePort = Pick<MemoryWriteRouteService, "transactionRunner" | "prepare" | "persist" | "receipt" | "finalize" | "commit">;
-type ProductHandoffStorePort = Pick<HandoffRouteService, "transactionRunner" | "prepareStore" | "persistStore" | "receiptStore" | "finalizeStore" | "store">;
 type ProductObserveAtomicWrite = Pick<
   LiteWriteStore,
   "withTx" | "getWriteOperation" | "insertWriteOperation" | "transactionRunner" | "annSyncEnabled"
@@ -813,12 +759,10 @@ export type ProductObserveServiceDependencies = {
   defaultTenantId: string;
   defaultScope: string;
   memoryWrite: ProductMemoryWritePort | null;
-  handoffStore: ProductHandoffStorePort | null;
   atomicWrite: ProductObserveAtomicWrite | null;
-  claimLedgerAccess?: ClaimLedgerAccess | null;
 };
 
-const PRODUCT_OBSERVE_OPERATION_KIND = "product_observe_v1";
+export const PRODUCT_OBSERVE_OPERATION_KIND = "product_observe_v1";
 
 function productObserveOperationIdentity(parsed: ProductObserveInput): {
   operationId: string;
@@ -859,7 +803,7 @@ function assertObserveOperationMatches(args: {
 }
 
 async function callObserveDependency<T>(
-  surface: "memory_write_service" | "handoff_store_service",
+  surface: "memory_write_service",
   call: () => T | Promise<T>,
 ): Promise<T> {
   try {
@@ -886,15 +830,6 @@ export function createProductObserveService(
   if (dependencies.memoryWrite && (!atomicRunner || dependencies.memoryWrite.transactionRunner() !== atomicRunner)) {
     throw new Error("product observe memory write service must share the atomic write transaction runner");
   }
-  if (dependencies.handoffStore && (!atomicRunner || dependencies.handoffStore.transactionRunner() !== atomicRunner)) {
-    throw new Error("product observe handoff service must share the atomic write transaction runner");
-  }
-  if (
-    dependencies.claimLedgerAccess
-    && (!atomicRunner || dependencies.claimLedgerAccess.transactionRunner() !== atomicRunner)
-  ) {
-    throw new Error("product observe claim ledger must share the atomic write transaction runner");
-  }
   return {
     guardOrder(parsed) {
       const hasInlineWrite =
@@ -903,12 +838,9 @@ export function createProductObserveService(
         || !!parsed.execution
         || (parsed.nodes?.length ?? 0) > 0
         || (parsed.edges?.length ?? 0) > 0;
-      const claimOnly =
-        (parsed.claims?.length ?? 0) > 0
-        && !parsed.memory
-        && !hasInlineWrite
-        && !parsed.handoff;
-      return claimOnly ? "inflight_first" : "guards_first";
+      return !parsed.memory && !hasInlineWrite
+        ? "inflight_first"
+        : "guards_first";
     },
     async execute(
       parsed: ProductObserveInput,
@@ -926,22 +858,16 @@ export function createProductObserveService(
         assertObserveNestedIdentity({ parsed, identity, enforceActor: !preserveNestedActor });
         const writeBundle = observeWritePayload(parsed, identity, { preserveNestedActor });
         const writePayload = writeBundle?.payload ?? null;
-        const handoffPayload = parsed.handoff
-          ? mergeProductScope(identity, parsed.handoff, { preserveNestedActor })
-          : null;
-        const hasClaims = (parsed.claims?.length ?? 0) > 0;
-        if (!writePayload && !handoffPayload && !hasClaims) {
+        if (!writePayload) {
           return productServiceFailure({
             statusCode: 400,
-            error: "observe_requires_memory_or_handoff",
-            message: "observe requires memory input, handoff payload, or explicit claims",
+            error: "observe_requires_memory",
+            message: "observe requires memory input",
           });
         }
 
         if (!dependencies.atomicWrite) return productServiceDependencyFailure("atomic_write_service", 503);
-        if (writePayload && !dependencies.memoryWrite) return productServiceDependencyFailure("memory_write_service", 503);
-        if (handoffPayload && !dependencies.handoffStore) return productServiceDependencyFailure("handoff_store_service", 503);
-        if (hasClaims && !dependencies.claimLedgerAccess) return productServiceDependencyFailure("claim_ledger_service", 503);
+        if (!dependencies.memoryWrite) return productServiceDependencyFailure("memory_write_service", 503);
 
         const { operationId, requestSha256 } = productObserveOperationIdentity(parsed);
         const stored = await dependencies.atomicWrite.getWriteOperation({
@@ -964,21 +890,10 @@ export function createProductObserveService(
               startedAt: performance.now(),
             }))
           : null;
-        const handoffRequest = handoffPayload ? HandoffStoreRequest.parse(handoffPayload) : null;
-        const handoffPlan = handoffRequest
-          ? await callObserveDependency("handoff_store_service", () => dependencies.handoffStore!.prepareStore(handoffRequest, {
-              principal: context.principal,
-              deferProjection: !!memoryPlan,
-            }))
-          : null;
-        const claims = (parsed.claims ?? []).map((claim, index) => ({
-          ...claim,
-          client_id: claim.client_id ?? `${operationId}:claim:${index + 1}`,
-        }));
-        const embeddingScheduled = [memoryPlan?.prepared, handoffPlan?.prepared]
+        const embeddingScheduled = [memoryPlan?.prepared]
           .filter((value): value is NonNullable<typeof value> => !!value)
           .some((prepared) => prepared.auto_embed_effective && prepared.nodes.some((node) => !!node.embed_text));
-        const annSyncScheduled = dependencies.atomicWrite.annSyncEnabled() && (!!memoryPlan || !!handoffPlan);
+        const annSyncScheduled = dependencies.atomicWrite.annSyncEnabled() && !!memoryPlan;
 
         const committed = await dependencies.atomicWrite.withTx(async () => {
           const raced = await dependencies.atomicWrite!.getWriteOperation({
@@ -1006,30 +921,6 @@ export function createProductObserveService(
             ? { ok: true, statusCode: 200, path: "memory_write_service", body: memoryResponse }
             : null;
 
-          const handoffPersisted = handoffPlan
-            ? await callObserveDependency("handoff_store_service", () => dependencies.handoffStore!.persistStore(handoffPlan))
-            : null;
-          const handoffResponse = handoffPlan && handoffPersisted
-            ? await callObserveDependency(
-                "handoff_store_service",
-                () => dependencies.handoffStore!.receiptStore(handoffPlan, handoffPersisted),
-              )
-            : null;
-          const handoff: InternalDispatchResult | null = handoffResponse
-            ? { ok: true, statusCode: 200, path: "handoff_store_service", body: handoffResponse }
-            : null;
-
-          const claimLedger = await writeProductObserveClaims({
-            claimLedgerAccess: dependencies.claimLedgerAccess,
-            claims,
-            write,
-            tenantId,
-            scope,
-          });
-          if (claimLedger && !claimLedger.ok) {
-            throw new HttpError(claimLedger.statusCode, "claim_ledger_unavailable", "claim ledger is not available");
-          }
-
           const result = productServiceSuccess({
             contract_version: "aionis_observe_result_v1",
             operation_id: operationId,
@@ -1037,24 +928,16 @@ export function createProductObserveService(
             scope,
             observed: {
               memory_written: !!write,
-              handoff_stored: !!handoff,
-              ...(claimLedger ? { claim_count: claimLedger.receipt.written_count } : {}),
               general_memory_count: writeBundle?.structuring.general_memory_count ?? 0,
               execution_memory_count: productObservedExecutionMemoryCount(writeBundle?.structuring),
               auto_text_memory_count: writeBundle?.structuring.auto_text_node_count ?? 0,
               execution_observation_count: writeBundle?.structuring.execution_observation_count ?? 0,
             },
             structured_memory: writeBundle?.structuring ?? null,
-            ...(claimLedger ? { claim_ledger: claimLedger.receipt } : {}),
             memory_write: write?.body ?? null,
-            handoff: handoff?.body ?? null,
             source_map: {
               routes_used: ["/v1/observe"],
-              internal_surfaces_used: [
-                ...(write ? ["memory_write"] : []),
-                ...(handoff ? ["handoff_store"] : []),
-                ...(claimLedger ? ["claim_ledger_write"] : []),
-              ],
+              internal_surfaces_used: write ? ["memory_write"] : [],
             },
             post_commit_projections: {
               semantic_commit: "committed",
@@ -1069,13 +952,12 @@ export function createProductObserveService(
             operationId,
             requestSha256,
             receiptJson: JSON.stringify(result),
-            commitId: memoryOut?.commit_id ?? handoffPersisted?.out.commit_id ?? null,
+            commitId: memoryOut?.commit_id ?? null,
           });
           return {
             result,
             committedNew: true,
             memoryOut,
-            handoffPersisted,
           } as const;
         });
 
@@ -1084,14 +966,6 @@ export function createProductObserveService(
             await dependencies.memoryWrite!.finalize(memoryPlan, committed.memoryOut).catch((error) => {
               process.emitWarning(
                 `Observe memory post-commit finalization failed: ${error instanceof Error ? error.message : String(error)}`,
-                { code: "AIONIS_OBSERVE_POST_COMMIT_FAILED" },
-              );
-            });
-          }
-          if (handoffPlan && committed.handoffPersisted) {
-            await dependencies.handoffStore!.finalizeStore(handoffPlan, committed.handoffPersisted).catch((error) => {
-              process.emitWarning(
-                `Observe handoff post-commit finalization failed: ${error instanceof Error ? error.message : String(error)}`,
                 { code: "AIONIS_OBSERVE_POST_COMMIT_FAILED" },
               );
             });

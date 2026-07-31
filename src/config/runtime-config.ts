@@ -1,15 +1,13 @@
-import type {
-  AionisAdmissionCandidatePolicyProfileRule,
-  Env,
-} from "../config.js";
-import {
-  loadEnv,
-  parseAdmissionCandidatePolicyProfileRules,
-} from "../config.js";
+import type { Env } from "../config.js";
+import { loadEnv } from "../config.js";
 import {
   parseEmbeddingProviderConfig,
   type EmbeddingProviderConfig,
 } from "../embeddings/index.js";
+import {
+  parseRuntimeEpisodeVerifierDefinitionsJson,
+  type RuntimeEpisodeVerifierDefinitionInput,
+} from "../execution/runtime-episode-verifier-registry.js";
 import {
   resolveRuntimeProfile,
   type RuntimeProfileResolution,
@@ -35,20 +33,15 @@ type RuntimeIdentityEnvKeys =
   | "PORT"
   | "MEMORY_SCOPE"
   | "MEMORY_TENANT_ID"
-  | "LITE_LOCAL_ACTOR_ID"
-  | "LITE_INSPECTOR_ENABLED"
-  | "LITE_INSPECTOR_DIST_PATH";
+  | "LITE_LOCAL_ACTOR_ID";
 
 type RuntimeStorageEnvKeys =
-  | "LITE_REPLAY_SQLITE_PATH"
   | "LITE_WRITE_SQLITE_PATH"
   | "OUTBOX_POLL_INTERVAL_MS"
   | "OUTBOX_BATCH_SIZE";
 
 type RuntimeGovernanceEnvKeys =
   | "AIONIS_INSPECT_BEFORE_USE_MODE"
-  | "AIONIS_ADMISSION_CANDIDATE_POLICY_MODE"
-  | "AIONIS_ADMISSION_CANDIDATE_POLICY_PROFILE_RULES_JSON"
   | "AIONIS_AUTHORITY_RECEIPT_HMAC_ACTIVE_KEY_ID"
   | "AIONIS_AUTHORITY_RECEIPT_HMAC_KEYS_JSON"
   | "AIONIS_AUTHORITY_RECEIPT_HMAC_SECRET"
@@ -64,28 +57,18 @@ type RuntimeGovernanceEnvKeys =
 type RuntimeLimitEnvKeys =
   | KeysWithPrefix<Env, "RATE_LIMIT_">
   | KeysWithPrefix<Env, "RECALL_RATE_LIMIT_">
-  | KeysWithPrefix<Env, "RECALL_TEXT_EMBED_RATE_LIMIT_">
-  | KeysWithPrefix<Env, "DEBUG_EMBED_RATE_LIMIT_">
   | KeysWithPrefix<Env, "WRITE_RATE_LIMIT_">
   | KeysWithPrefix<Env, "TENANT_RECALL_">
-  | KeysWithPrefix<Env, "TENANT_DEBUG_">
   | KeysWithPrefix<Env, "TENANT_WRITE_">
   | KeysWithPrefix<Env, "API_RECALL_">
   | KeysWithPrefix<Env, "API_WRITE_">
   | "MAX_TEXT_LEN";
 
-type RuntimeRecallLimitEnvKeys =
-  | KeysWithPrefix<Env, "RECALL_RATE_LIMIT_">
-  | KeysWithPrefix<Env, "RECALL_TEXT_EMBED_RATE_LIMIT_">;
+type RuntimeRecallLimitEnvKeys = KeysWithPrefix<Env, "RECALL_RATE_LIMIT_">;
 
 type RuntimeRecallEnvKeys =
-  | Exclude<KeysWithPrefix<Env, "RECALL_">, RuntimeRecallLimitEnvKeys>
-  | KeysWithPrefix<Env, "MEMORY_RECALL_">
-  | "MEMORY_RECALL_PROFILE"
-  | "MEMORY_RECALL_PROFILE_POLICY_JSON";
+  Exclude<KeysWithPrefix<Env, "RECALL_">, RuntimeRecallLimitEnvKeys>;
 
-type RuntimeSandboxEnvKeys = KeysWithPrefix<Env, "SANDBOX_">;
-type RuntimeReplayEnvKeys = KeysWithPrefix<Env, "REPLAY_"> | "EPISODE_GC_TTL_DAYS";
 
 export type RuntimeIdentityConfig = Readonly<Pick<Env, RuntimeIdentityEnvKeys>> & {
   readonly profile: RuntimeProfileResolution;
@@ -103,15 +86,14 @@ type DeepReadonly<T> = T extends (...args: never[]) => unknown
     : T extends object
       ? { readonly [K in keyof T]: DeepReadonly<T[K]> }
       : T;
-export type RuntimeGovernanceConfig = Readonly<Pick<Env, RuntimeGovernanceEnvKeys>> & {
-  readonly admissionCandidatePolicyProfileRules: readonly DeepReadonly<AionisAdmissionCandidatePolicyProfileRule>[];
-};
+export type RuntimeGovernanceConfig = Readonly<Pick<Env, RuntimeGovernanceEnvKeys>>;
 export type RuntimeLimitConfig = Readonly<Pick<Env, RuntimeLimitEnvKeys>>;
-export type RuntimeSandboxConfig = Readonly<Pick<Env, RuntimeSandboxEnvKeys>>;
-export type RuntimeReplayConfig = Readonly<Pick<Env, RuntimeReplayEnvKeys>>;
+export type RuntimeExecutionConfig = Readonly<{
+  episodeVerifierDefinitions:
+    readonly DeepReadonly<RuntimeEpisodeVerifierDefinitionInput>[];
+}>;
 export type RuntimeProviderConfig = Readonly<{
   embedding: EmbeddingProviderConfig;
-  enabledSurfaces: Env["EMBEDDING_ENABLED_SURFACES_JSON"];
 }>;
 
 export type RuntimeConfig = {
@@ -120,8 +102,7 @@ export type RuntimeConfig = {
   recall: RuntimeRecallConfig;
   governance: RuntimeGovernanceConfig;
   limits: RuntimeLimitConfig;
-  sandbox: RuntimeSandboxConfig;
-  replay: RuntimeReplayConfig;
+  execution: RuntimeExecutionConfig;
   providers: RuntimeProviderConfig;
 };
 
@@ -166,12 +147,9 @@ const RUNTIME_KEYS = new Set<RuntimeIdentityEnvKeys>([
   "MEMORY_SCOPE",
   "MEMORY_TENANT_ID",
   "LITE_LOCAL_ACTOR_ID",
-  "LITE_INSPECTOR_ENABLED",
-  "LITE_INSPECTOR_DIST_PATH",
 ]);
 
 const STORAGE_KEYS = new Set<RuntimeStorageEnvKeys>([
-  "LITE_REPLAY_SQLITE_PATH",
   "LITE_WRITE_SQLITE_PATH",
   "OUTBOX_POLL_INTERVAL_MS",
   "OUTBOX_BATCH_SIZE",
@@ -179,8 +157,6 @@ const STORAGE_KEYS = new Set<RuntimeStorageEnvKeys>([
 
 const GOVERNANCE_KEYS = new Set<RuntimeGovernanceEnvKeys>([
   "AIONIS_INSPECT_BEFORE_USE_MODE",
-  "AIONIS_ADMISSION_CANDIDATE_POLICY_MODE",
-  "AIONIS_ADMISSION_CANDIDATE_POLICY_PROFILE_RULES_JSON",
   "AIONIS_AUTHORITY_RECEIPT_HMAC_ACTIVE_KEY_ID",
   "AIONIS_AUTHORITY_RECEIPT_HMAC_KEYS_JSON",
   "AIONIS_AUTHORITY_RECEIPT_HMAC_SECRET",
@@ -210,40 +186,33 @@ export function createRuntimeConfig(
   const governance = deepFreeze({
     ...pickSection<Pick<Env, RuntimeGovernanceEnvKeys>>(env, (key) =>
       GOVERNANCE_KEYS.has(key as RuntimeGovernanceEnvKeys)),
-    admissionCandidatePolicyProfileRules: parseAdmissionCandidatePolicyProfileRules(
-      env.AIONIS_ADMISSION_CANDIDATE_POLICY_PROFILE_RULES_JSON ?? "[]",
-    ),
   });
   return Object.freeze({
     runtime,
     storage: pickSection<RuntimeStorageConfig>(env, (key) => STORAGE_KEYS.has(key as RuntimeStorageEnvKeys)),
     recall: pickSection<RuntimeRecallConfig>(env, (key) =>
-      hasPrefix(key, ["MEMORY_RECALL_"])
-      || (
-        key.startsWith("RECALL_")
-        && !hasPrefix(key, ["RECALL_RATE_LIMIT_", "RECALL_TEXT_EMBED_RATE_LIMIT_"])
-      )),
+      key.startsWith("RECALL_")
+      && !hasPrefix(key, ["RECALL_RATE_LIMIT_"])),
     governance,
     limits: pickSection<RuntimeLimitConfig>(env, (key) =>
       key === "MAX_TEXT_LEN"
       || hasPrefix(key, [
         "RATE_LIMIT_",
         "RECALL_RATE_LIMIT_",
-        "RECALL_TEXT_EMBED_RATE_LIMIT_",
-        "DEBUG_EMBED_RATE_LIMIT_",
         "WRITE_RATE_LIMIT_",
         "TENANT_RECALL_",
-        "TENANT_DEBUG_",
         "TENANT_WRITE_",
         "API_RECALL_",
         "API_WRITE_",
       ])),
-    sandbox: pickSection<RuntimeSandboxConfig>(env, (key) => key.startsWith("SANDBOX_")),
-    replay: pickSection<RuntimeReplayConfig>(env, (key) =>
-      key.startsWith("REPLAY_") || key === "EPISODE_GC_TTL_DAYS"),
+    execution: deepFreeze({
+      episodeVerifierDefinitions:
+        parseRuntimeEpisodeVerifierDefinitionsJson(
+          providerSource.AIONIS_EPISODE_VERIFIERS_JSON ?? "[]",
+        ),
+    }),
     providers: Object.freeze({
       embedding: parseEmbeddingProviderConfig(providerSource),
-      enabledSurfaces: env.EMBEDDING_ENABLED_SURFACES_JSON,
     }),
   });
 }

@@ -39,6 +39,11 @@ import {
   recordCurrentLiteRuntimeWriteSchema,
   WRITE_SCHEMA_V5,
   WRITE_SCHEMA_V6,
+  WRITE_SCHEMA_V7,
+  WRITE_SCHEMA_V8,
+  WRITE_SCHEMA_V9,
+  WRITE_SCHEMA_V10,
+  WRITE_SCHEMA_V11,
 } from "./lite-runtime-schema.js";
 import {
   compareAndSwapLiteMemoryScopeHead,
@@ -57,14 +62,15 @@ import {
 } from "./lite-runtime-authority-transaction-fence.js";
 import { migrateLiteRuntimeAuthorityAdoptionV6 } from
   "./lite-runtime-authority-adoption.js";
-import {
-  assertLiteLearningEpisodeLedgerIntegrity,
-  migrateLiteLearningEpisodeLedgerSchema,
-  migrateLiteRuntimeAuthorityIdentity,
-} from "./lite-learning-episode-ledger.js";
-import { migrateLiteLearningEpisodeLedgerV3ToV4 } from
-  "./lite-learning-schema-migration.js";
-import { migrateLiteSkillCandidateReviewSchema } from "./lite-skill-candidate-review-store.js";
+import { migrateLiteExecutionEpisodeV7 } from
+  "./lite-execution-episode-schema.js";
+import { migrateLiteExecutionVerifierLaunchV8 } from
+  "./lite-execution-verifier-launch-schema.js";
+import { migrateLiteExecutionSemanticEventsV9 } from
+  "./lite-execution-semantic-event-schema.js";
+import { migrateLiteExecutionSessionV10 } from
+  "./lite-execution-session-schema.js";
+import { migrateLiteRuntimeIdentitySchema } from "./lite-runtime-identity.js";
 import {
   createLiteProjectionOutboxAccess,
   type LiteProjectionBacklogSnapshot,
@@ -136,22 +142,6 @@ export type LiteFindNodeRow = {
   topic_state: string | null;
   member_count: number | null;
 };
-
-export type LiteGuideLearningPriorStateResolution =
-  | {
-      status: "resolved";
-      memory_id: string;
-      node_type: string;
-      slots: Record<string, unknown>;
-    }
-  | {
-      status: "memory_node_missing";
-      memory_id: string;
-    }
-  | {
-      status: "memory_visibility_mismatch";
-      memory_id: string;
-    };
 
 export type LiteResolveNodeRow = LiteFindNodeRow & {
   commit_scope: string | null;
@@ -338,6 +328,14 @@ export type LiteWriteStore = WriteStoreAccess & LiteProjectionOutboxAccess & {
     operationKind: string;
     operationId: string;
   }): Promise<LiteWriteOperationRow | null>;
+  listWriteOperations(args: {
+    tenantId: string;
+    scope: string;
+    operationKind: string;
+    createdAtLte?: string | null;
+    limit: number;
+    offset?: number;
+  }): Promise<LiteWriteOperationRow[]>;
   insertWriteOperation(args: {
     tenantId: string;
     scope: string;
@@ -399,12 +397,6 @@ export type LiteWriteStore = WriteStoreAccess & LiteProjectionOutboxAccess & {
     limit: number;
     offset: number;
   }): Promise<{ rows: LiteFindNodeRow[]; has_more: boolean }>;
-  resolveGuideLearningPriorStates(args: {
-    scope: string;
-    memoryIds: readonly string[];
-    consumerAgentId?: string | null;
-    consumerTeamId?: string | null;
-  }): Promise<Map<string, LiteGuideLearningPriorStateResolution>>;
   findExecutionNativeNodes(args: {
     scope: string;
     executionKind?: "distilled_evidence" | "distilled_fact" | "workflow_candidate" | "workflow_anchor" | "pattern_anchor" | "execution_native" | null;
@@ -629,6 +621,10 @@ export type LiteWriteSchemaMigrationPhase =
   | "after_learning_ledger_structures"
   | "after_commit_authority_structures"
   | "after_authority_adoption_structures"
+  | "after_execution_episode_structures"
+  | "after_execution_verifier_launch_structures"
+  | "after_execution_semantic_event_structures"
+  | "after_execution_session_structures"
   | "after_v3_shape_verification"
   | "before_metadata_update"
   | "after_metadata_update_before_commit";
@@ -731,32 +727,6 @@ type LiteMemoryNodeDbRow = {
   created_at: string;
   commit_id: string | null;
 };
-
-type LiteGuideLearningPriorNodeDbRow = {
-  id: string;
-  type: string;
-  slots_json: string;
-  memory_lane: "private" | "shared";
-  owner_agent_id: string | null;
-  owner_team_id: string | null;
-};
-
-// Keep the fixed scope parameter plus the ID placeholders comfortably below
-// SQLite builds that retain the historical 999-variable default.
-const LITE_GUIDE_LEARNING_PRIOR_QUERY_CHUNK_SIZE = 400;
-
-function parseGuideLearningPriorSlots(row: LiteGuideLearningPriorNodeDbRow): Record<string, unknown> {
-  let parsed: unknown;
-  try {
-    parsed = JSON.parse(row.slots_json);
-  } catch {
-    throw new Error(`lite_guide_learning_prior_slots_invalid:${row.id}`);
-  }
-  if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
-    throw new Error(`lite_guide_learning_prior_slots_invalid:${row.id}`);
-  }
-  return parsed as Record<string, unknown>;
-}
 
 const LITE_EXECUTION_DECISION_SELECT_SQL = `SELECT
    id,
@@ -1185,8 +1155,6 @@ const SCHEMA_MIGRATION_PRESERVATION_TABLES = [
   "lite_product_guide_receipts",
   "lite_runtime_write_operations",
   "lite_memory_rule_feedback",
-  "lite_product_measurements",
-  "lite_skill_candidate_reviews",
 ] as const;
 
 function sqlitePragmaValue(db: SqliteDatabase, name: string): unknown {
@@ -1215,6 +1183,10 @@ function tableExists(db: SqliteDatabase, table: string): boolean {
   return !!db.prepare(
     "SELECT 1 AS present FROM sqlite_schema WHERE type = 'table' AND name = ?",
   ).get(table);
+}
+
+function removeObsoleteProductSchemaV11(db: SqliteDatabase): void {
+  db.exec("DROP TABLE IF EXISTS lite_execution_learning_links");
 }
 
 function migrationPreservationCounts(db: SqliteDatabase): Record<string, number> {
@@ -1260,16 +1232,12 @@ export function createLiteWriteStoreFromDatabase(
   const annSync = opts.annSync ?? null;
   const annProjectionEnabled = opts.annProjectionEnabled ?? annSync !== null;
   const closeDatabaseOnClose = opts.closeDatabaseOnClose ?? false;
-  const learningIntegrityOptions = {
-    authorityReceiptKeyring: opts.authorityReceiptKeyring,
-  };
   const allowLegacyV1Fixtures = opts.allowLegacyV1Fixtures === true;
 
   const initialSchema = assertLiteRuntimeSchemaPreflight(db);
   prepareLiteRuntimeWriteConnection(db);
   let schemaMigrationOpen = false;
   let schemaMigration: LiteRuntimeOwnedSchemaMigration | null = null;
-  let fullCommitAuthorityAudited = false;
   let migrationSourceVersion: number | null = null;
   let migrationBeforeCounts: Record<string, number> | null = null;
   if (initialSchema.classification !== "current") {
@@ -1278,12 +1246,6 @@ export function createLiteWriteStoreFromDatabase(
     try {
       const lockedSchema = assertLiteRuntimeSchemaPreflight(db);
       if (lockedSchema.classification === "current") {
-        assertLiteLearningEpisodeLedgerIntegrity(
-          db,
-          new Date().toISOString(),
-          learningIntegrityOptions,
-        );
-        fullCommitAuthorityAudited = true;
         schemaMigration.commit();
         schemaMigration = null;
         schemaMigrationOpen = false;
@@ -1547,48 +1509,21 @@ export function createLiteWriteStoreFromDatabase(
 
   let projectionOutbox!: ReturnType<typeof createLiteProjectionOutboxAccess>;
   try {
-    if (!schemaMigrationOpen && !fullCommitAuthorityAudited) {
-      db.exec("BEGIN IMMEDIATE");
-      try {
-        assertLiteLearningEpisodeLedgerIntegrity(
-          db,
-          new Date().toISOString(),
-          learningIntegrityOptions,
-        );
-        db.exec("COMMIT");
-        fullCommitAuthorityAudited = true;
-      } catch (error) {
-        try {
-          db.exec("ROLLBACK");
-        } catch {
-          // Preserve the integrity failure that caused startup to fail closed.
-        }
-        throw error;
-      }
-    }
-
     rebuildExecutionNativeIndex();
     rebuildKeywordIndex();
 
     projectionOutbox = createLiteProjectionOutboxAccess(database);
     if (schemaMigrationOpen) {
-      if (migrationSourceVersion === 3) {
-        migrateLiteLearningEpisodeLedgerV3ToV4(db);
-        opts.schemaMigrationFaultInjector?.("after_learning_ledger_structures");
-      } else if (migrationSourceVersion === null || migrationSourceVersion === 2) {
+      if (migrationSourceVersion === null || migrationSourceVersion === 2) {
         opts.schemaMigrationFaultInjector?.("after_v2_structures");
-
-        migrateLiteSkillCandidateReviewSchema(db, { includeLearningEpisodeLinks: true });
-        opts.schemaMigrationFaultInjector?.("after_shared_measurement_structures");
-
-        migrateLiteRuntimeAuthorityIdentity(db);
-        opts.schemaMigrationFaultInjector?.("after_authority_identity");
-
-        migrateLiteLearningEpisodeLedgerSchema(db);
-        opts.schemaMigrationFaultInjector?.("after_learning_ledger_structures");
       }
 
-      migrateLiteMemoryCommitAuthorityV5(db);
+      if (
+        migrationSourceVersion === null
+        || migrationSourceVersion < 5
+      ) {
+        migrateLiteMemoryCommitAuthorityV5(db);
+      }
       opts.schemaMigrationFaultInjector?.("after_commit_authority_structures");
 
       assertLiteRuntimeSchemaContractShape(db, WRITE_SCHEMA_V5);
@@ -1600,17 +1535,70 @@ export function createLiteWriteStoreFromDatabase(
       if (!schemaMigration) {
         throw new Error("lite_runtime_schema_migration_authority_session_missing");
       }
-      const adoptionMigration = migrateLiteRuntimeAuthorityAdoptionV6({
-        db,
-        authorityFence: schemaMigration.authorityFence,
-      });
+      let adoptionAppendedCommitCount = 0;
+      if (
+        migrationSourceVersion === null
+        || migrationSourceVersion < 6
+      ) {
+        const adoptionMigration = migrateLiteRuntimeAuthorityAdoptionV6({
+          db,
+          authorityFence: schemaMigration.authorityFence,
+        });
+        adoptionAppendedCommitCount = adoptionMigration.appendedCommitCount;
+      }
       opts.schemaMigrationFaultInjector?.("after_authority_adoption_structures");
       assertLiteRuntimeSchemaContractShape(db, WRITE_SCHEMA_V6);
       assertMigrationPreservedRows(
         migrationBeforeCounts ?? {},
         migrationPreservationCounts(db),
-        adoptionMigration.appendedCommitCount,
+        adoptionAppendedCommitCount,
       );
+
+      migrateLiteExecutionEpisodeV7(db);
+      opts.schemaMigrationFaultInjector?.("after_execution_episode_structures");
+      assertLiteRuntimeSchemaContractShape(db, WRITE_SCHEMA_V7);
+      assertMigrationPreservedRows(
+        migrationBeforeCounts ?? {},
+        migrationPreservationCounts(db),
+        adoptionAppendedCommitCount,
+      );
+
+      migrateLiteExecutionVerifierLaunchV8(db);
+      opts.schemaMigrationFaultInjector?.(
+        "after_execution_verifier_launch_structures",
+      );
+      assertLiteRuntimeSchemaContractShape(db, WRITE_SCHEMA_V8);
+      assertMigrationPreservedRows(
+        migrationBeforeCounts ?? {},
+        migrationPreservationCounts(db),
+        adoptionAppendedCommitCount,
+      );
+
+      migrateLiteExecutionSemanticEventsV9(db);
+      opts.schemaMigrationFaultInjector?.(
+        "after_execution_semantic_event_structures",
+      );
+      assertLiteRuntimeSchemaContractShape(db, WRITE_SCHEMA_V9);
+      assertMigrationPreservedRows(
+        migrationBeforeCounts ?? {},
+        migrationPreservationCounts(db),
+        adoptionAppendedCommitCount,
+      );
+
+      migrateLiteExecutionSessionV10(db);
+      opts.schemaMigrationFaultInjector?.(
+        "after_execution_session_structures",
+      );
+      assertLiteRuntimeSchemaContractShape(db, WRITE_SCHEMA_V10);
+      assertMigrationPreservedRows(
+        migrationBeforeCounts ?? {},
+        migrationPreservationCounts(db),
+        adoptionAppendedCommitCount,
+      );
+      removeObsoleteProductSchemaV11(db);
+      migrateLiteRuntimeIdentitySchema(db);
+      opts.schemaMigrationFaultInjector?.("after_authority_identity");
+      assertLiteRuntimeSchemaContractShape(db, WRITE_SCHEMA_V11);
       opts.schemaMigrationFaultInjector?.("after_v3_shape_verification");
       opts.schemaMigrationFaultInjector?.("before_metadata_update");
 
@@ -1622,12 +1610,6 @@ export function createLiteWriteStoreFromDatabase(
         || migratedSchema.detected_version !== LITE_RUNTIME_WRITE_SCHEMA_VERSION) {
         throw new Error(`lite_runtime_schema_migration_verification_failed:${JSON.stringify(migratedSchema)}`);
       }
-      assertLiteLearningEpisodeLedgerIntegrity(
-        db,
-        new Date().toISOString(),
-        learningIntegrityOptions,
-      );
-      fullCommitAuthorityAudited = true;
       schemaMigration.commit();
       schemaMigration = null;
       schemaMigrationOpen = false;
@@ -1728,6 +1710,37 @@ export function createLiteWriteStoreFromDatabase(
           args.operationId,
         ) as LiteWriteOperationRow | undefined
       ) ?? null);
+    },
+
+    async listWriteOperations(args): Promise<LiteWriteOperationRow[]> {
+      return await runStoreRead(() => {
+        const where = [
+          "tenant_id = ?",
+          "scope = ?",
+          "operation_kind = ?",
+        ];
+        const params: unknown[] = [
+          args.tenantId,
+          args.scope,
+          args.operationKind,
+        ];
+        if (args.createdAtLte) {
+          where.push("created_at <= ?");
+          params.push(args.createdAtLte);
+        }
+        return db.prepare(
+          `SELECT tenant_id, scope, operation_kind, operation_id,
+                  request_sha256, receipt_json, commit_id, created_at
+           FROM lite_runtime_write_operations
+           WHERE ${where.join(" AND ")}
+           ORDER BY created_at ASC, operation_id ASC
+           LIMIT ? OFFSET ?`,
+        ).all(
+          ...params,
+          Math.max(1, Math.min(10_000, Math.trunc(args.limit))),
+          Math.max(0, Math.trunc(args.offset ?? 0)),
+        ) as LiteWriteOperationRow[];
+      });
     },
 
     async insertWriteOperation(args): Promise<LiteWriteOperationRow> {
@@ -1880,56 +1893,6 @@ export function createLiteWriteStoreFromDatabase(
            ORDER BY created_at DESC, guide_trace_id DESC
            LIMIT ?`,
         ).all(...params, Math.max(1, Math.min(1000, args.limit))) as LiteProductGuideReceiptRow[];
-      });
-    },
-
-    async resolveGuideLearningPriorStates(args): Promise<Map<string, LiteGuideLearningPriorStateResolution>> {
-      return await runStoreRead(() => {
-        const memoryIds: string[] = [];
-        const seen = new Set<string>();
-        for (const memoryId of args.memoryIds) {
-          if (typeof memoryId !== "string" || memoryId.trim().length === 0) {
-            throw new Error("lite_guide_learning_prior_memory_id_required");
-          }
-          if (seen.has(memoryId)) continue;
-          seen.add(memoryId);
-          memoryIds.push(memoryId);
-        }
-
-        const rowsByMemoryId = new Map<string, LiteGuideLearningPriorNodeDbRow>();
-        for (let offset = 0; offset < memoryIds.length; offset += LITE_GUIDE_LEARNING_PRIOR_QUERY_CHUNK_SIZE) {
-          const chunk = memoryIds.slice(offset, offset + LITE_GUIDE_LEARNING_PRIOR_QUERY_CHUNK_SIZE);
-          const placeholders = chunk.map(() => "?").join(",");
-          const rows = db.prepare(
-            `SELECT id, type, slots_json, memory_lane, owner_agent_id, owner_team_id
-             FROM lite_memory_nodes
-             WHERE scope = ?
-               AND id IN (${placeholders})`,
-          ).all(args.scope, ...chunk) as LiteGuideLearningPriorNodeDbRow[];
-          for (const row of rows) rowsByMemoryId.set(row.id, row);
-        }
-
-        const consumerAgentId = args.consumerAgentId ?? null;
-        const consumerTeamId = args.consumerTeamId ?? null;
-        const resolutions = new Map<string, LiteGuideLearningPriorStateResolution>();
-        for (const memoryId of memoryIds) {
-          const row = rowsByMemoryId.get(memoryId);
-          if (!row) {
-            resolutions.set(memoryId, { status: "memory_node_missing", memory_id: memoryId });
-            continue;
-          }
-          if (!nodeVisible(row, consumerAgentId, consumerTeamId)) {
-            resolutions.set(memoryId, { status: "memory_visibility_mismatch", memory_id: memoryId });
-            continue;
-          }
-          resolutions.set(memoryId, {
-            status: "resolved",
-            memory_id: memoryId,
-            node_type: row.type,
-            slots: parseGuideLearningPriorSlots(row),
-          });
-        }
-        return resolutions;
       });
     },
 
@@ -3628,25 +3591,12 @@ export function createLiteWriteStoreFromDatabase(
       if (writeStoreClosed) return;
       if (writeStoreClosing !== null) return await writeStoreClosing;
       writeStoreClosing = (async () => {
-        let integrityError: unknown = null;
         try {
-          // Installing writeStoreClosing above rejects every new operation.
-          // This queued BEGIN IMMEDIATE therefore drains all work accepted
-          // before close and audits one final, stable, full authority view.
-          await transaction.sealAndRun(async () => {
-            assertLiteLearningEpisodeLedgerIntegrity(
-              db,
-              new Date().toISOString(),
-              learningIntegrityOptions,
-            );
-          });
-        } catch (error) {
-          integrityError = error;
+          await transaction.sealAndRun(async () => undefined);
         } finally {
           if (closeDatabaseOnClose) await database.close();
           writeStoreClosed = true;
         }
-        if (integrityError !== null) throw integrityError;
       })();
       return await writeStoreClosing;
     },

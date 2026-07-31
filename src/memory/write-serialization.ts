@@ -259,6 +259,5 @@ export function buildWriteResult(
       src_id: edge.src_id,
       dst_id: edge.dst_id,
     })),
-    ...(prepared.distillation ? { distillation: prepared.distillation } : {}),
   };
 }
