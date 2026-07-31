@@ -347,8 +347,8 @@ evidence or silently mutate validated content.
 | Plan authority established | Complete |
 | 1.1 Historical L1 product boundary | Complete |
 | 1.2 AgentSession developer quickstart | Complete |
-| 1.3 Installer alignment | Reopened — pinned `v0.3.12` lacks current `AgentSession` |
-| 1.4 Verifier onboarding | In progress — implementation and isolated clean-install effect verified; public release ref pending |
+| 1.3 Installer alignment | In progress — public Runtime/create RC tags verified; npm installer distribution pending |
+| 1.4 Verifier onboarding | In progress — public GitHub install effect verified; npm installer distribution pending |
 | 1.5 Thin integration convergence | Pending |
 | 1.6 Expanded continuity evidence | Pending |
 | Phase 2 self-learning repair | Blocked on Phase 1 |
@@ -467,10 +467,42 @@ project state = fail
 -> process exit = 2
 ```
 
-This proves that the current source can be packaged and installed with the
-intended product effect. It does not create a public release: the active
-Runtime tree contains the full convergence refactor (`536` tracked-file
-changes plus `67` new files), and the public GitHub repository still has no ref
-containing that tree. Task 1.3 and Product Gate A remain open until an
-authoritative release commit/ref is explicitly approved and published, then
-selected as `@aionis/create`'s default.
+This proved that the current source could be packaged and installed with the
+intended product effect. At that checkpoint it did not create a public release:
+the active Runtime tree contained the full convergence refactor (`536`
+tracked-file changes plus `67` new files), and GitHub had no ref containing
+that tree. Section 14 records the subsequent authorized publication.
+
+## 14. Public release-candidate evidence
+
+Published and verified on 2026-07-31:
+
+- Runtime commit `6fb4052e62c49c15808680e23f297f1568f1b51a` is available through the
+  annotated public tag `v0.4.0-rc.1` in `ostinatocc/Aionis`;
+- installer commit `9b1bd3f0a5802754ddbbbd9831da8429e301188c` is available through the
+  annotated public tag `v0.3.9-rc.1` in `ostinatocc/aionis-create`;
+- the installer source defaults to Runtime `v0.4.0-rc.1`;
+- a new installation with no `--repo` or `--branch` override cloned the public
+  GitHub Runtime tag, installed dependencies, built, and started successfully;
+- the installed Runtime reported package version `0.4.0-rc.1` and Git commit
+  `6fb4052e62c49c15808680e23f297f1568f1b51a`.
+
+Observed public-ref product behavior:
+
+```text
+project state = pass
+-> candidate_verifier_status = passed
+-> finish_status = completed
+-> process exit = 0
+
+project state = fail
+-> candidate_verifier_status = failed
+-> finish_status = continue
+-> continuation.reason = verifier_failed
+-> process exit = 2
+```
+
+The public source release path is therefore proven. Product Gate A remains
+open only because the newly tagged installer has not yet been published to
+npm; `npx @aionis/create` still resolves the previous npm release until that
+explicit external publication occurs.
