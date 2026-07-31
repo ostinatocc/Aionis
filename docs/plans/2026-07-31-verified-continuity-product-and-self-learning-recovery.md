@@ -349,7 +349,7 @@ evidence or silently mutate validated content.
 | 1.2 AgentSession developer quickstart | Complete |
 | 1.3 Installer alignment | Complete — `@aionis/create@0.3.9-rc.1` published under npm `next` |
 | 1.4 Verifier onboarding | Complete — npm-installed pass/complete and fail/continue verified |
-| 1.5 Thin integration convergence | Pending |
+| 1.5 Thin integration convergence | Complete — SDK/CLI/MCP/AIFS RCs published and one shared real Runtime flow verified |
 | 1.6 Expanded continuity evidence | Pending |
 | Phase 2 self-learning repair | Blocked on Phase 1 |
 | Phase 3 L4/L5 | Blocked on real validated L3 |
@@ -539,6 +539,73 @@ project state = fail
 -> process exit = 2
 ```
 
-Tasks 1.3 and 1.4 are complete. Product Gate A remains open on the canonical
-public SDK and thin integrations: the independently published SDK still lacks
-the current AgentSession contract, and CLI/MCP/AIFS convergence is Task 1.5.
+Tasks 1.3 and 1.4 are complete. At this checkpoint Product Gate A remained open
+on the canonical public SDK and thin integrations. Section 16 records their
+subsequent publication and shared Runtime verification.
+
+## 16. Public SDK and thin-integration evidence
+
+Published on 2026-07-31 under npm `next`, without moving stable `latest`:
+
+- `@aionis/sdk@0.4.0-rc.1`, Git commit `3c12fea` and tag
+  `v0.4.0-rc.1`;
+- `aionis@0.4.0-rc.1`, Git commit `6c3f22d` and tag `v0.4.0-rc.1`;
+- `@aionis/mcp@0.4.0-rc.1`, Git commit `2a0ecfc` and tag
+  `v0.4.0-rc.1`;
+- `@aionis/aifs@0.4.0-rc.1`, Git commit `11c6e32` and tag
+  `v0.4.0-rc.1`.
+
+The public SDK now contains the Runtime-owned `AgentSession` contract and no
+second candidate/branch authority. The CLI exposes setup, Runtime health and
+explicit memory lifecycle control; calls to deleted boundary, skill-candidate,
+operator-snapshot and flight-recorder routes were removed. MCP now transports
+serialized SDK AgentSession handles and canonical Guide/feedback/rehydrate/
+forget calls without its own continuation renderer. AIFS writes the exact SDK
+`agent_prompt`, complete context JSON and optional session handle, and removes
+its legacy duplicate continuation Markdown and snapshot files.
+
+A fresh `npx aionis@next setup` selected `@aionis/create@next`, cloned public
+Runtime `v0.4.0-rc.1`, installed, built and registered the real state-only
+project verifier `grep -qx accepted state.txt`. The public CLI-generated starter
+produced:
+
+```text
+state.txt = accepted
+-> candidate_verifier_status = passed
+-> finish_status = completed
+-> process exit = 0
+
+state.txt = rejected
+-> candidate_verifier_status = failed
+-> finish_status = continue
+-> continuation.reason = verifier_failed
+-> process exit = 2
+```
+
+The independently installed public SDK then ran against that Runtime:
+
+```text
+AgentSession.begin
+-> release serialized handle
+-> new SDK client resume
+-> turn
+-> aroundAction
+-> verifier_status = passed
+-> finish_status = completed
+```
+
+Finally, the public MCP stdio binary began the same kind of real session, ran a
+turn and action, received `verifier_status = passed`, and persisted its portable
+handle. Public AIFS resumed that exact MCP handle through the SDK and wrote:
+
+```text
+session_status = resumed
+guide.md == context/latest.json.agent_prompt
+legacy duplicate continuation files = none
+```
+
+MCP then consumed the AIFS-refreshed handle and finished the same episode with
+`verifier_status = passed`, `finish_status = completed`, and a closed final
+handle. No model call or mock Runtime was used. Task 1.5 is complete and Product
+Gate A is satisfied; Task 1.6 remains the next product step before self-learning
+repair resumes.
